@@ -1,0 +1,25 @@
+# --- 機密:絕對不能進 public repo ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+run_scripts/
+
+# --- Foundry ---
+out/
+cache/
+broadcast/
+!broadcast/*/*/run-latest.json
+
+# --- Node / subgraph / 前端 ---
+node_modules/
+generated/
+build/
+dist/
+.next/
+.pnpm-store/
+
+# --- 雜項 ---
+.DS_Store
+*.log
