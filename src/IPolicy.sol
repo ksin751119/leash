@@ -31,7 +31,14 @@ struct SpendContext {
 ///         兩層分開,ADMIN 金鑰被偷也換不上沒批准過的規則。
 interface IPolicy {
     /// @return reason `Reason.OK` 表示放行,其餘為攔截理由碼(5–9)
-    function check(SpendContext calldata ctx) external pure returns (uint8 reason);
+    /// @dev **介面宣告 `view`,不是 `pure`。** 安全保證來自呼叫端用 `staticcall` ——
+    ///      在 staticcall 之下 EVM 禁止一切狀態寫入,跟這裡宣告什麼無關。
+    ///      留 `view` 是為了不把門關死:未來要寫一份讀預言機、讀共用黑名單、
+    ///      或讀跨 agent 共用預算的 policy,不必改介面。
+    ///      我們自己出貨的 `StandardPolicy` 收得更緊,實作成 `pure`
+    ///      (Solidity 允許 override 時把可變性收緊)—— 那份的 codehash
+    ///      因此完全決定行為,鏈下也能重現。
+    function check(SpendContext calldata ctx) external view returns (uint8 reason);
 
     /// @notice 給人看的識別字串,會出現在前端與 demo 裡
     function describe() external pure returns (string memory);
