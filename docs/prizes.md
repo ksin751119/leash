@@ -1,7 +1,14 @@
 # 獎項條件與對應
 
-> 條件擷取自 ETHGlobal ETHOnline 2026 各 sponsor 的獎項頁面(2026-09-01)。
+> 條件擷取自 ETHGlobal ETHOnline 2026 各 sponsor 的獎項頁面(2026-09-01,2026-09-07 複查)。
 > 提交上限 **3 個** partner prize。
+>
+> ⚠️ **2026-09-07 查到的規則:同一個 sponsor 的多條賽道,只算一個 partner prize 名額。**
+> 原文:「If a partner offers multiple tracks, applicants can qualify for all while
+> only counting as a single partner prize selection.」
+> → 選了 The Graph,它三條賽道我們符合哪條就都能拿,**不多花名額**。
+> → ENS 第二條(Best Integration into Existing Project, $500)是 **Continuity only**,我們用不到。
+> → World 第二條(AgentKit, $3,500)也是 **Continuity only**,用不到。
 
 ---
 
@@ -72,14 +79,18 @@
 
 ### 另一條(不選)
 
-**Track 1: Best Use of Composable or Standardized Graph Products** —— 要求
-「compose 兩個以上 Graph 產品」或「建立在 standardized schema 上」。門檻較高,不選。
+**Track 1: Best Use of Composable or Standardized Graph Products**($5,000,1st/2nd/3rd)
+—— 要求「compose 兩個以上 Graph 產品」或「建立在 standardized schema 上」。
+
+**2026-09-07 重新評估:** 因為同一 sponsor 的多賽道只算一個名額,**投它是零名額成本**。
+但仍然不主動為它做東西 —— 如果主線做完還有時間,再看要不要多接一個 Graph 產品
+(例如 Token API)湊 composable。**列為 9/12 之後的 stretch,不排進工時。**
 
 ---
 
 ## ✅ World — Selfie Check · $3,500
 
-**名額未公布**
+**名額 3 個,每隊 $1,166**(2026-09-07 查證,原本未公布)
 
 | 條件 | 我們的對應 |
 |---|---|
@@ -191,7 +202,7 @@ Arc 也有 EIP-7702、USDC 就是 gas。**但成本結構不對。**
 |---|---|---|---|---|
 | **ENS** | 天生就是 | 把 ENS 做進解析路徑 | 4 | Sepolia |
 | **The Graph** | 高 | 讓 agent 真的去查 | 3(排名) | Sepolia |
-| **World** | 需要接,理由很硬 | 新 SDK + feedback 文件 | 未公布 | 鏈無關 |
+| **World** | 需要接,理由很硬 | 新 SDK + feedback 文件 | 3(各 $1,166) | 鏈無關 |
 | ~~Hedera~~ | **架構衝突** | — | 3 | — |
 | ~~Arc~~ | 概念合 | 前端 + Circle 全家桶 + 第二條鏈 | split | Arc |
 

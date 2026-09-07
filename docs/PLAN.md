@@ -320,7 +320,7 @@ OR 是真實花錢規則的常見形狀(「單筆 ≤ 500」**OR**「有真人�
 |---|---|---|
 | ENS — Best Use of ENSv2 | $4,500 | 4(含 Runner-Up $500) |
 | The Graph — Best AI Tooling (From Scratch) | 1st $2,500 / 2nd $1,500 / 3rd $1,000 | 3(排名) |
-| World — Selfie Check | $3,500 | 未公布 |
+| World — Selfie Check | $3,500 | 3(各 $1,166)|
 
 **已排除**:
 - **Hedera x402**($6,000)—— 其 exact scheme 要求付款方簽一筆原生 `TransferTransaction`,
@@ -476,8 +476,16 @@ StandardPolicy  runtime 957 bytes · initcode 985 bytes
 
 | 項目 | 送出日 | 卡住誰 | 備援 |
 |---|---|---|---|
-| World Selfie Check feature flag(email) | 2026-09-02 | World demo 全線 | 9/5 沒回音就開 Discord 第三條線 |
+| World Selfie Check feature flag(email) | 2026-09-02 | World demo 全線 | 🔴 **9/5 的 Discord 升級已逾期,9/7 仍未做** |
 | World Sandbox 存取(表單) | 2026-09-02 | Sandbox App 安裝 | iOS TestFlight 是公開連結,可先裝 |
+
+> **2026-09-07 查證:官方文件的措辭改了。**
+> `docs.world.org/world-id/sandbox/testing-selfie-check` 現在寫的是
+> 「To enable the feature flag, **request access through your World point of contact**.」
+> (credentials 那頁仍留著 `developers@toolsforhumanity.com` 的 mailto。)
+>
+> **對 hackathon 來說,「World point of contact」就是 ETHGlobal Discord 裡的 World sponsor 窗口。**
+> 這比 email 更快,而且我們已經等了 5 天。**今天就去 Discord 問,不要再等信。**
 
 **沒有 World 也能做完的部分:** 合約、ENS 接線、subgraph。
 建置順序照這個排,把 World 留到最後接,回信時間就不在關鍵路徑上。
