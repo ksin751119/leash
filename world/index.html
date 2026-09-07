@@ -1,0 +1,96 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Leash · Selfie Check 驗證測試</title>
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fff; --mut:#666; --line:#ddd; --ok:#0a7; --bad:#c33; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e8e8e8; --bg:#141414; --mut:#999; --line:#333; --ok:#3d9; --bad:#f66; }
+  }
+  body { font: 15px/1.6 system-ui, sans-serif; color: var(--fg); background: var(--bg);
+         margin: 0; padding: 32px; max-width: 760px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: var(--mut); margin: 0 0 24px; }
+  label { display: block; font-size: 13px; color: var(--mut); margin: 14px 0 4px; }
+  input, select { width: 100%; padding: 8px 10px; font: inherit; font-size: 14px;
+                  border: 1px solid var(--line); border-radius: 6px;
+                  background: var(--bg); color: var(--fg); box-sizing: border-box; }
+  button { margin-top: 20px; padding: 11px 20px; font: inherit; font-weight: 600;
+           border: 0; border-radius: 6px; background: var(--fg); color: var(--bg); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  pre { background: color-mix(in srgb, var(--fg) 6%, transparent); padding: 12px;
+        border-radius: 6px; overflow-x: auto; font-size: 12.5px; white-space: pre-wrap;
+        word-break: break-all; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  section { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
+  section[hidden] { display: none; }
+</style>
+
+<h1>Leash · Selfie Check 驗證測試</h1>
+<p class="sub">
+  唯一的目的:證明 <code>enable_face_check: true</code> 真的能跑完一次驗證。
+  這不是 demo 前端。
+</p>
+
+<label for="signal">Signal —— 這次刷臉批准的是哪一件事</label>
+<input id="signal" value="widen:vendors.acme.eth:5000" />
+
+<label for="level">verification_level</label>
+<select id="level">
+  <option value="device" selected>device —— Selfie Check 走這個</option>
+  <option value="orb">orb —— 需要 Orb,我們沒有</option>
+</select>
+
+<button id="go">開始驗證</button>
+
+<section id="out" hidden>
+  <h2 style="font-size:15px;margin:0 0 8px">World App 回傳的 proof</h2>
+  <pre id="proof"></pre>
+  <h2 style="font-size:15px;margin:16px 0 8px">後端驗證結果</h2>
+  <pre id="result"></pre>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/@worldcoin/idkit-standalone@2.2.5/build/index.global.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const show = (el, text, cls) => { el.textContent = text; el.className = cls || ""; };
+
+  let APP_ID, ACTION;
+
+  async function boot() {
+    const cfg = await fetch("/api/config").then((r) => r.json());
+    APP_ID = cfg.app_id;
+    ACTION = cfg.action;
+    $("go").disabled = false;
+  }
+
+  // IDKit 拿到 proof 之後呼叫這裡。丟出例外 = 驗證失敗,World App 會顯示錯誤。
+  async function handleVerify(proof) {
+    $("out").hidden = false;
+    show($("proof"), JSON.stringify(proof, null, 2));
+    show($("result"), "驗證中…");
+
+    const res = await fetch("/api/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proof, action: ACTION, signal: $("signal").value }),
+    });
+    const body = await res.json();
+    show($("result"), JSON.stringify(body, null, 2), res.ok ? "ok" : "bad");
+    if (!res.ok) throw new Error(body.detail || body.code || "verification failed");
+  }
+
+  $("go").addEventListener("click", () => {
+    IDKit.init({
+      app_id: APP_ID,
+      action: ACTION,
+      signal: $("signal").value,
+      verification_level: $("level").value,
+      handleVerify,
+      onSuccess: () => show($("result"), $("result").textContent + "\n\n✅ World App 端也認了。"),
+    });
+    IDKit.open();
+  });
+
+  boot();
+</script>
