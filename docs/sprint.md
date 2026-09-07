@@ -45,7 +45,7 @@
 | 3 | `StandardPolicy` + `Reason` + `IPolicy`(額度、白名單、週期預算、時段) | 6 | M | 2 | ✅ **已完成 9/6**,16 個測試綠燈 |
 | 3b | `SharedBudgetPolicy` —— 多 agent 共用總預算(policy 自己記帳) | 1 | S | 3 | 🟢 09-07 設計改版後只剩一份合約 |
 | 4 | `LeashRegistry` —— 實作 ENSv2 `IRegistry` | 5 | M | 2 | 🟡 介面沒範例 |
-| 5 | `LeashResolver` —— **只實作 ENSIP-10 `resolve(bytes,bytes)`** | 4 | M | 4 | 🔴 見下方陷阱 |
+| 5 | `LeashResolver` —— **只實作 ENSIP-10 `resolve(bytes,bytes)`** | 4 | M | — | ✅ **已完成 9/7**,23 個測試綠燈。實作起來不依賴項目 4 |
 | 6 | ENS 接線 + 鏈上解析走通(`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | 🟢 指令已備 |
 | 7a | `LeashAccount` —— 執行前強制過 policy 的合約錢包(含重入鎖、policy gas 上限、`isLeashed`) | 5 | M | 3,6 | 🟢 |
 | 7b | 升級成 **EIP-7702 delegate**(EOA 直接被 policy 管) | 5 | **X** | 1,7a | 🔴 工具鏈風險 |
