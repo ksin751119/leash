@@ -486,6 +486,16 @@ StandardPolicy  runtime 957 bytes · initcode 985 bytes
 >
 > **對 hackathon 來說,「World point of contact」就是 ETHGlobal Discord 裡的 World sponsor 窗口。**
 > 這比 email 更快,而且我們已經等了 5 天。**今天就去 Discord 問,不要再等信。**
+>
+> **2026-09-07,看完官方 workshop 錄影後確認的事:**
+> - 旗標是**在 9/5 那場 workshop 現場發給與會者的**(台北時間 03:00,我們沒參加)
+> - 窗口是 **Mateo Sauton**(Tools for Humanity),Discord handle 約為 `mrsauton`,
+>   他在錄影裡明講「reach out to me on Discord」
+> - 他說 Selfie Check 「probably next week」**對所有人開放** —— 那個 next week 就是這週
+> - Developer Portal 裡本來就有一顆 **request access to sandbox** 的按鈕,去按
+> - Selfie Check 本來就不需要 Orb,**很可能不需要 Sandbox App**
+>   (Sandbox 是為了模擬 Orb 驗證狀態而存在的)—— 一併跟 Mateo 確認,
+>   若成立就整條 TestFlight/Firebase 依賴可以砍掉
 
 **沒有 World 也能做完的部分:** 合約、ENS 接線、subgraph。
 建置順序照這個排,把 World 留到最後接,回信時間就不在關鍵路徑上。

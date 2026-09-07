@@ -367,3 +367,91 @@ docs greppable.
 
 All five are documentation, distribution, and process issues — not product issues. The credential
 itself does exactly what we need it to do, and we picked it on the merits.
+
+---
+
+## 5. The access gate, revisited: how access was actually distributed
+
+*Logged 2026-09-07, after watching the recording of the official ETHGlobal × World
+workshop "Building Trust Online" (2026-09-05, 03:00 in our timezone).*
+
+This is the most consequential finding in this document, and it is not in the docs.
+
+**The Selfie Check (Beta) flag was granted to workshop attendees, live, as a courtesy.**
+From the recording: attendees were told they were "getting it after this presentation."
+Sandbox App access (TestFlight / Firebase App Distribution) was collected the same way —
+by handing over an email address during the call.
+
+Meanwhile, the documented channel produced nothing:
+
+| Channel | Sent | Response as of 2026-09-07 |
+|---|---|---|
+| `developers@toolsforhumanity.com` (the address the docs give) | 2026-09-02 | **none, 5 days** |
+| Sandbox access Google Form (linked from the ETHGlobal prize page) | 2026-09-02 | **none, 5 days** |
+
+**Why this matters more than it may appear.** The three doc pages we catalogued in §1.1
+all point at an asynchronous request channel. In practice, the reliable path was
+synchronous and undocumented: be awake for a 30-minute call. For a global online
+hackathon that is a timezone lottery. Ours started at 03:00 local; we were asleep.
+
+Two of the four things this document was asked to evaluate — Sandbox App states and
+proof flows — are gated behind an access grant we could not obtain through any
+documented route. That is a structural gap, not an inconvenience.
+
+**Suggested fixes, in order of how much they would have helped us:**
+
+1. **Make the flag self-serve in the Developer Portal.** The workshop revealed that a
+   "request access to sandbox" button already exists in the Portal. Put the Selfie Check
+   flag next to it. If a human must approve, approve asynchronously — but let the
+   developer *see the request exists and its state*, which today they cannot.
+2. **Auto-acknowledge the email.** Five days of total silence is indistinguishable from
+   a wrong address, a spam filter, or a dead mailbox. We re-verified our sent mail to
+   rule out the first two. An automated "received, typical turnaround N days" would have
+   cost nothing and saved a day of doubt.
+3. **Name the Discord channel in the docs.** "Your World point of contact" (§1.1) turns
+   out to mean, for hackathon participants, the World channel on the event Discord.
+   That is a fine answer — it is just never written down anywhere a developer will look.
+4. **Say in the docs that the flag is rolling out broadly.** The workshop mentioned
+   general availability "probably next week." A developer reading the docs today sees an
+   indefinite gate and plans around it. Knowing GA was days away would have changed our
+   sequencing.
+
+### 5.1 Credential naming actively misleads
+
+*Logged 2026-09-07, same source.*
+
+In IDKit the two credentials a developer chooses between are labelled:
+
+| Label in the SDK | What it actually is |
+|---|---|
+| `selfie check legacy` | **Selfie Check** — the credential this prize track is about |
+| `proof of human` | **Orb verification** — the high-assurance one |
+
+Both names point the wrong way. "Legacy" reads as deprecated, so the natural instinct is
+to avoid it — but it is the current, correct choice for Selfie Check. And "proof of
+human" is the phrase the marketing site uses for the *whole product family*, so reading
+it as the generic option is the obvious mistake. This was flagged as a known naming
+problem during the workshop; recording it here so it does not get lost.
+
+A developer integrating from the docs alone could easily ship against the wrong
+credential and only discover it when the flow demands an Orb.
+
+### 5.2 Selfie Check should not need the Sandbox App — but the docs imply it does
+
+*Logged 2026-09-07.*
+
+The Sandbox App exists because online hackers cannot reach a physical Orb. Selfie Check,
+by design, does not require an Orb. It therefore looks like Selfie Check can be tested
+against the real World App with a real selfie, and the Sandbox is only strictly required
+for the Orb-gated credentials (and for AgentKit, which the workshop confirmed accepts
+Orb-verified World IDs only).
+
+The docs do not say this. `world-id/sandbox/testing-selfie-check` presents the Sandbox as
+the testing path, which reads as a requirement and pulls a developer into a second,
+separately-gated access queue they may not need. One sentence — "Selfie Check can also be
+tested on the production World App; the Sandbox is for simulating Orb-verified states" —
+would remove an entire blocking dependency.
+
+*(Flagged as our reading of the two docs pages, not as confirmed behaviour. If it is
+wrong, that is itself worth knowing: it would mean the Sandbox gate silently blocks the
+one credential that was designed not to need special hardware.)*

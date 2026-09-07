@@ -134,9 +134,48 @@ feature flag 這關在官方文件出現三次:
 三處都是 Mintlify `<Warning>` 元件,在網頁上是彩色告示框,容易掃過去。
 把任何 docs.world.org 網址加上 `.md` 就拿得到原始 markdown。
 
+### 評分權重(2026-09-07 從官方 workshop 錄影抄下來)
+
+Mateo Sauton(Tools for Humanity)在 ETHGlobal × World workshop 上逐項唸出來的:
+
+| 權重 | 項目 |
+|---|---|
+| **30%** | strategic fit —— 這個整合對 World 的產品有沒有意義 |
+| **25%** | **feedback 文件的品質** ←「don't be nice」,他明講要聽壞話 |
+| 20% | product quality |
+| 15% | technical integration（IDKit / AgentKit 有沒有正確接) |
+| 10% | 賽後會不會繼續做 |
+
+**feedback 文件佔四分之一,不是附帶作業。** `world-feedback.md` 的優先級要往上調 ——
+它跟前端同等重要,而且我們手上有真實素材(五天沒回信、三頁文件三種說法、命名誤導)。
+
+10% 那條用 `PLAN.md` 的 v2 章節回答:控制平面/執行平面分離、一次性批次授權。
+
+### 明講不給獎的東西(我們都不是,但記著)
+
+- 沒有端對端整合的 static demo
+- 單純的 agent reputation(看太多了)
+- 只是「給 agent 打折」的電商 demo(他們自己做過)
+
+他要的是 **new verticals**。我們的切角(擋 agent 錢包的擴權)不在這張排除清單上。
+
+### 一個會浪費半天的命名陷阱
+
+IDKit 裡兩個 credential 的標籤是反直覺的:
+
+| SDK 標籤 | 實際是什麼 |
+|---|---|
+| **`selfie check legacy`** | **Selfie Check ← 我們要用的就是這個** |
+| `proof of human` | Orb 驗證(高保證) |
+
+「legacy」看起來像被淘汰的,但它才是對的。**別選 `proof of human`。**
+V3 / V4 proofs 都可以用。
+
 ### 注意
 
 World 的另一條 **AgentKit** 賽道($3,500)寫明 **Continuity only**,我們不能碰。
+workshop 另外確認:**AgentKit 只吃 Orb 驗證的 World ID,Selfie Check 不能拿來註冊 AgentBook**
+—— 所以就算是 From Scratch 也接不上,排除的判斷是對的。
 Selfie Check 沒有這個限制。World 總獎金池 $7,000,兩個賽道各半。
 
 **代價**:多一份 feedback 文件。反過來看,要交作業的賽道通常投的人少。
