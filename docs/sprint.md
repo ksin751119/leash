@@ -52,7 +52,7 @@
 | 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟢 |
 | 9 | Subgraph:schema + mappings + 部署 Studio + 索引 | 6 | M | 2,6,7a | 🟡 索引要時間 |
 | 10 | Agent 決策迴路:查 subgraph → 判斷 → 簽 → 送 | 6 | M | 9 | 🟢 |
-| 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M† | 8 | 🔴 **外部核准** |
+| 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M | 8 | 🟢 **9/7 解除**,旗標已開通 |
 | 12 | 前端單頁 | 5 | M | 8,9,11 | 🟢 |
 | 13 | 端對端彩排 + 修 | 5 | M | 全部 | 🟡 |
 | 14 | README(公開 repo、架構圖、跑法) | 3 | M | 13 | 🟢 |
@@ -60,7 +60,8 @@
 | 16 | World feedback document 定稿 | 2 | M | 11 | 🟢 已寫大半 |
 | 17 | 三個賽道各自提交 | 2 | M | 14,15,16 | 🟢 |
 
-**† 項目 11 卡在外部核准。** 見下方「World 應變」。
+~~**† 項目 11 卡在外部核准。**~~ **2026-09-07 解除** —— precheck API 確認 `enable_face_check: true`。
+從來就沒被擋住,只是 Portal 不顯示狀態。見 `world-feedback.md` §6。
 
 **必做合計(不含 7b):73h** · **有效產能 69h**
 
@@ -135,7 +136,7 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 
 | # | 風險 | 機率 | 衝擊 | 對策 |
 |---|---|---|---|---|
-| 1 | **World 核准不來** | 中 | 高 | 介面化雙實作(判斷②)。**9/9 收盤為死線**,沒到就切 mock,不再等 |
+| 1 | ~~World 核准不來~~ | — | — | ✅ **2026-09-07 消滅**:旗標本來就是開的。`AttesterGate` 仍照判斷② 介面化,但理由從「避險」變成「乾淨」 |
 | 2 | **ENSv2 resolver 只吃 ENSIP-10** | 已確認 | 高 | 已實測:legacy `addr()`/`text()` **不支援**。只實作 `resolve(bytes,bytes)`,別浪費時間在相容層 |
 | 3 | EIP-7702 在 Sepolia 的工具鏈 | 中 | 中 | 第 1 天就驗,不通就砍 7b。不要拖到第 8 天才發現 |
 | 4 | Subgraph 索引比預期慢 | 中 | 中 | 9/8 就部署,留 4 天發現問題。**不要等功能全寫完才部署** |
@@ -152,7 +153,7 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 1. **7b** EIP-7702 升級 —— 已是 stretch,直接放棄 (−5h)
 2. **Agent 的第 4 個問題**(「我上次為什麼被擋」)—— 三個問題足以證明 load-bearing (−2h)
 3. **前端的 policy 顯示改成直接讀合約**,不走 subgraph —— agent 那邊仍在用,不影響 The Graph 的條件 (−2h)
-4. **World → MockAttester** —— 只在核准真的沒來時 (−4h)
+4. ~~**World → MockAttester**~~ —— **已不適用**,旗標開了 (−0h)
 5. **測試只留 happy path** —— hackathon 不是產品 (−4h)
 
 砍到第 3 項就回到 62h,低於產能,還有 7h buffer。
@@ -192,7 +193,7 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 - [ ] **一定要送出提交。** ETHGlobal 規則:「You must submit your hack before the
       submission deadline. **Partial or incomplete hacks are still eligible for stake
       being returned.**」不送 = 押金沒了 + 三個獎全空。做不完也要送。
-- [ ] Team 已建立(單人也要建一人隊,否則無法提交)
+- [x] Team 已建立 ✅ 2026-09-07(Albert Lin,一人隊)
 
 **交件(9/13 收盤前):**
 - [ ] repo 公開,README 含架構圖與跑法
@@ -205,5 +206,5 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 ## 每日自問(30 秒,不要跳過)
 
 1. 今天的里程碑到了嗎?沒到 → **現在就砍單**,不是明天
-2. World 有回音嗎?9/9 之後這題不再問,直接走 mock
+2. ~~World 有回音嗎?~~ 已結案(9/7)。改問:**`max_verifications` 改成 0 了嗎?** 沒改 demo 只能跑一次
 3. 有沒有撞到新的 World 摩擦?→ 當場記進 `world-feedback.md`

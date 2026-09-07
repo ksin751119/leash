@@ -476,8 +476,8 @@ StandardPolicy  runtime 957 bytes · initcode 985 bytes
 
 | 項目 | 送出日 | 卡住誰 | 備援 |
 |---|---|---|---|
-| World Selfie Check feature flag(email) | 2026-09-02 | World demo 全線 | 🔴 **9/5 的 Discord 升級已逾期,9/7 仍未做** |
-| World Sandbox 存取(表單) | 2026-09-02 | Sandbox App 安裝 | iOS TestFlight 是公開連結,可先裝 |
+| ~~World Selfie Check feature flag~~ | 2026-09-02 | — | ✅ **9/7 解除** —— precheck API 回 `enable_face_check: true`,旗標一直是開的 |
+| World Sandbox 存取(表單) | 2026-09-02 | 只卡 Sandbox App | 很可能不需要:app 是 production,Selfie Check 不用 Orb |
 
 > **2026-09-07 查證:官方文件的措辭改了。**
 > `docs.world.org/world-id/sandbox/testing-selfie-check` 現在寫的是

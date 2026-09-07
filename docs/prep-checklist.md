@@ -18,9 +18,9 @@
 | # | 項目 | 阻塞誰 | 狀態 |
 |---|---|---|---|
 | 1 | World Sandbox 表單 | World 全線 | ✅ 已送(9/2) |
-| 2 | World Developer Portal app | 步驟 3 | ✅ `app_452654c9…1c00`,已寫入 `.env`(9/2) |
-| 3 | Selfie Check feature flag 申請信 | World 全線 | ✅ 已寄(9/2) |
-| 4 | 安裝 Sandbox App | World demo | ⏳ Portal per-email 入組**已送出,待核准**(9/2) |
+| 2 | World Developer Portal app | 步驟 3 | ✅ `app_452654c9…1c00`,已寫入 `.env`(9/2)。**注意是 production(`is_staging: false`),不是 Staging** |
+| 3 | Selfie Check feature flag 申請信 | World 全線 | ✅ **已開通** —— 9/7 用 precheck API 確認 `enable_face_check: true`。信從頭到尾沒人回,旗標卻是開的 |
+| 4 | 安裝 Sandbox App | World demo | ⏳ 待核准(9/2)。**但很可能不需要** —— app 是 production,Selfie Check 不用 Orb,真的 World App + 真自拍就能測 |
 | 5 | The Graph Studio 帳號 + deploy key | subgraph 部署 | ✅ key 已驗證(`graph auth` 通過),CLI v0.98.1(9/2) |
 | 6 | 產生兩把 key | 所有鏈上動作 | ✅ 已產生,寫入 `.env`(9/2) |
 | 7 | 領 Sepolia ETH | 所有鏈上動作 | ✅ human 0.126 / agent 0.053 ETH(9/2) |
@@ -29,8 +29,9 @@
 | 10 | 開 feedback document | World 提交 | ✅ 已開(9/2) |
 | 11 | 收掉 PLAN.md 未決事項 | 9/4 開寫 | ✅ 四項全部定案(9/2) |
 
-**關鍵路徑是 1 → 3 → 4 → (等 World 回信)。** 回信時間不在我們手上,
-所以 5–9 要平行做完,不要排隊等。
+> **2026-09-07 結案:World 這條線不再是阻塞項。** 旗標開了、隊建了(Albert Lin,一人隊),
+> 沒有任何外部核准還擋著。原本寫的「關鍵路徑是 1 → 3 → 4 → 等 World 回信」已經失效 ——
+> 我們從來沒有真的被擋住,只是產品沒有任何地方顯示狀態。完整經過見 `world-feedback.md` §6。
 
 ---
 
@@ -51,14 +52,18 @@
 
 ---
 
-### 步驟 2 — 建立 Developer Portal app ⬜
+### 步驟 2 — 建立 Developer Portal app ✅
 
 1. 開 https://developer.world.org,用 World ID 或 email 登入
 2. 建立新的 app,名稱填 **`Leash`**
 3. 環境選 **Staging / Sandbox**(不是 Production)
 4. 建完後在 app 設定頁複製 **`app_id`** —— 格式是 `app_` 開頭的一長串
 5. 如果設定頁另外有列 **`rp_id`**,一併複製
-   (驗證端點是 `https://developer.world.org/api/v4/verify/${rp_id}`)
+   (⚠️ **v4 端點對 Selfie Check 是錯的** —— Selfie Check 目前跑 World ID **3.0**,
+   官方文件明寫「World ID 4.0 support not yet available」。v4 會回
+   「This app has not been migrated to World ID 4.0. Please use the v2 verify endpoint」。
+   我們要用的是 **v2 端點,吃 `app_id`**,不是 v4 + `rp_id`。`rp_id` / signer key 留著,
+   等 Selfie Check 遷到 4.0 再用。)
 6. 把兩個值存進 `.env`(已 gitignore):
 
 ```bash
@@ -126,9 +131,41 @@ Android 分頁在同一個面板,流程一樣(送 Google Play 帳號的 email)�
 
 ---
 
+### 步驟 4b — 用 precheck API 確認設定(Portal 看不到) ✅
+
+**Developer Portal 沒有任何顯示 credential 開通狀態的介面。**
+`World ID Configuration` 整頁只有 App ID / RP ID / Signer address / Rotate key / Danger zone,
+`Verification` 是驗證紀錄不是設定。**唯一問得到答案的是這個沒有文件的端點:**
+
+```bash
+curl -s -X POST \
+  "https://developer.worldcoin.org/api/v1/precheck/$WORLD_APP_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"expand-policy"}' | jq
+```
+
+免驗證、即時。2026-09-07 的回應:
+
+| 欄位 | 值 | 意義 |
+|---|---|---|
+| `enable_face_check` | **`true`** | **Selfie Check 已開通** |
+| `can_user_verify` | `yes` | 現在就能驗 |
+| `engine` | `cloud` | 雲端驗證(不要按 Switch to self-managed) |
+| `is_staging` | `false` | **production**,不是 Staging |
+| `action.status` | `active` | `expand-policy` 可用 |
+| `action.external_nullifier` | `0x00b5b5ab…6084` | app_id + action 推導出來的,固定值 |
+| `action.max_verifications` | **`1`** | 🔴 **見下** |
+
+> 🔴 **`max_verifications: 1` 是個會毀掉 demo 的預設值。**
+> 每個人對這個 action **一輩子只能驗一次**。第一次會成功,所以當下看不出問題 ——
+> 等你錄影片刷一次、live demo 再刷一次,第二次直接失敗,而且 nullifier 已經燒掉,
+> **不能重置**。Portal → action 設定 → **max verifications 改成 0(unlimited)**。
+
+---
+
 ## B. The Graph
 
-### 步驟 5 — Studio 帳號 + deploy key ⬜
+### 步驟 5 — Studio 帳號 + deploy key ✅
 
 1. 開 https://thegraph.com/studio
 2. 連錢包(用**步驟 6 的 human master EOA**,保持一致)
@@ -157,7 +194,7 @@ subgraph 的 `schema.graphql` 和 mapping 是程式碼,**9/4 再寫**。
 
 ## C. 錢包與資金
 
-### 步驟 6 — 產生兩把 key ⬜
+### 步驟 6 — 產生兩把 key ✅
 
 架構上需要兩個角色:
 
@@ -191,7 +228,7 @@ SEPOLIA_RPC=https://ethereum-sepolia-rpc.publicnode.com
 
 ---
 
-### 步驟 7 — 領 Sepolia ETH ⬜
+### 步驟 7 — 領 Sepolia ETH ✅
 
 **兩個地址都要領。** faucet 有 rate limit,今天領,不要 9/4 早上才發現領不到。
 
@@ -215,7 +252,7 @@ cast balance $AGENT_ADDR --rpc-url $SEPOLIA_RPC --ether
 
 ---
 
-### 步驟 8 — mint MockUSDC ⬜
+### 步驟 8 — mint MockUSDC ✅
 
 ENSv2 Sepolia 的註冊費用是拿 **MockUSDC** 付的,不是 ETH。
 
@@ -249,7 +286,7 @@ cast send $USDC 'mint(address,uint256)' $AGENT_ADDR 1000000000 \
 
 ## D. ENS
 
-### 步驟 9 — 註冊 `leash.eth` ⬜
+### 步驟 9 — 註冊 `leash.eth` ✅
 
 **2026-09-02 查證:仍未被註冊。一年 8.000021 USDC,premium 0。**
 
@@ -409,7 +446,7 @@ setSubregistry(tokenId, <我們的 LeashRegistry>)
 
 ---
 
-### 步驟 11 — 收掉 PLAN.md 未決事項 ⬜
+### 步驟 11 — 收掉 PLAN.md 未決事項 ✅
 
 | 未決事項 | 現況 |
 |---|---|

@@ -165,10 +165,22 @@ IDKit 裡兩個 credential 的標籤是反直覺的:
 
 | SDK 標籤 | 實際是什麼 |
 |---|---|
-| **`selfie check legacy`** | **Selfie Check ← 我們要用的就是這個** |
-| `proof of human` | Orb 驗證(高保證) |
+| **`selfieCheckLegacy`** | **Selfie Check ← 我們要用的就是這個** |
+| `proofOfHuman` | Orb 驗證(高保證) |
+| `passport` | NFC 護照 |
+| `identityCheck` | 證件屬性(年齡、國籍…) |
+| `orbLegacy` / `secureDocumentLegacy` / `documentLegacy` | World ID 3.0 舊 preset |
+| `deviceLegacy` | 已 deprecated,官方叫你改用 Selfie Check |
 
-「legacy」看起來像被淘汰的,但它才是對的。**別選 `proof of human`。**
+「legacy」看起來像被淘汰的,但它才是對的。**別選 `proofOfHuman`。**
+(2026-09-07 從官方 credentials 頁核對:錄影裡唸的是口語,SDK 裡實際是 camelCase。
+`deviceLegacy` 被 deprecate、官方指向 Selfie Check —— 這解釋了「legacy」為什麼會
+出現在正確答案上。)
+
+> ⚠️ **Selfie Check 目前跑 World ID 3.0,不是 4.0。** 官方原文:「Currently uses
+> World ID 3.0 technology, with World ID 4.0 support not yet available.」
+> 後果:v4 的 `rp_context`(後端先簽 RP signature)**用不到**,後端驗證要走
+> **v2 端點吃 `app_id`**,不是 `/api/v4/verify/{rp_id}`。
 V3 / V4 proofs 都可以用。
 
 ### 注意

@@ -346,30 +346,6 @@ probing contracts to find out which it was.
 
 ---
 
-## Summary
-
-**What worked well:** the version story (3.0 vs 4.0) is stated plainly instead of left
-implicit; the credential's limits are described honestly, including what it explicitly
-does not guarantee; the Sandbox coverage matrix and the disclosed known limitations are
-genuinely useful and saved us from re-reporting them; and `.md` URL suffixes make the
-docs greppable.
-
-**What cost us the most time,** in order:
-
-1. **The iOS install instructions are stale and contradict the product** — the
-   documented public link is closed, and the docs explicitly deny needing the
-   per-email enrolment that actually works and is only discoverable in the Portal
-2. An unbounded, un-SLA'd wait on a hard access gate, in a 10-day event
-3. Two separate access gates with two separate channels, never described together
-4. The access requirement being invisible on the page where you most need it, and
-   phrased there without an actual contact address
-5. Onchain verification being neither documented nor explicitly ruled out
-
-All five are documentation, distribution, and process issues — not product issues. The credential
-itself does exactly what we need it to do, and we picked it on the merits.
-
----
-
 ## 5. The access gate, revisited: how access was actually distributed
 
 *Logged 2026-09-07, after watching the recording of the official ETHGlobal × World
@@ -455,3 +431,165 @@ would remove an entire blocking dependency.
 *(Flagged as our reading of the two docs pages, not as confirmed behaviour. If it is
 wrong, that is itself worth knowing: it would mean the Sandbox gate silently blocks the
 one credential that was designed not to need special hardware.)*
+
+---
+
+## 6. The flag was already enabled. Nothing in the product could tell us.
+
+*Logged 2026-09-07, ~17:30 UTC+8. This is the single most consequential entry in this
+document, and it is the one we would most like someone at World to read.*
+
+We spent five days blocked on the Selfie Check (Beta) feature flag: an email on 09-02
+that was never answered, a Google Form that was never answered, a plan to escalate on
+Discord, and a workshop at 03:00 local time that we slept through and had to recover
+from a recording.
+
+**The flag was on.** We only found out by giving up on the UI and calling an
+undocumented endpoint.
+
+### 6.1 The Developer Portal has no credential surface at all
+
+`World ID Configuration` — the page whose name promises exactly this answer — contains,
+in full:
+
+| Section | Contents |
+|---|---|
+| (top) | App ID, RP ID, Signer address |
+| Key | Rotate signer key |
+| Danger zone | Switch to self-managed · Delete this app |
+
+That is the entire page. There is no credential list, no verification-level selector, no
+Selfie Check toggle, no "access requested / pending / granted" state — **nothing that
+refers to credentials at any point.** The `Verification` page is a log of verifications
+performed, not a configuration surface, and it is empty until someone verifies.
+
+So a developer in our position has no way, anywhere in the product, to answer *"has my
+access request been granted?"* The honest answer we arrived at was "the Portal cannot
+tell you; ask a human on Discord." For a self-serve developer platform that is a
+significant gap, and it is the direct cause of the five days.
+
+### 6.2 One undocumented request answered what five days of email could not
+
+```
+POST https://developer.worldcoin.org/api/v1/precheck/{app_id}
+Content-Type: application/json
+{"action": "expand-policy"}
+```
+
+```json
+{
+  "engine": "cloud",
+  "is_staging": false,
+  "enable_face_check": true,
+  "can_user_verify": "yes",
+  "action": { "action": "expand-policy", "status": "active",
+              "max_verifications": 1, "max_accounts_per_user": 1 }
+}
+```
+
+`enable_face_check: true`. Unauthenticated, instant, and **not mentioned once in the
+docs** — we found it by reasoning about what IDKit itself must call before rendering.
+
+Two observations:
+
+1. **The data exists and is already public.** This is not a case of information the
+   platform does not have. It is one boolean, served without authentication, that the
+   Portal simply does not render. Putting `enable_face_check` on the World ID
+   Configuration page — even as read-only text — would have saved us five days.
+2. **`precheck` is genuinely useful and completely undocumented.** It is the fastest way
+   to confirm an app's configuration, and every developer debugging an integration
+   wants it. It deserves a documented page of its own.
+
+**Suggested fix, in one sentence:** render the app's enabled credentials on the World ID
+Configuration page, with an explicit state for *not enabled — request access*, linking to
+whatever the current request channel is.
+
+### 6.3 `max_verifications` defaults to 1, and that silently breaks hackathon demos
+
+The action we created defaulted to `max_verifications: 1` and
+`max_accounts_per_user: 1` — one verification per person, ever, for that action.
+
+For a production sybil-resistance use case that default is correct. For **every**
+hackathon project it is wrong, and it fails in the worst possible way: the first
+verification succeeds, so nothing looks broken. You discover it while recording your
+demo video, or during live judging, when the second attempt fails and the nullifier is
+already spent and cannot be reset.
+
+We caught this by reading the `precheck` response, not from any warning in the Portal.
+
+**Suggested fixes:** (a) surface `max_verifications` in the action-creation form with a
+one-line explanation of what "1" means for repeat testing; (b) for hackathon-issued apps,
+default it to unlimited; (c) at minimum, warn when an action's only verification has been
+consumed, instead of returning a generic failure.
+
+### 6.4 The app configuration flow leads to an app-store listing, not to configuration
+
+Looking for credential settings, the natural next click is the app's configuration
+wizard. It opens a four-step flow — *Basic information · Availability · Localised
+content · Review and confirm* — with a logo dropzone, publisher name, and an
+`App Official Website` field marked required.
+
+This is a **World App store submission flow**. Our integration is `External integration`,
+not a Mini App: we never need to be listed in the store, and completing this wizard would
+put the app into a review queue for no reason. Nothing labels it as optional, or as
+store-listing rather than configuration, and it sits where configuration should be.
+
+Related: our app reports `is_staging: false`. We had intended to create a Staging app and
+believed we had. The environment is not shown anywhere we looked in the Portal; we
+learned it from `precheck`. Whether an app is staging or production changes which World
+App can verify against it, so it should be visible on the configuration page.
+
+### 6.5 What this means for the earlier sections
+
+Sections 1, 2, 4 and 5 describe the access gate as an unresolved blocker. **It resolved
+itself at 17:30 on 09-07 in the sense that it had never actually been closed** — we were
+blocked by the absence of a status display, not by the absence of access. We are leaving
+those sections exactly as written, because the experience they record is real and the
+timestamps matter: for five days, a developer doing everything the documentation asked
+had no way to discover that they could already proceed.
+
+If one change comes out of this document, we would like it to be the one in 6.1.
+
+---
+
+## Summary
+
+*Rewritten 2026-09-07 after section 6. The earlier version of this summary said we were
+blocked by "an unbounded, un-SLA'd wait on a hard access gate." That turned out to be
+wrong in an instructive way, and the correction is the most useful thing here.*
+
+**What worked well:** the version story (3.0 vs 4.0) is stated plainly instead of left
+implicit; the credential's limits are described honestly, including what it explicitly
+does not guarantee; the Sandbox coverage matrix and the disclosed known limitations are
+genuinely useful and saved us from re-reporting them; `.md` URL suffixes make the docs
+greppable; and the Portal's **Install World ID Sandbox** panel is the best-built thing we
+touched — clear steps, visible pending state, tells you what happens next. It is exactly
+the pattern the credential gate needs and does not have.
+
+**What cost us the most time,** in order:
+
+1. **We were never actually blocked.** The Selfie Check flag was enabled on our app, and
+   no surface in the product said so — not the Portal, not an email, not the docs. Five
+   days were lost to the absence of a status display, not to the absence of access. One
+   read-only boolean on the World ID Configuration page would have prevented all of it.
+   (§6.1, §6.2)
+2. **The iOS install instructions are stale and contradict the product** — the documented
+   public link is closed, and the docs explicitly deny needing the per-email enrolment
+   that actually works and is only discoverable in the Portal. (§4.3)
+3. Two separate access gates with two separate channels, never described together, and
+   the more important of the two having no self-serve entry point at all. (§1.1, §5)
+4. The access requirement being invisible on the page where you most need it, and phrased
+   there without an actual contact address. (§1.1)
+5. `max_verifications: 1` as a silent default that breaks the second demo run, discovered
+   only by reading an undocumented API response. (§6.3)
+6. Onchain verification being neither documented nor explicitly ruled out. (§2)
+
+Every one of these is a documentation, surfacing, or process issue — **not one of them is
+a problem with the credential.** Selfie Check does exactly what we needed: a
+medium-assurance human check that gates privilege *expansion* in an AI-agent wallet,
+without demanding an Orb from someone approving a payment on their phone. We picked it on
+the merits and would pick it again.
+
+**The one change we would ask for:** show a developer, in the Developer Portal, which
+credentials their app can use. The data is already public and unauthenticated — it just
+is not rendered.
