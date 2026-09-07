@@ -5,14 +5,13 @@ import { IPolicy, SpendContext } from "./IPolicy.sol";
 import { Reason } from "./Reason.sol";
 
 /// @title StandardPolicy —— 預設規則:代幣白名單、收款人白名單、單筆上限、週期預算、時段
-/// @notice 介面只要求 `view`;這一份刻意收緊成 `pure`。
+/// @notice 介面允許有副作用;這一份刻意收緊成 `pure`。
 ///         沒有 storage、沒有 owner、沒有 constructor 參數,也不讀任何外部合約 ——
-///         所以同一份 bytecode 部署幾次都是同一個 codehash,而且 codehash
-///         **完全決定行為**。允許清單因此才管得住它,agent 也能在鏈下完全重現判斷。
+///         所以判斷完全由輸入決定,agent 和前端可以在鏈下完全重現。
 ///
 ///         代價寫在這裡以免日後忘記:這份 policy **讀不到外部狀態** ——
 ///         沒有價格預言機、沒有共用黑名單、沒有跨 agent 共用預算。
-///         那些要另外寫一份 `view` 的實作,介面已經留好門。
+///         那些要另外寫一份實作(例如 `SharedBudgetPolicy`),介面已經留好門。
 contract StandardPolicy is IPolicy {
     /// @dev 檢查順序即為理由碼的優先序。多條同時違反時,回報**最外層**的那條。
     ///      這樣 agent 修正一項之後重試,才會逐步收斂而不是在同一層打轉。

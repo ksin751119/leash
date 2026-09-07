@@ -1,7 +1,7 @@
 # 事件 Schema(定稿)
 
-**狀態:** 🔒 **已凍結**(2026-09-05)
-**日期:** 2026-09-05
+**狀態:** 🔒 **已凍結**(2026-09-05 凍結;**2026-09-07 解凍一次改完又凍回去**,見變更紀錄)
+**日期:** 2026-09-07
 **為什麼先寫這份:** subgraph 吃的是事件。合約寫完才發現事件不夠用,
 代價是重新部署 → 重新索引 → 改 mapping → 改 agent 查詢,一次連鎖四層。
 見 `sprint.md` 判斷①。
@@ -33,9 +33,9 @@
 
 ## 誰判定哪些理由碼
 
-**理由碼 1–4、10 由 `LeashAccount` 在「呼叫 policy 之前」判定;5–9 由 policy 判定。**
+**理由碼 1–4、10 由 `LeashAccount` 在「呼叫 policy 之前」判定;5–9、11 由 policy 判定。**
 
-這條線是刻意畫的:綁定關係、policy 指標、codehash 允許清單、暫停 —— 這些是安全關鍵,
+這條線是刻意畫的:綁定關係、policy 指標、policy 批准清單、暫停 —— 這些是安全關鍵,
 永遠留在帳戶自己手上。policy 只回答「這筆花費符不符合規則」,**換掉 policy 動不了控制權**。
 
 ## 理由碼(`uint8 reason`)
@@ -48,15 +48,16 @@
 | 1 | `AGENT_NOT_BOUND` | 這個 agent 不屬於這個名字 | ADMIN |
 | 2 | `AGENT_REVOKED` | 已被撤銷 | ADMIN(縮權免刷臉,恢復要刷臉) |
 | 3 | `NO_POLICY` | ENS 上讀不到 policy 指標 | ADMIN |
-| 4 | `POLICY_CODEHASH_NOT_APPROVED` | policy 位址的 codehash 不在允許清單 | **只有刷臉** |
+| 4 | `POLICY_NOT_APPROVED` | policy 位址不在批准清單 | **只有刷臉** |
 | 5 | `TOKEN_NOT_ALLOWED` | 這個代幣不在允許清單 | **刷臉** |
 | 6 | `PAYEE_NOT_ALLOWED` | 收款人不在白名單 | **刷臉** |
 | 7 | `OVER_TX_LIMIT` | 單筆超過上限 | **刷臉** |
 | 8 | `OVER_PERIOD_LIMIT` | 本週期累計超過上限 | **刷臉** |
 | 9 | `OUTSIDE_TIME_WINDOW` | 不在允許的時段內 | **刷臉** |
 | 10 | `PAUSED` | 整個帳戶被暫停 | ADMIN |
+| 11 | `OVER_SHARED_LIMIT` | 多個 agent 共用的總預算爆了 | **刷臉** |
 
-> 4–9 是「擴權」,一律要 Selfie Check。1–3、10 是 ADMIN 的日常操作。
+> 4–9、11 是「擴權」,一律要 Selfie Check。1–3、10 是 ADMIN 的日常操作。
 > 這張表就是 `PLAN.md`「擴權 / 縮權的不對稱」的機器可讀版本。
 
 ---
@@ -85,13 +86,13 @@ event PolicyPointerSet(
     bytes32 indexed node,
     address indexed policy,    // 0x0 = 清空,等同全面停機
     address indexed setBy,
-    bytes32         policyCodehash  // 設定當下讀到的 EXTCODEHASH
+    bool            approved        // 設定當下,這個位址在不在批准清單裡
 );
 ```
 
-**為什麼 `policyCodehash` 要記在這裡:** ENS 指標由 ADMIN 控制,codehash 允許清單由刷臉控制。
-兩者分離才有意義 —— ADMIN 金鑰被偷,攻擊者能改指標,但指不到一份沒被批准過的 code。
-把當下的 codehash 記進事件,subgraph 就能直接呈現「這個指標指到的東西被批准過嗎」。
+**為什麼 `approved` 要記在這裡:** ENS 指標由 ADMIN 控制,批准清單由刷臉控制。
+兩者分離才有意義 —— ADMIN 金鑰被偷,攻擊者能改指標,但指不到一份沒被批准過的 policy。
+把當下的結果記進事件,subgraph 不必自己重算就能呈現「這個指標指到的東西被批准過嗎」。
 
 ---
 
@@ -103,11 +104,11 @@ event PolicyPointerSet(
 event PolicyResolved(
     bytes32 indexed node,
     address indexed policy,
-    bytes32         policyCodehash,
-    bool            codehashApproved
+    bool            approved
 );
 
 event SpendExecuted(
+    bytes32         node,         // 這筆花費是在哪個 ENS 名字底下發生的
     address indexed agent,
     address indexed payee,
     address indexed token,
@@ -119,6 +120,7 @@ event SpendExecuted(
 );
 
 event SpendBlocked(
+    bytes32         node,
     address indexed agent,
     address indexed payee,
     address indexed token,
@@ -129,11 +131,19 @@ event SpendBlocked(
     uint256         limit
 );
 
+/// 帳戶初始化。證明這個 EOA 現在委派給 LeashAccount。
+/// 注意:「拆掉委派」不發事件 —— EIP-7702 沒有 log,只能靠 isLeashed() 輪詢。
+event Leashed(bytes32 indexed node, address indexed wallet, address impl);
+
 event AgentBound(address indexed agent, bytes32 indexed node);
 event AgentRevoked(address indexed agent, address indexed by);
 event Paused(address indexed by);
 event Unpaused(address indexed by, bytes32 attestationHash);
 ```
+
+**為什麼兩個花費事件都帶 `node`:** 一個帳戶底下可以有多個 agent、指向不同的 policy。
+沒有 `node`,subgraph 要反查「這筆算在誰頭上」就得自己重建綁定關係的時間軸。
+`node` 不設 indexed —— 三個 indexed 名額給了 agent/payee/token,那是實際會被查的維度。
 
 **`SpendExecuted` 和 `SpendBlocked` 為什麼不合併成一個帶 `bool allowed` 的事件:**
 subgraph 的 handler 分開寫比較乾淨,而且 agent 查「我還剩多少」和查「我為什麼被擋」
@@ -158,7 +168,7 @@ event LimitRaised(
 );
 event PayeeAllowed(bytes32 indexed node, address indexed payee, bytes32 attestationHash);
 event TokenAllowed(bytes32 indexed node, address indexed token, bytes32 attestationHash);
-event PolicyCodehashApproved(bytes32 indexed codehash, bytes32 attestationHash);
+event PolicyApproved(address indexed policy, string description, bytes32 attestationHash);
 
 // --- 縮權:不帶 hash,任何時候都能做 ---
 event LimitLowered(
@@ -170,7 +180,7 @@ event LimitLowered(
 );
 event PayeeRemoved(bytes32 indexed node, address indexed payee, address indexed by);
 event TokenRemoved(bytes32 indexed node, address indexed token, address indexed by);
-event PolicyCodehashRevoked(bytes32 indexed codehash, address indexed by);
+event PolicyRevoked(address indexed policy, address indexed by);
 ```
 
 ---
@@ -202,8 +212,21 @@ event AttesterChanged(address indexed oldAttester, address indexed newAttester);
 |---|---|---|---|
 | 1 | 我這個週期還剩多少? | 最新的 `SpendExecuted.spentAfter` / `limit` | 必做 |
 | 2 | 這個收款人付過嗎? | `PayeeAllowed` − `PayeeRemoved` | 必做 |
-| 3 | 我的 policy 現在是哪一份、批准過嗎? | `PolicyPointerSet` + `PolicyCodehashApproved` | 必做 |
+| 3 | 我的 policy 現在是哪一份、批准過嗎? | `PolicyPointerSet` + `PolicyApproved` | 必做 |
 | 4 | 我上次為什麼被擋? | `SpendBlocked.reason` | **砍單清單第 2 項** |
+
+---
+
+## 一件 subgraph 看不到的事:韁繩還在嗎
+
+`isLeashed(node)` 檢查的是「錢包現在還委派給 `LeashAccount` 嗎」。
+
+**EIP-7702 的委派變更不發任何 log**,所以 subgraph 索引不到 ——
+這件事只能靠 **`eth_call` 輪詢**(前端進頁面時查一次,監控腳本定期查)。
+文件裡寫清楚,免得之後有人以為漏做了事件。
+
+帳戶第一次初始化時發 `Leashed(node, wallet, impl)`,那是「裝上」的紀錄;
+「拆掉」沒有對應的事件,這是協定的限制,不是我們的疏漏。
 
 ---
 
@@ -213,3 +236,9 @@ event AttesterChanged(address indexed oldAttester, address indexed newAttester);
 |---|---|---|
 | 2026-09-05 | 初稿 | — |
 | 2026-09-05 | 🔒 凍結;補上「誰判定哪些理由碼」 | 動工前定稿 |
+| 2026-09-07 | **解凍一次**:批准清單的 key 從 codehash 改成**位址** | policy 允許有自己的 storage 之後,codehash 不再決定行為(已實測:同 codehash 兩份合約判斷相反)。詳見 `PLAN.md`「允許清單的 key 用位址」 |
+| 2026-09-07 | `PolicyCodehashApproved` → `PolicyApproved(address, string, bytes32)`;`PolicyCodehashRevoked` → `PolicyRevoked(address, address)` | 同上 |
+| 2026-09-07 | `PolicyPointerSet.policyCodehash`(bytes32)→ `approved`(bool);`PolicyResolved` 兩個 codehash 欄位合併成 `approved`(bool) | 位址已經是 indexed 參數,再記一次指紋沒有資訊量 |
+| 2026-09-07 | 理由碼 4 改名 `POLICY_NOT_APPROVED`(**數字不動**);新增 11 `OVER_SHARED_LIMIT` | 共用預算改由一份 policy 自己記帳,不在帳戶開特例 |
+| 2026-09-07 | `SpendExecuted` / `SpendBlocked` 各補一個 `node` 欄位;新增 `Leashed` | 補上之前議定但沒寫進來的三項 |
+| 2026-09-07 | 🔒 **重新凍結** —— 合約還沒部署、subgraph 還沒寫,這是最後一次無痛改的機會 | — |

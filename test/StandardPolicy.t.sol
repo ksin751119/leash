@@ -149,8 +149,8 @@ contract StandardPolicyTest is Test {
 
     // --- 不變式 ---
 
-    /// policy 是 pure 的前提:同樣的輸入永遠得到同樣的輸出,
-    /// 不受 block number、timestamp、caller 影響。codehash 允許清單靠這條成立。
+    /// 這一份 policy 是 pure 的:同樣的輸入永遠得到同樣的輸出,
+    /// 不受 block number、timestamp、caller 影響 —— 鏈下預演才能保證跟鏈上一致。
     function testFuzz_is_deterministic(uint256 amount, uint256 limit, uint256 spent, uint64 ts)
         public
     {

@@ -24,7 +24,7 @@ AI agent 開始能動錢了,但目前的做法只有兩種,都不好:
 **把權限表達成程式碼(policy as code),在鏈上執行。**
 
 - 每個 agent 綁一份 **policy 合約**
-- agent 送交易時,EIP-7702 delegate 先用 `staticcall` 問那份 policy
+- agent 送交易時,EIP-7702 delegate 先 `call` 那份 policy 問一句
 - policy 回傳的不是 OK → **不轉帳**,發 `SpendBlocked(reason)`,交易正常結束
 - **agent 沒有繞過的路徑**,因為檢查發生在它自己的執行流程裡
 
@@ -46,8 +46,8 @@ RootRegistry.getSubregistry("eth")
     → AcmeRegistry.getResolver("vendors")
       → resolver.resolve(dnsName, text(node, "policy"))
         → policy 合約位址
-          → EXTCODEHASH 比對允許清單
-            → staticcall check(SpendContext)
+          → 比對批准清單(位址)
+            → call check(SpendContext)
 ```
 
 **拿掉 ENS,delegate 解不出 policy,任何花費都過不了(理由碼 3)。**
@@ -79,9 +79,9 @@ RootRegistry.getSubregistry("eth")
                                   ▲                  ▼
                      Selfie Check │          ┌───────────────┐
                      才能「擴權」  │          │ Policy 合約   │
-                                  │          │ (stateless)   │
+                                  │          │ 可有自己的帳本 │
                     ┌─────────────┴───┐      └───────┬───────┘
-                    │  人類 / 組織     │              │ staticcall
+                    │  人類 / 組織     │              │ call
                     └─────────────────┘              │
                                                      │
    ┌──────────┐   MCP    ┌──────────────┐   tx   ┌───┴────────────┐
@@ -100,7 +100,7 @@ RootRegistry.getSubregistry("eth")
 
 | 鑰匙 | 持有什麼 | 能做什麼 | 刻意做不到什麼 |
 |---|---|---|---|
-| **ADMIN** | `leash.eth` + ENS EAC 角色 | 改規則、發子名、撤銷 agent、批准 codehash(要帶簽章) | **絕不做 7702 委派**,不裝營運資金 |
+| **ADMIN** | `leash.eth` + ENS EAC 角色 | 改規則、發子名、撤銷 agent、批准 policy 位址(要帶簽章) | **絕不做 7702 委派**,不裝營運資金 |
 | **WALLET** | 錢;被 7702 委派成 `LeashAccount` | 付錢(每筆都要過 policy) | **ENS 上的角色是 `0`** —— 不是檢查出來的,是它從來就沒有過 |
 | **AGENT** | 什麼都不持有 | 發起花費請求 | 拿不到錢、拿不到權限,只是個被 policy 認得的 `msg.sender` |
 
@@ -139,12 +139,17 @@ RootRegistry.getSubregistry("eth")
 
 ---
 
-## Policy 層的設計決定(2026-09-06 定案)
+## Policy 層的設計決定(2026-09-07 定案,推翻 09-06 版)
+
+> **這一節在 9/6 寫過一版,9/7 整節重寫。** 舊版把允許清單的 key 定為 codehash,
+> 並因此要求 policy 不得有 storage,再為「共用預算」另外設計了兩套機制。
+> 討論後確認那條路是「先選機制、再找需求」。**改成全位址,砍掉三個機制。**
+> 舊版的推理保留在下面「為什麼推翻」,免得日後又繞回去。
 
 ### policy 是什麼
 
 一份合約、一個位址,回答一個問題:「這筆花費符不符合規則?」回傳一個 `uint8`。
-**它不碰錢、不存資料、不改任何東西。**
+**它不碰錢、碰不到帳戶的 storage。**(它可以有自己的 storage —— 見下面。)
 
 規則要獨立成合約而不是寫死在錢包裡,理由有四個:
 
@@ -155,139 +160,150 @@ RootRegistry.getSubregistry("eth")
 | 一份規則多處用 | 不同子名可以指同一份,也可以各指各的 |
 | 權限可以切開 | 「改規則」和「動錢」變兩件事,交給兩把不同的鑰匙 |
 
-### 呼叫方式:`staticcall`,不是 `delegatecall`
+### 呼叫方式:一般 `call`
 
-原本的架構圖畫 `delegatecall`,**改掉了**。
+| 做法 | policy 能寫**帳戶**的 storage 嗎 | policy 能寫**自己**的 storage 嗎 |
+|---|---|---|
+| `delegatecall` | **能。整個帳戶都能寫** ← 絕對不用 | 不能(根本沒有「自己」) |
+| `staticcall` | 不能 | 不能 |
+| **`call`(採用)** | **不能** | **能** |
 
-| 做法 | policy 能寫嗎 | 能讀外部狀態嗎 | codehash 保證什麼 |
-|---|---|---|---|
-| `delegatecall` | **能寫整個帳戶** | 能 | 幾乎不保證 —— 同一份 code 在不同 storage 下行為不同 |
-| `staticcall` + `view` | 不能 | **能**(預言機、共用黑名單) | 保證邏輯,但外部值會變 |
-| `staticcall` + `pure` | 不能 | 不能 | **完全決定行為**,鏈下可重現 |
+> ⚠️ **核心保證是「policy 碰不到帳戶的 storage」,而它只被 `delegatecall` 破壞。**
+> `call` 和 `staticcall` 在這件事上一樣安全 —— 差別只在 policy 能不能記東西。
 
-決定:**`IPolicy.check` 宣告 `view`,`StandardPolicy` 實作 `pure`。**
-Solidity 允許 override 時收緊可變性,所以留門是零成本。
+**為什麼從 `staticcall` 放寬到 `call`:** 「多個 agent 共用一筆總預算」需要有人記帳。
+policy 自己記,是唯一不用在帳戶裡開特例的做法(見下一節)。
 
-**兩個實測支撐這個決定:**
+**護欄(寫 `LeashAccount` 時務必實作):**
 
-1. 7702 委派後 delegate 讀到的是 EOA 的**空 storage**(`decimals()` 回 0)——
-   任何「把規則存在自己 storage 裡」的 policy 在 delegatecall 之下都是壞的
-2. `immutable` 讀取**需要 `view`,不能是 `pure`**(Solc 0.8.28 Error 2527)——
-   `PolicySet` 需要它,還好介面已經放寬
+1. **重入鎖** —— policy 是外部合約,可以回頭呼叫帳戶。整個 `execute` 上 mutex。
+2. **gas 上限** —— `call{gas: 200_000}`;policy 燒光 gas 不該讓整筆交易死掉,
+   回傳失敗一律當成「擋下」(fail-closed)。
+3. **回傳值長度檢查** —— 不是剛好 32 bytes 就當擋下。
+4. **先扣後付** —— 帳戶自己的記帳在轉帳之前完成。
 
-> ⚠️ **「policy 改不了東西」的保證來自 `staticcall`,不是來自 `pure`。**
-> staticcall 之下 EVM 禁止一切寫入,跟函式宣告什麼無關。`pure` 多買到的只有決定性。
-
-### policy 可以有記憶,但寫入的動作由帳戶執行
-
-`delegatecall` + slot 命名空間(ERC-7201 那套)**不能用** —— 命名空間是慣例不是強制,
-delegatecall 之下 `SSTORE` 沒有任何限制,一行就能寫進 codehash 允許清單,
+`delegatecall` + slot 命名空間(ERC-7201 那套)**永遠不用** —— 命名空間是慣例不是強制,
+delegatecall 之下 `SSTORE` 沒有任何限制,一行就能寫進批准清單,
 Selfie Check 整道閘門被繞過(**循環授權:門鎖的鑰匙放在門後面**)。
 
-改成帳戶代寫:
+### 允許清單的 key 用**位址**
 
 ```solidity
-// LeashAccount:命名空間來自「呼叫我的人是誰」,policy 偽造不了
-mapping(address policy => mapping(bytes32 => bytes32)) private _scratch;
-function readScratch(bytes32 key) external view returns (bytes32) {
-    return _scratch[msg.sender][key];
+mapping(address policy => bool) public approved;   // 只有刷臉能加,任何時候能移除
+```
+
+**為什麼位址:位址同時釘住「邏輯」和「資料」,codehash 只釘住邏輯。**
+
+同一份 bytecode 部署兩次,codehash 完全相同,但兩份的 storage 可以完全不同 ——
+已實測:兩份同 codehash 的合約,`lo.check(500) = false`、`hi.check(500) = true`。
+只要 policy 允許有 storage,codehash 就不再決定行為,它宣稱的保證直接失效。
+
+而「位址 → 程式碼」在 **EIP-6780 之後是永久的**(selfdestruct 只在建立的同一筆交易內
+才真的刪 code),所以教科書上「CREATE2 + selfdestruct 可以換掉同位址的 code」
+這條反對理由已經死了。**不要再拿它當用 codehash 的理由。**
+
+#### 為什麼推翻 codehash(記下來,免得繞回去)
+
+9/6 版列了三個理由,逐條檢討:
+
+| 當時的理由 | 現在的判斷 |
+|---|---|
+| 「可以批准還沒部署的程式碼」 | 真的獨特,但**我們用不到** —— 見下面「規則庫」 |
+| 「人同意的是邏輯,不是位址」 | 位址一樣可以驗:批准前去看那個位址裝什麼。而且 policy 有 storage 之後,只看邏輯是**不夠**的 |
+| 「7702 委派的 EOA 當 policy 會被指紋擋掉」 | 位址批准清單本來就只會有我們部署過的合約;要防這條,批准時檢查 `code.length` 就好 |
+
+**codehash 唯一無可取代的場合:你要驗證的東西根本沒有位址**
+(還沒部署、counterfactual、跨鏈比對同一份 code)。Leash 從頭到尾沒有這種東西 ——
+所有要驗證的對象都是鏈上活著的實例。
+
+> 「規則庫」這個功能**不需要 codehash**:先把五份 policy 部署好,
+> 一次刷臉批准五個位址,之後 ADMIN 在五者之間切換不用再刷臉。
+> Demo 的節奏一模一樣,少一層概念。
+
+### 共用預算:一份 policy,不是帳戶裡的特例
+
+需求:每個 agent 有**自己的錢包**,但所有 agent 花的加總不得超過一個總額度。
+
+因為 policy 可以有 storage,這件事塌縮成一份合約,**帳戶完全不用改**:
+
+```solidity
+contract SharedBudgetPolicy is IPolicy {
+    uint256 public immutable LIMIT;
+    uint256 public immutable PERIOD;
+    mapping(uint256 period => uint256) public spent;   // 全體共用
+
+    function check(SpendContext calldata ctx) external returns (uint8) {
+        uint256 p = block.timestamp / PERIOD;
+        if (spent[p] + ctx.amount > LIMIT) return Reason.OVER_SHARED_LIMIT;
+        spent[p] += ctx.amount;                        // policy 自己記自己的帳
+        return Reason.OK;
+    }
+}
+```
+
+三個 agent 的 ENS 記錄各自指向**同一個位址**,共用預算就成立了 ——
+不需要新的合約類型、不需要帳戶多一個欄位、不需要新的事件。
+
+> **這是「policy 是唯一標準」的具體意思:** 凡是「這筆花費該不該過」的判斷,
+> 一律在 policy 裡。帳戶只判斷「我該不該信這份 policy」(理由碼 1–4、10)。
+> **不為個別需求在帳戶裡開特例。**
+
+`check` 有副作用,所以它**只能由帳戶在真的要付款時呼叫一次**。
+前端和 agent 的預演走 `eth_call`(不上鏈,不留下痕跡)。
+
+### 怎麼證明韁繩還在(`isLeashed`)
+
+前面五個問題都答了,但少了第六個:**「我怎麼知道這個錢包現在真的還被管著?」**
+
+我們的錢包是 7702 委派的 EOA。它的行為完全取決於委派到哪裡,而**位址從頭到尾一樣**:
+
+```
+委派前   0x46C0…  →  code 是空的,誰拿到私鑰誰花錢
+委派後   0x46C0…  →  LeashAccount,每筆都要過 policy
+被改掉   0x46C0…  →  委派到別處,韁繩沒了
+```
+
+7702 的 code 就是 23 bytes:`0xef0100 || address`,直接讀出委派對象:
+
+```solidity
+function delegateOf(address wallet) internal view returns (address impl) {
+    if (wallet.code.length != 23) return address(0);
+    bytes memory c = wallet.code;
+    if (c[0] != 0xef || c[1] != 0x01 || c[2] != 0x00) return address(0);
+    assembly { impl := shr(96, mload(add(c, 0x23))) }   // 跳過 3 bytes 前綴
 }
 
-// IPolicy:讀用 callback(staticcall 內可以),寫用回傳值
-function check(SpendContext calldata ctx)
-    external view returns (uint8 reason, bytes32[] memory writes);  // (key,value) 成對,上限 8
-
-// LeashAccount.execute:實際執行 SSTORE 的是帳戶
-for (uint i; i < w.length; i += 2) _scratch[policy][w[i]] = w[i+1];
+function isLeashed(bytes32 node) external view returns (bool, address);  // ENS → 錢包 → 委派對象
 ```
 
-**安全論證:** policy 本來就能對任何一筆花費回傳 `OK`。
-給它「寫自己那格」的能力**沒有多給任何原本沒有的權限** —— 最壞是把自己的帳本寫爛,
-導致自己的判斷變爛,而它本來就能直接判斷爛。**不動安全模型,只擴充表達力。**
+**任何人(廠商、監控、前端)在跟這個 agent 做生意之前,可以一次呼叫確認韁繩還在**,
+不用問人、不用信任何人的說詞。subgraph 索引它之後,「韁繩被解開」就是一個可以告警的事件。
 
-換來的:滾動 24 小時窗、每個收款人分開計數、冷卻時間、累進限制(連三次被擋自動降額)。
+> codehash 也能做這件事(委派 code 與其 hash 一一對應),但**位址更好**:
+> UI 可以顯示「目前委派到 `0x1234…`」,codehash 只能顯示「不對」。
 
-**狀態放帳戶不放 policy**,因為:
+### 這一版砍掉的東西
 
-| | 狀態在 policy | **狀態在帳戶(採用)** |
+| 砍掉 | 為什麼 | 省下 |
 |---|---|---|
-| 換 policy | 舊狀態卡在舊合約,要遷移 | 換一格,舊的自動失效 |
-| policy 有 bug | **炸到所有用這份 policy 的錢包** | 只炸自己 |
+| codehash 批准清單 | 位址更準(同時釘資料),且我們沒有「無位址」的需求 | — |
+| 「policy 不得有 storage」的限制 | 那是 codehash 的附帶條件,codehash 沒了就沒理由 | — |
+| `Write[]` / `_scratch` 代寫管線 | policy 能寫自己的 storage 之後完全多餘 | 1.0h |
+| `SharedLedger` 獨立帳本合約 | 併進 `SharedBudgetPolicy` | 1.0h |
+| 帳戶層 `walletBudget` + 理由碼 11 | 帳戶不該有花費規則的特例 | 0.7h |
+| Merkle root 批准一整包 | 沒有對到任何使用者真的會問的問題 | — |
+| 批准前掃 policy bytecode 有沒有 SLOAD | 同上 | — |
+| **新增** `SharedBudgetPolicy` | 取代上面兩項,一份合約做完 | −1.0h |
+| **新增** `isLeashed` | 補上「韁繩還在嗎」這個真的有人會問的問題 | −1.0h |
+| | | **淨省 0.7h** |
 
-### 允許清單的 key 用 **codehash**,不用位址
+### 保留但降級為 stretch:多份 policy 的析取範式(DNF)
 
-**先砍掉一個不成立的理由:** 教科書講的「CREATE2 + selfdestruct 可以換掉同位址的 code」,
-在 **EIP-6780 之後已經死了** —— selfdestruct 只有在建立的同一筆交易內才真的刪 code。
-所以「位址 → 程式碼」現在是永久的,不要再用這條當理由。
+`(A ∧ B) ∨ (C ∧ D)` —— 子句內 AND,子句間 OR。**不做巢狀運算式。**
+`PolicySet` 本身實作 `IPolicy`,所以帳戶、ENS、批准閘門、事件、subgraph 全部不用改。
 
-codehash 真正買到的:
-
-1. **可以批准一份還不存在的程式碼** ← 見下一節,這是位址做不到的
-2. **人在刷臉時同意的是「邏輯」** —— 可以自己編譯 `StandardPolicy.sol` 比對出同一個指紋。
-   「批准位址 `0x7A3f…`」則要先去查那個位址裝什麼
-3. 7702 委派的 EOA 當 policy:23 bytes 的 designator 指紋不可能等於一份 957 bytes 合約的指紋;
-   就算誤批准了,一換委派指紋就變,自動失效。**位址擋不住這條**
-
-它**買不到**的(要誠實):policy 自己是個 `view` proxy 的話,兩種做法都被繞過。
-真正的防線是「批准前有人讀過那份 code」——那正是 Selfie Check 那一步的意義。
-
-> ❌ **一度考慮「位址 + codehash 配對釘死」,已收回。** 它解決的 7702 問題 codehash 本來就免疫,
-> 卻會關掉「預先批准」的能力。
-
-### 預先批准的規則庫(特色功能,零額外合約成本)
-
-因為指紋是從 source 算出來的,**不需要鏈上有任何東西**,所以人可以批准還沒部署的規則。
-
-```
-人在方便的時候(有手機、光線好、不趕時間)刷一次臉,
-一口氣批准五種情境的規則指紋:
-
-  平常            0x9c2e…    ← 已部署
-  採購旺季        0x41ba…    ← 未部署
-  緊急凍結        0x7f03…    ← 未部署
-  週末唯讀        0xd218…    ← 未部署
-  新供應商觀察期   0x88e1…    ← 未部署
-
-之後 ADMIN 在這五種之間切換不用再刷臉 —— 每一種都已經被真人同意過。
-真的要用的時候才部署,誰部署都可以。
-```
-
-**把「人的同意」和「鏈上的存在」解耦。人不必在系統需要它的那一刻在場。**
-
-前端要顯示 `已批准 · 未部署` 這個狀態 —— 零成本,而且很好講。
-
-### 多份 policy:析取範式(DNF)
-
-`(A ∧ B) ∨ (C ∧ D) ∨ (E)` —— 子句內 AND,子句間 OR。
-**不做巢狀運算式**,任何布林式都能寫成這個形狀,而它只是陣列的陣列,不需要 parser。
-
-OR 不是理論需求,是真實花錢規則的常見形狀:
-- 「單筆 ≤ 500」**OR**「有真人簽章」← agent 錢包最經典的模式
-- 「收款人在白名單」**OR**「金額 ≤ 50」← 陌生地址只能小額
-
-**`PolicySet` 本身實作 `IPolicy`,所以帳戶、ENS、codehash 閘門、事件、subgraph 全部不用改。**
-
-成員用 `immutable` 烤進 bytecode,所以**成員不同 → codehash 不同**(已實測)。
-批准一個 `PolicySet` 的指紋 = 批准**這個確切的組合**;換掉任何一份成員或改分組,都要重新刷臉。
-閘門從「管每份規則」升級成「管規則的組合方式」—— 比原本更嚴。
-
-**被擋時回報哪個理由:走最遠的那個子句。** 那是 agent 離通過最近的一條路,最有行動價值。
-
-成員的 codehash **在批准時驗一次**,不要每筆花費都驗 —— PolicySet 的指紋已經涵蓋成員名單。
-
-### 錢包層總預算(取代階層式 policy)
-
-「一筆交易同時過多層 policy」沿 ENS 階層疊加很漂亮,但**真正的成本不在 policy,在帳本要分層**
-(`mapping(node => spent)`、事件要能表達計進哪幾層、subgraph 三種 entity),3–4h 且連鎖四層。
-
-九成的效果用一個檢查就買到:
-
-```solidity
-// LeashAccount 自己判,在呼叫任何 policy 之前
-if (walletSpent + amount > walletLimit) return Reason.OVER_WALLET_LIMIT;  // 碼 11
-```
-
-Demo 畫面幾乎一樣:**三個 agent 各有額度、共用一個總預算,總預算爆了全部一起停。**
+OR 是真實花錢規則的常見形狀(「單筆 ≤ 500」**OR**「有真人簽章」),
+但它不在四幕 demo 的任何一幕裡。**9/11 主線綠燈之後再看。**
 
 ---
 
@@ -361,7 +377,7 @@ Demo 畫面幾乎一樣:**三個 agent 各有額度、共用一個總預算,總�
 |---|---|
 | **目前 policy** | 從 subgraph 讀:額度、已用、白名單收款人、agent 清單 |
 | **提高權限** | 改額度 / 加收款人 / 開新 agent → **一律先過 Selfie Check** |
-| **規則庫** | 已批准的 codehash 清單,每筆標 `已部署` / `已批准 · 未部署`(零成本加分項) |
+| **規則庫** | 已批准的 policy 位址清單,每筆顯示 `describe()` 與目前誰在用 |
 | **降低權限** | 撤銷 agent / 調低額度 → **不刷臉,一鍵執行** |
 
 **不做的:** 登入系統、多帳號、交易歷史頁、設定頁、行動版最佳化(桌機 + 手機掃 QR 即可)。
@@ -453,9 +469,8 @@ StandardPolicy  runtime 957 bytes · initcode 985 bytes
 而且 `selfdestruct` 的刪除**在交易結束時才生效**(實測 `code gone in same tx? false`)——
 整筆交易進行中那份 code 一直都在,「用完就消失」消失在所有事情都已經發生之後。
 
-加上我們的 policy 是 `pure`/`view`:沒有 storage、沒有 owner、不持有資產,
-**沒有攻擊面可以降**。真正的風險是「指標指到不該指的地方」,那條由 codehash 允許清單擋,
-跟 policy 有沒有常駐無關。
+加上 policy 不持有資產、碰不到帳戶 storage,**沒有攻擊面可以降**。
+真正的風險是「指標指到不該指的地方」,那條由位址批准清單擋,跟 policy 有沒有常駐無關。
 
 ## 阻塞項
 

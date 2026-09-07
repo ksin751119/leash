@@ -2,13 +2,11 @@
 pragma solidity 0.8.28;
 
 /// @notice 一次花費請求的完整脈絡。**由 `LeashAccount` 組好之後整包送進 policy。**
-/// @dev    這個 struct 存在的理由:讓 policy 可以是 `pure`。
-///         policy 不讀 storage、不讀 `block.timestamp`、不讀 `msg.sender` ——
-///         所有輸入都在這裡。三個後果:
-///         1. 用 `staticcall` 就夠,不需要 `delegatecall`,沒有 storage 撞位風險
-///            (賽前實測:7702 委派後讀到的是 EOA 的空 storage,見 docs/ensv2-sepolia.md)
-///         2. codehash 完全決定行為 —— 這正是 codehash 允許清單有意義的前提
-///         3. 前端和 agent 可以在鏈下用同一份輸入預演,結果保證一致
+/// @dev    這個 struct 存在的理由:policy 不需要、也不應該去帳戶裡撈東西。
+///         帳戶查完表把結論塞進來,policy 只做判斷。兩個後果:
+///         1. policy 是被 `call` 的外部合約,**碰不到帳戶的 storage**
+///            (只有 `delegatecall` 會破壞這條 —— 我們永遠不用它)
+///         2. 前端和 agent 可以用同一份輸入走 `eth_call` 預演,結果保證一致
 struct SpendContext {
     address agent;
     address payee;
@@ -27,18 +25,22 @@ struct SpendContext {
 
 /// @title IPolicy —— 可替換的規則實作
 /// @notice policy 位址存在 ENS 名字的 resolver 記錄裡,由 ADMIN 指定;
-///         但「這份 code 有沒有被批准過」由 codehash 允許清單決定,而那份清單要刷臉才能加。
+///         但「這個位址有沒有被批准過」由批准清單決定,而那份清單要刷臉才能加。
 ///         兩層分開,ADMIN 金鑰被偷也換不上沒批准過的規則。
 interface IPolicy {
-    /// @return reason `Reason.OK` 表示放行,其餘為攔截理由碼(5–9)
-    /// @dev **介面宣告 `view`,不是 `pure`。** 安全保證來自呼叫端用 `staticcall` ——
-    ///      在 staticcall 之下 EVM 禁止一切狀態寫入,跟這裡宣告什麼無關。
-    ///      留 `view` 是為了不把門關死:未來要寫一份讀預言機、讀共用黑名單、
-    ///      或讀跨 agent 共用預算的 policy,不必改介面。
-    ///      我們自己出貨的 `StandardPolicy` 收得更緊,實作成 `pure`
-    ///      (Solidity 允許 override 時把可變性收緊)—— 那份的 codehash
-    ///      因此完全決定行為,鏈下也能重現。
-    function check(SpendContext calldata ctx) external view returns (uint8 reason);
+    /// @return reason `Reason.OK` 表示放行,其餘為攔截理由碼
+    /// @dev **刻意不是 `view`。** policy 允許有自己的 storage —— 「多個 agent 共用一筆
+    ///      總預算」需要有人記帳,而讓 policy 自己記,是唯一不用在帳戶裡開特例的做法。
+    ///
+    ///      安全保證沒有因此變弱:policy 是被 `call` 的獨立合約,寫的是**自己的** storage。
+    ///      能碰到帳戶 storage 的只有 `delegatecall`,我們永遠不用。
+    ///
+    ///      **有副作用,所以帳戶只在真的要付款時呼叫一次。** 預演走 `eth_call`。
+    ///      呼叫端必須:上重入鎖、限 gas、回傳長度不對一律當成擋下(fail-closed)。
+    ///
+    ///      實作可以收緊可變性(Solidity 允許 override 時收緊)——
+    ///      `StandardPolicy` 就是 `pure` 的。
+    function check(SpendContext calldata ctx) external returns (uint8 reason);
 
     /// @notice 給人看的識別字串,會出現在前端與 demo 裡
     function describe() external pure returns (string memory);

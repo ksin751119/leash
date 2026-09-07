@@ -42,11 +42,12 @@
 |---|---|---|---|---|---|
 | 1 | Repo init、foundry、**EIP-7702 在 Sepolia 的可行性驗證** | 4 | M | — | 🔴 未驗證 |
 | 2 | **事件 schema 定稿**(寫死在文件裡再動工) | 2 | M | — | 🟡 改動代價高 |
-| 3 | `PolicyEngine` + policy 合約(額度、白名單、週期預算) | 6 | M | 2 | 🟢 |
+| 3 | `StandardPolicy` + `Reason` + `IPolicy`(額度、白名單、週期預算、時段) | 6 | M | 2 | ✅ **已完成 9/6**,16 個測試綠燈 |
+| 3b | `SharedBudgetPolicy` —— 多 agent 共用總預算(policy 自己記帳) | 1 | S | 3 | 🟢 09-07 設計改版後只剩一份合約 |
 | 4 | `LeashRegistry` —— 實作 ENSv2 `IRegistry` | 5 | M | 2 | 🟡 介面沒範例 |
 | 5 | `LeashResolver` —— **只實作 ENSIP-10 `resolve(bytes,bytes)`** | 4 | M | 4 | 🔴 見下方陷阱 |
 | 6 | ENS 接線 + 鏈上解析走通(`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | 🟢 指令已備 |
-| 7a | `LeashAccount` —— 執行前強制過 policy 的合約錢包 | 5 | M | 3,6 | 🟢 |
+| 7a | `LeashAccount` —— 執行前強制過 policy 的合約錢包(含重入鎖、policy gas 上限、`isLeashed`) | 5 | M | 3,6 | 🟢 |
 | 7b | 升級成 **EIP-7702 delegate**(EOA 直接被 policy 管) | 5 | **X** | 1,7a | 🔴 工具鏈風險 |
 | 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟢 |
 | 9 | Subgraph:schema + mappings + 部署 Studio + 索引 | 6 | M | 2,6,7a | 🟡 索引要時間 |
@@ -149,6 +150,22 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 5. **測試只留 happy path** —— hackathon 不是產品 (−4h)
 
 砍到第 3 項就回到 62h,低於產能,還有 7h buffer。
+
+---
+
+## 工時調整紀錄
+
+| 日期 | 調整 | h |
+|---|---|---|
+| 2026-09-07 | 砍掉 `Write[]`/`_scratch` 代寫管線 | −1.0 |
+| 2026-09-07 | 砍掉 `SharedLedger` 獨立帳本(併進 `SharedBudgetPolicy`) | −1.0 |
+| 2026-09-07 | 砍掉帳戶層 `walletBudget` 特例 | −0.7 |
+| 2026-09-07 | 新增 `SharedBudgetPolicy` | +1.0 |
+| 2026-09-07 | 新增 `isLeashed`(併進 7a,不另立項目) | +1.0 |
+| | **淨變化** | **−0.7** |
+
+原因見 `PLAN.md`「Policy 層的設計決定(2026-09-07 定案)」。
+`PolicySet`(DNF)降級為 9/11 之後的 stretch,不在上表內。
 
 ---
 
