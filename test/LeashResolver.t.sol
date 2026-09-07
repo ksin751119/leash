@@ -52,11 +52,7 @@ contract LeashResolverTest is Test {
         return abi.decode(out, (address));
     }
 
-    function _resolveText(bytes32 node, string memory key)
-        internal
-        view
-        returns (string memory)
-    {
+    function _resolveText(bytes32 node, string memory key) internal view returns (string memory) {
         bytes memory inner = abi.encodeWithSignature("text(bytes32,string)", node, key);
         return abi.decode(resolver.resolve(DNS_NAME, inner), (string));
     }
@@ -209,9 +205,7 @@ contract LeashResolverTest is Test {
 
     function test_unknown_text_key_reverts() public {
         bytes memory inner = abi.encodeWithSignature("text(bytes32,string)", NODE, "avatar");
-        vm.expectRevert(
-            abi.encodeWithSelector(LeashResolver.UnknownTextKey.selector, "avatar")
-        );
+        vm.expectRevert(abi.encodeWithSelector(LeashResolver.UnknownTextKey.selector, "avatar"));
         resolver.resolve(DNS_NAME, inner);
     }
 

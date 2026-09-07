@@ -105,7 +105,11 @@ contract LeashResolver {
     ///      重新 hash 一次去比對,是為了防一個我們的信任模型裡不存在的攻擊 ——
     ///      呼叫端本來就是自己算出 node 才來查的。ENS 官方的 `ExtendedResolver` 也是這樣做。
     ///      參數保留是因為介面要合,不是因為它有用。
-    function resolve(bytes calldata, /* name */ bytes calldata data)
+    function resolve(
+        bytes calldata,
+        /* name */
+        bytes calldata data
+    )
         external
         view
         returns (bytes memory)
@@ -165,8 +169,7 @@ contract LeashResolver {
         if (k == keccak256("description")) {
             if (policy == address(0)) return "";
             // describe() 是 pure,staticcall 一定安全。壞掉的 policy 不該讓顯示路徑爆掉。
-            (bool ok, bytes memory ret) =
-                policy.staticcall(abi.encodeCall(IPolicy.describe, ()));
+            (bool ok, bytes memory ret) = policy.staticcall(abi.encodeCall(IPolicy.describe, ()));
             if (!ok || ret.length == 0) return "";
             return abi.decode(ret, (string));
         }
