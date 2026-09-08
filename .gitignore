@@ -20,6 +20,11 @@ dist/
 .next/
 .pnpm-store/
 
+# --- 隔離工作區(git worktree)---
+# 未忽略的話會把整棵 worktree 提交進 repo
+.worktrees/
+.superpowers/
+
 # --- 雜項 ---
 .DS_Store
 *.log
