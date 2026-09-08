@@ -517,4 +517,66 @@ contract LeashAccount {
         uint256 hi = uint256(r.epoch) << 224;
         return r.period == 0 ? hi : hi | (block.timestamp / r.period);
     }
+
+    /// @notice 從 ENS 解出這個名字該過哪一份 policy。解不出來回 `address(0)`。
+    ///
+    /// @dev **三跳,而且每一跳的回傳長度不一樣:**
+    ///
+    ///      | 跳 | 呼叫 | 預期 returndata |
+    ///      |---|---|---|
+    ///      | 1 | `ETH_REGISTRY.getSubregistry("leash")` | 32 |
+    ///      | 2 | `LeashRegistry.getResolver(label)` | 32 |
+    ///      | 3 | `LeashResolver.resolve(dns, addr(node))` | **96** |
+    ///
+    ///      第三跳回傳 `bytes`,ABI 編碼是 offset(32) + length(32) + 內層(32)。
+    ///      **寫成 `== 32` 檢查的話快樂路徑永遠不成立**,而且理由碼會是
+    ///      `NO_POLICY`(「ENS 讀不到 policy」)—— 完全誤導除錯方向。
+    ///
+    ///      全部用低階 `staticcall` 並各自檢查自己的預期長度:ENS 的合約還在
+    ///      Immunefi 審計期(至 09-14),位址可能變動或行為改變。我們不能因為
+    ///      別人的合約 revert 就讓帳戶整個卡死 —— 解不出來就是 `NO_POLICY`,
+    ///      錢不動,而那正是安全的預設。
+    ///
+    ///      這條路徑同時是三層撤銷的實作:hop1 回 0 = 全滅、
+    ///      hop2 回 0 = 這一個 agent 死(撤銷或 `expiry` 到期)、
+    ///      hop3 回 0 = 換規則那一層清空了指標。
+    function resolvePolicy(bytes32 node, string memory label) public view returns (address) {
+        address reg = _staticAddress(
+            ETH_REGISTRY, abi.encodeWithSignature("getSubregistry(string)", PARENT_LABEL)
+        );
+        if (reg == address(0)) return address(0);
+
+        address res = _staticAddress(reg, abi.encodeWithSignature("getResolver(string)", label));
+        if (res == address(0)) return address(0);
+
+        bytes memory inner = abi.encodeWithSignature("addr(bytes32)", node);
+        bytes memory dnsName = _dnsEncode(label);
+        (bool ok, bytes memory ret) = res.staticcall{ gas: HOP_GAS }(
+            abi.encodeWithSignature("resolve(bytes,bytes)", dnsName, inner)
+        );
+        // 96 = offset(32) + length(32) + 內層(32)
+        if (!ok || ret.length != 96) return address(0);
+        bytes memory decoded = abi.decode(ret, (bytes));
+        if (decoded.length != 32) return address(0);
+        address policy = abi.decode(decoded, (address));
+        // policy 不能是自己 —— 同樣的憑證問題,見 `spend` 的 BadTarget 護欄
+        if (policy == address(this)) return address(0);
+        return policy;
+    }
+
+    /// @dev 每一跳的 gas 上限。ENS 那邊壞掉不能拖垮我們。
+    uint256 private constant HOP_GAS = 100_000;
+
+    function _staticAddress(address target, bytes memory cd) private view returns (address) {
+        (bool ok, bytes memory ret) = target.staticcall{ gas: HOP_GAS }(cd);
+        if (!ok || ret.length != 32) return address(0);
+        return abi.decode(ret, (address));
+    }
+
+    /// @dev DNS wire format:`<len><label>...<len>eth<0>`。
+    ///      父層固定是 `leash.eth`,所以只有第一段是變數。
+    ///      實測:`vendors.leash.eth` = `0x0776656e646f7273056c656173680365746800`
+    function _dnsEncode(string memory label) private pure returns (bytes memory) {
+        return abi.encodePacked(uint8(bytes(label).length), label, hex"056c656173680365746800");
+    }
 }
