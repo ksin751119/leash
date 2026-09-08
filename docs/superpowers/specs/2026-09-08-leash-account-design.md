@@ -34,7 +34,8 @@
 
 ## 決策紀錄
 
-實作前先寫下四個已定案的分岔,免得日後被當成「隨手選的」。
+實作前先寫下八個已定案的分岔,免得日後被當成「隨手選的」。
+(1–4 來自 brainstorming,5–8 來自第一輪 review。)
 
 | # | 決定 | 否決的選項 | 理由 |
 |---|---|---|---|
@@ -96,7 +97,7 @@ struct AccountStorage {
     mapping(address agent => AgentBinding) bindings;
     mapping(bytes32 node => mapping(address token => TokenRule)) rules;
     mapping(bytes32 node => mapping(address token => mapping(address payee => bool))) payees;
-    mapping(bytes32 node => mapping(address token => mapping(uint256 periodIdx => uint256))) spent;
+    mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
     mapping(bytes32 digest => bool) usedAttestations;
     bool paused;
     bool entered;              // 重入鎖
@@ -124,6 +125,7 @@ struct TokenRule {
     uint64  period;       // 週期長度(秒)。0 視為不設週期
     uint16  windowStart;  // UTC 當日分鐘數
     uint16  windowEnd;    // start == end 表示全天
+    uint32  epoch;        // 只增不減。**任何改動 period 的操作都要 +1** —— 見下
 }
 ```
 
@@ -188,15 +190,36 @@ callback 裡回頭再打 `spend`。重入鎖是第一道防線,**先記帳是第
 
 ### 週期索引:`period == 0` 是一個要處理的邊界
 
-`spent` 以 `periodIdx = block.timestamp / rule.period` 為 key,而 `TokenRule.period`
-允許是 `0`(不設週期)—— **直接除會 panic。**
+`spent` 的 key 有兩個要處理的問題,第二個是 review 第二輪抓到的。
+
+**問題一:`period == 0` 會除以零。** `TokenRule.period` 允許是 `0`(不設週期)。
+
+**問題二(初版沒修好):改 `period` 會讓預算復活。** 如果 key 只是
+`block.timestamp / rule.period`,那麼一改 `period`、桶的編號就變了,
+`spent` 從那個新桶讀出來是 `0` —— **「調整週期」變成一個免費的清帳鈕。**
+
+初版只讓 `tightenRule` 凍結 `period`,但有 attestation 的 `setRule` 仍然能改,
+所以問題還在。更糟的是**我自己寫的測試要求了「`setRule` 改 period 後累計不得歸零」——
+而設計裡沒有任何東西提供這個性質。** 那條測試永遠不會通過。
+
+**修法:加一個只增不減的 `epoch`,`spent` 以它為 key。**
 
 ```solidity
-uint256 periodIdx = rule.period == 0 ? 0 : block.timestamp / rule.period;
-uint64  periodEnd = rule.period == 0
-    ? 0                                        // 0 = 「沒有週期」,不是「已經結束」
-    : uint64((periodIdx + 1) * rule.period);
+uint256 bucket = rule.period == 0
+    ? (uint256(rule.epoch) << 224)                      // 無週期:一個 epoch 一個桶
+    : (uint256(rule.epoch) << 224) | (block.timestamp / rule.period);
+
+uint64 periodEnd = rule.period == 0
+    ? 0                                                  // 0 = 「不會重置」,不是「已結束」
+    : uint64(((block.timestamp / rule.period) + 1) * rule.period);
 ```
+
+`epoch` 放高位、週期索引放低位,兩者不會互相污染
+(`period` 最小 1 秒,`timestamp / 1` 遠小於 `2^224`)。
+
+**規則:`setRule` 只在 `period` 真的改變時 `epoch += 1`。** 這是刻意的 ——
+換週期本來就意味著換一套帳,舊帳不該被繼承;而 `epoch` 只增不減,
+所以**清帳這件事永遠需要一份 attestation**,免費的 `tightenRule` 拿不到它。
 
 `period == 0` 時所有花費累計進 `periodIdx = 0`,也就是**永不重置的總額** ——
 配上 `periodLimit` 就是一個終身額度。這是合理的語意,不是 fallback。
@@ -333,7 +356,8 @@ fallback() external payable { revert UnknownSelector(); }   // 明確拒絕,不�
 | 動作 | 誰可以 | 要 attestation | 事件 |
 |---|---|---|---|
 | `bindAgent(agent, node, label)` | `address(this)` | ❌ | `AgentBound` |
-| `restoreAgent(agent, attestation)` | `address(this)` | ✅ | `AgentBound` |
+| `unbindAgent(agent)` | `address(this)` **或該 agent 自己** | ❌ | `AgentRevoked` |
+| `restoreAgent(agent, node, label, attestation)` | `address(this)` | ✅ | `AgentBound` |
 | `revokeAgent(agent)` | `address(this)` **或該 agent 自己** | ❌ | `AgentRevoked` |
 | `pause()` | `address(this)` 或任何**未被撤銷的**被綁定 agent | ❌ | `Paused` |
 | `unpause()` | `address(this)` | ❌ | `Unpaused` |
@@ -346,7 +370,21 @@ fallback() external payable { revert UnknownSelector(); }   // 明確拒絕,不�
 
 **`bindAgent` 對已存在的綁定必須 revert。** 否則「撤銷一個 agent 之後免費重新綁回來」
 就繞過了凍結文件對理由碼 2 的規定(`AGENT_REVOKED` 的解除條件是
-「ADMIN(縮權免刷臉,**恢復要刷臉**)」)。恢復走 `restoreAgent`,要 attestation。
+「ADMIN(縮權免刷臉,**恢復要刷臉**)」)。
+
+**但這樣會讓「綁錯」變成永久的** —— review 第二輪抓到的:`bindAgent` 對已存在的綁定
+revert、`restoreAgent` 又只還原舊的 node/label,那麼把 agent A 綁到錯的名字一次,
+就再也改不回來了。
+
+**兩個函式一起解:**
+- **`unbindAgent(agent)` 完全免費**(`address(this)` 或該 agent 自己)。
+  解除綁定是**縮權** —— 那個 agent 從此什麼都不能做,把它變回未綁定狀態。
+  之後就能用 `bindAgent` 重新綁到正確的名字
+- **`restoreAgent(agent, node, label, attestation)` 帶完整參數**,三者都進 digest。
+  這是「把一個被撤銷的 agent 恢復」的路徑,要 attestation
+
+`unbindAgent` 後再 `bindAgent` 需要兩筆交易,但**不需要刷臉** —— 因為兩步都是縮權
+(先歸零,再從零開始),中間沒有任何一刻權限比原本大。這是對的不對稱。
 每個函式一行的成本,而它把 C1 那條攻擊鏈的第一步就切斷了。
 
 **`pause()` 連 agent 自己都能按。** 理由跟 `PolicyApprovals.revoke` 一樣:
@@ -370,13 +408,50 @@ function _isTighter(TokenRule memory old_, TokenRule memory new_) private pure r
     return _lteOrUnlimited(new_.txLimit, old_.txLimit)
         && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
         && new_.period == old_.period                    // ← 不准動,見上
+        && new_.epoch  == old_.epoch                     // ← 也不准動,否則就是免費清帳
         && _windowIsSubset(new_, old_);
 }
 ```
 
 注意 `0 = 不限` 的語意讓「比較大小」不是單純的 `<=`:從 `0` 改成 `100` 是**收緊**,
 從 `100` 改成 `0` 是**放寬**。`_lteOrUnlimited` 要處理這個反轉,**而且要有專門測試** ——
-這是最容易寫反的一行。
+這是最容易寫反的一行。(review 第二輪確認這個語意是對的。)
+
+#### `_windowIsSubset` —— 要明確定義,因為時段會跨午夜
+
+`StandardPolicy._inWindow`(`src/StandardPolicy.sol:41-48`)的語意是:
+
+- `start == end` → **全天開放**
+- `start < end` → 同日區間 `[start, end)`
+- `start > end` → **跨午夜**,例如 22:00–06:00 = `[start, 1440) ∪ [0, end)`
+
+所以「更嚴」不能只比數字大小。三條規則,每一條都要有測試:
+
+| 情況 | 判定 | 例 |
+|---|---|---|
+| 舊的是全天(`start == end`) | 新的**任何**時段都是收緊 | `(0,0)` → `(9,17)` ✅ |
+| 新的是全天,舊的不是 | **放寬,拒絕** | `(9,17)` → `(0,0)` ❌ |
+| 兩者都是有限區間 | 新的分鐘集合必須是舊的**子集** | `(21,7)` → `(22,6)` ✅;`(22,6)` → `(21,7)` ❌ |
+
+跨午夜的子集判斷不要試圖用不等式湊 —— **把區間正規化成 `[start, start + length)` 之後
+比較 `start` 位移與 `length`**,或者直接接受 O(1440) 的迴圈(這是 `view`,gas 不重要,
+而且 `tightenRule` 一天跑不到幾次)。**清楚勝過聰明,這一段寫錯會靜默地放寬規則。**
+
+### 兩個與凍結事件對應的細節
+
+**`Unpaused(by, attestationHash)` 有一個 hash 欄位,而 `unpause()` 已改成不收 attestation。**
+→ 發 `bytes32(0)`。subgraph 要把 `0` 解讀為「不需背書的解除」,而不是「缺資料」。
+
+**`setRule` 對應到兩個凍結事件**(`TokenAllowed` / `LimitRaised`),要講明何時發哪一個,
+否則 subgraph 的兩個 handler 會各自臆測:
+
+| 條件 | 發什麼 |
+|---|---|
+| `allowed` 從 `false` → `true` | `TokenAllowed` |
+| `txLimit` 或 `periodLimit` 或 `period` 變寬鬆(含 `epoch` 遞增) | `LimitRaised` |
+| 兩者同時發生 | **兩個都發**,順序為 `TokenAllowed` 再 `LimitRaised` |
+
+`tightenRule` 同理:關掉代幣發 `TokenRemoved`,收緊額度發 `LimitLowered`,可能兩個都發。
 
 ### attestation 的 digest 綁住什麼
 
@@ -384,6 +459,7 @@ function _isTighter(TokenRule memory old_, TokenRule memory new_) private pure r
 digest = keccak256(abi.encode(
     TYPEHASH,          // 每個動作一個
     address(this),     // ← 這個錢包。A 的背書挪不到 B
+    SELF,              // ← **這一版 impl**。見下
     block.chainid,     // ← 這條鏈
     node, token, ...,  // 動作的參數
     nonce              // ← 防重放
@@ -393,6 +469,22 @@ require(!usedAttestations[digest]);
 
 `address(this)` 在 7702 delegate 裡就是**那個 EOA**,所以同一份 impl 底下
 每個錢包的 digest 天然不同 —— 不需要額外的 salt。
+
+**但 `address(this)` 不足以綁住「哪一版 impl」** —— review 第二輪抓到的。
+錢包 W 重新委派到 impl v2 之後,`address(this)` 仍然是 W,
+所以一份**當初為 v1 簽的 attestation 可以在 v2 上重放**,
+而 `usedAttestations` 是存在 EOA storage 裡的、v2 讀的是同一份 mapping…
+**但如果 v2 換了 ERC-7201 命名空間(見「Storage」一節,換佈局就換字串),
+那份「已用過」的紀錄就讀不到了,重放就成立。**
+
+修法:加一個 `address immutable SELF`,在 constructor 裡設成 `address(this)` ——
+那是**實作合約自己**被部署時的位址,不是執行時的 EOA。
+delegate 執行時 `address(this)` 是 EOA,而 `SELF` 仍然是 impl 的位址,
+兩者一起進 digest 就同時綁住「哪個錢包」和「哪一版 impl」。
+
+> 這是 7702 特有的一個小陷阱:同一份程式碼裡,`address(this)` 和
+> 「這份程式碼住在哪」是**兩個不同的值**。`immutable` 在部署時被烙進 bytecode,
+> 所以它記得的是後者。
 
 ---
 
@@ -426,6 +518,12 @@ subgraph —— 那個碼的語意是「這份 policy 沒被真人批准」,而�
 
 **這改變的是「誰發這個事件」**,不是欄位。subgraph 的資料來源要跟著改。
 要在 `events.md` 標注這個元件不存在,免得日後有人以為漏做了。
+
+**決定歸屬(review 第二輪要求當場定案,不要留著):**
+`AttestationAccepted` **由 `LeashAccount` 發出**,因為它是唯一持有 nonce 與
+`usedAttestations` 的地方 —— 那個事件的價值就在防重放的審計軌跡。
+`PolicyApprovals` **不發**它,它已經有 `PolicyApproved.attestationHash` 承載同樣的資訊,
+為此改一份已部署的合約不值得。這兩句要寫進 `events.md`,把事件的來源釘死。
 
 另外 `AttestationAccepted.action` 的文件寫「對應理由碼 4–9」,而我們還需要涵蓋
 **11**(共用預算)。那是**擴大既有欄位的值域**,變更紀錄要記一行。
@@ -489,7 +587,8 @@ contract LeashLens {
 |---|---|
 | caller 不是被綁定的 agent | **revert** `NotBoundAgent` |
 | 重入 | **revert** `Reentrant` |
-| ENS 任一跳 revert / 回傳長度不對 / 回 `0x0` | `SpendBlocked(NO_POLICY)` |
+| caller 已綁定但**已被撤銷** | `SpendBlocked(AGENT_REVOKED)`,不 revert |
+| ENS 任一跳 revert / 回 `0x0` / **回傳長度不符該跳的預期(1:32、2:32、3:96)** | `SpendBlocked(NO_POLICY)` |
 | policy 不在批准清單 | `SpendBlocked(POLICY_NOT_APPROVED)` |
 | `policy.check` revert / 超過 gas 上限 / 回傳長度 ≠ 32 | `SpendBlocked(POLICY_FAILED)` |
 | policy 回傳 `reason != OK` | `SpendBlocked(reason)` |
@@ -548,10 +647,14 @@ if (policy == address(this)) return NO_POLICY;
 | **C1 迴歸** | 7702 + `MockAttester` | **在 mock attester 接著的情況下**,非 `address(this)` 的 caller 呼叫每一個擴權函式都要失敗 |
 | **C4 邊界** | 7702 | WALLET 直簽 `USDC.transfer` **成功**,且**不發** `SpendExecuted` —— 把逃生口釘成規格 |
 | **假成功** | mock | `token`/`payee` = `address(this)` / `address(0)` / 無 code → revert,`spent` 不變 |
-| **`period` 不能復活預算** | — | 花掉一部分 → `tightenRule` 改 `period` → 必須 revert;`setRule` 改 period 後累計不得歸零而變得可花更多 |
 | **`0 = 不限` 的反轉** | — | `txLimit` 從 `0`→`100` 是收緊(允許);`100`→`0` 是放寬(`tightenRule` 要拒絕) |
 | **impl 直接呼叫是惰性的** | — | 直接對 impl 位址呼叫 `spend` / 擴權函式,不得有任何效果 |
 | **理由碼全覆蓋** | mock | 每一個碼:`SpendBlocked` 有發出 **且** `balanceOf` 沒變 |
+| **namehash 不符** | — | `bindAgent(agent, node, label)` 的 node 與 label 不一致 → **revert**(M2 迴歸) |
+| **重複綁定** | — | 對已綁定的 agent 再 `bindAgent` → **revert**;`unbindAgent` 後可重新綁到正確的名字(M4 迴歸) |
+| **attestation 跨 impl 版本重放** | 7702 | 為 impl v1 簽的 attestation,在錢包改委派到 v2 之後**必須失效**(`SELF` 進 digest) |
+| **`_windowIsSubset`** | — | 三條規則各一:全天→有限 ✅、有限→全天 ❌、跨午夜子集 `(21,7)→(22,6)` ✅ 與 `(22,6)→(21,7)` ❌ |
+| **`epoch` 遞增才能清帳** | — | `tightenRule` 動 `epoch` 或 `period` → revert;`setRule` 改 `period` → `epoch` +1 且舊桶的累計**留在舊桶** |
 
 **Definition of Done:** fork 測試裡,一個委派過的 EOA 能付款成功、
 能被四種撤銷手段各自擋下來,而且每一種都留下正確的理由碼。
