@@ -1,39 +1,81 @@
 # 部署紀錄 —— Sepolia
 
 **鏈:** Sepolia (chain id `11155111`)
-**部署時間:** 2026-09-08 13:31–13:34 UTC(block 11661370–11661383)
+**目前有效的部署:** 2026-09-08 16:34 UTC(**第二次**,見下方「為什麼重新部署」)
 **部署者:** `0x36B3F5364A0dE03dc8eBaf0162C516E22D6bF959`(ADMIN)
-**成本:** 0.005 ETH
 
 > 每一筆的區塊時間戳都是**以太鏈蓋的,不可偽造** —— 這也是我們對
-> ETHGlobal「Start from Scratch」規則的證據之一,見 `PROVENANCE.md`。
+> ETHGlobal「Start from Scratch」規則的證據之一。
 
 ---
 
-## 我們的合約
+## 目前有效的位址
 
 | 合約 | 位址 | 部署交易 |
 |---|---|---|
-| `LeashRegistry` | `0xd5fFf12CB229A1Ea9F2487681A627B9a3Bf73d29` | [`0x0f3e7f46…`](https://sepolia.etherscan.io/tx/0x0f3e7f468a1d35109f9ae0f53c47e61bd6ecc1907600a66dd9ad0035afd2bceb) |
-| `LeashResolver` | `0x27fe60bABD73bbcdDff3f0448D3F4eB550A844F9` | [`0x75b1dcd4…`](https://sepolia.etherscan.io/tx/0x75b1dcd4fa92ba501754a2d17273c902588ca51767b893581dfae89390ada59b) |
-| `PolicyApprovals` | `0x86A730e7f3B30aF6fFf01e9f3E70d9427a6a277B` | [`0xd07443ba…`](https://sepolia.etherscan.io/tx/0xd07443baa454184c9b6c11d783bc7460048906b65cc4f83b869be26df8038d01) |
-| `StandardPolicy` | `0xB70F52e0FFc361E6e3c7765a58068308d4fa75cc` | [`0x58217b77…`](https://sepolia.etherscan.io/tx/0x58217b770622a743ab25f54d5203c148f6f331ecc962b2daf954a5c1d6132d0c) |
-| `MockAttester` ⚠️ | `0x0989FC6859eeaE7C8Fe61db40Ea7Af17D4f374c1` | [`0x5e38635e…`](https://sepolia.etherscan.io/tx/0x5e38635ec9c72dd3f25620b52ee61b77c43815bdb93b03fb62673e7ddf2878a1) |
+| `LeashRegistry` | `0x6fB6CB4a789067b2283C4d4C657d3422ce742A51` | [`0xb23a39a8…`](https://sepolia.etherscan.io/tx/0xb23a39a85cccb679f4104567f610874ca1fecdba6470d87459678b47a5828172) |
+| `LeashResolver` | `0x607a4d7363d9E7511a932F82eAE1e12FB609915b` | [`0x5ef9cbbb…`](https://sepolia.etherscan.io/tx/0x5ef9cbbb1f382aa84daaad625d2545c4ac38c6ab227a49ae031d7df0c968077b) |
+| `PolicyApprovals` | `0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4` | [`0x0a8a3162…`](https://sepolia.etherscan.io/tx/0x0a8a31625189c3d432413abdc3c57e00d51eccc03d3d1ab37f2fe911b501d930) |
+| `StandardPolicy` | `0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b` | [`0xff667665…`](https://sepolia.etherscan.io/tx/0xff6676659802654ca4ca35d0fa17b78a310df23fb95d1543cb2d729e14640ac7) |
+| `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
 
-> ⚠️ **`MockAttester` 不做任何驗證,對任何輸入都回 `true`。** 它的 `describe()`
-> 誠實回傳 `"MockAttester (NO verification - testing only)"`,前端會顯示。
-> `WorldAttester`(真的刷臉)是 sprint 項目 8 的後半。
+> ⚠️ **`MockAttester` 不做任何驗證,對任何輸入都回 `true`。**
+> 它的 `describe()` 誠實回傳 `"MockAttester (NO verification - testing only)"`,前端會顯示。
+> 而且 `attester` 在 `PolicyApprovals` 和 `LeashRegistry` 裡都是 **`immutable`** ——
+> 換成真的 `WorldAttester` 必須**重新部署**,那是一筆看得見的鏈上交易。
+> 這是刻意的,見下方 C1。
 
 ## 接線交易
 
 | 動作 | 交易 |
 |---|---|
-| `PolicyApprovals.approve(StandardPolicy)` | [`0x6709b0ed…`](https://sepolia.etherscan.io/tx/0x6709b0ed00e17a117631404df9697f2b75c7b16b2b6024ceafcb2e2973038b1f) |
-| `LeashRegistry.register("vendors", …, 30 天)` | [`0x7acb9aa3…`](https://sepolia.etherscan.io/tx/0x7acb9aa387728a49f0e0b56ee0803aada37e2dec3a30fec9ac0def32a85bdaaa) |
-| `LeashResolver.setPolicy(vendors node, StandardPolicy)` | [`0x84a85a86…`](https://sepolia.etherscan.io/tx/0x84a85a868b6f42927b01b2091878c63d86f42e437a03285688a08c9768a64457) |
-| **`ETHRegistry.setSubregistry(leash.eth, LeashRegistry)`** | [`0xc1768b17…`](https://sepolia.etherscan.io/tx/0xc1768b171a7ebc7a75e9317ffa873c00b75416ce69e58979fcd9dfcdd3f244de) |
-| `ETHRegistry.setResolver(leash.eth, LeashResolver)` | [`0xc0d57eb5…`](https://sepolia.etherscan.io/tx/0xc0d57eb57eb1b8814b83468fb14ba5a01344a4095f4acf862fb47bcabfe34df3) |
-| `LeashRegistry.setParent(ETHRegistry, "leash")` | [`0xb6ac3e39…`](https://sepolia.etherscan.io/tx/0xb6ac3e39b2de953dc63eb74860daf42944a981ab3a60d14be952ff76e306ba91) |
+| `PolicyApprovals.approve(StandardPolicy, nonce=1, attestation)` | [`0xdd14b8b5…`](https://sepolia.etherscan.io/tx/0xdd14b8b53cc5bb03118d0b181d236fa6d10afcc41d8a71af7f25839bd65d2f31) |
+| `LeashRegistry.register("vendors", …, 30 天, nonce=1, attestation)` | [`0xcc379643…`](https://sepolia.etherscan.io/tx/0xcc3796431fa04bda68237147063ab2d1ce42e3af078ecca8cf40b7b85dee634f) |
+| `LeashResolver.setPolicy(vendors node, StandardPolicy)` | [`0x74bec557…`](https://sepolia.etherscan.io/tx/0x74bec5575c4bd355ddaa397657590c05dff3cafb1780274c14d680effdbb331c) |
+| **`ETHRegistry.setSubregistry(leash.eth, LeashRegistry)`** | [`0x19b8f085…`](https://sepolia.etherscan.io/tx/0x19b8f0856434422313365e1b32ab69db8c3c4bc3ec76514b1782bb5b2b35265b) |
+| **`ETHRegistry.setResolver(leash.eth, 0x0)`** ← 見 I4 | [`0xd8b434f7…`](https://sepolia.etherscan.io/tx/0xd8b434f752d30dc40f61f0531a7f102f26c7cadba8c3b25fbf3a0a9890ca2501) |
+| `LeashRegistry.setParent(ETHRegistry, "leash")` | [`0xa8c274de…`](https://sepolia.etherscan.io/tx/0xa8c274deba5d56e29640ffd07e4390e414c650663caf38baf843b8d439083f59) |
+
+---
+
+## 為什麼重新部署(2026-09-08)
+
+第一次部署在同日 13:31 UTC。一次 code review 找出**兩個 Critical**,兩個都推翻了
+我們安全論證裡的核心句子,而且都必須改合約才能修:
+
+**C1 —— 一把鑰匙同時開兩道鎖。** `setAttester` 是 `onlyOwner` 且不需背書,
+而第一次部署把三份合約的 owner 都設成同一把 ADMIN 金鑰。所以
+`setAttester(永遠回true)` → `approve(任何東西)` → `setPolicy` 一路通到底。
+把 `setAttester` 鎖死也不夠 —— `LeashResolver.setApprovalsSource` 同樣是
+`onlyOwner`,被偷的金鑰只要多一步:部署自己的清單加自己的 attester 再指過去。
+**修法是拿掉可變性:** `attester` 與 `approvals` 全部改 `immutable`。
+`PolicyApprovals` 因此完全不需要 `owner`。
+
+**C2 —— attestation 可重放。** digest 沒有 nonce、也沒有記錄用掉的 attestation,
+而 `revoke` 是公開的。所以真的 `WorldAttester` 上線後:從公開 calldata 抄下那份
+attestation → `revoke(policy)` → 用**同一份** blob 重新 `approve`,不需要任何人
+再刷一次臉。改成標準 EIP-712 + nonce + `attestationUsed`。
+
+**I4 —— wildcard resolver 繞過中間那一層撤銷。** 第一次部署把 `LeashResolver`
+設成 `leash.eth` 自己的 resolver(想讓 demo 可以直接查這個名字)。那讓它變成整個
+子樹的 wildcard:子名沒有 resolver 時,ENS 的 `UniversalResolver` 會往上回退找到它,
+而 `LeashResolver` 刻意忽略 `name` 只讀 node —— 所以 `revoke` 和 `expiry`
+**攔不住官方工具的解析**。
+
+鏈上實測(`ghost.leash.eth`,一個從沒發過的子名):
+
+| | 第一次部署 | 現在 |
+|---|---|---|
+| `LeashRegistry.getResolver("ghost")` | `0x0` | `0x0` |
+| `UniversalResolverV2` | **回退找到我們的 resolver** ❌ | **revert `ResolverNotFound`** ✅ |
+
+我們自己的三跳一直是對的(停在第二跳 → `NO_POLICY` → 錢不動),
+壞掉的是 demo 展示的那條路徑 —— 撤銷之後那條指令照樣印出 policy。
+**修法:不設 `leash.eth` 的 resolver。** 解析**必須**走過我們的 registry,沒有旁路。
+
+第一次部署的位址與交易仍然留在鏈上(block 11661370–11661383),不再使用。
+
+---
 
 ## ENSv2 的既有位址(不是我們部署的)
 
@@ -50,8 +92,13 @@
 |---|---|
 | `leash.eth` tokenId | `0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011300000000` |
 | `leash.eth` 到期 | `1819875720` = 2027-09-02 |
+| namehash(`leash.eth`) | `0x91fbe3f2c79f13bf641a8f388bc00cc7b13192a0a6c5a986e9ceb50456706fbf` |
 | namehash(`vendors.leash.eth`) | `0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121` |
 | DNS 編碼(`vendors.leash.eth`) | `0x0776656e646f7273056c656173680365746800` |
+
+> 部署腳本**不再寫死 tokenId** —— 改用 `ETHRegistry.findTokenId("leash")` 現查,
+> 並加了 `require(block.chainid == 11155111)` 護欄。拿錯 RPC 會把整套控制面
+> 部署到別的鏈上,而那看起來會像成功了。
 
 ---
 
@@ -64,42 +111,37 @@ ROOT=0x8115186e8f2e0b0281e86ab91f0f48ba90364354
 NODE=0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121
 DNS=0x0776656e646f7273056c656173680365746800
 
-# 1. root → eth
-E=$(cast call $ROOT 'getSubregistry(string)(address)' eth --rpc-url $R)
-
-# 2. eth → leash(這一步指向我們的 registry)
-LR=$(cast call $E 'getSubregistry(string)(address)' leash --rpc-url $R)
-
-# 3. leash → vendors 的 resolver
-RES=$(cast call $LR 'getResolver(string)(address)' vendors --rpc-url $R)
-
-# 4. ENSIP-10 讀出 policy 位址
+E=$(cast call $ROOT 'getSubregistry(string)(address)' eth --rpc-url $R)          # → ETHRegistry
+LR=$(cast call $E 'getSubregistry(string)(address)' leash --rpc-url $R)          # → 我們的 registry
+RES=$(cast call $LR 'getResolver(string)(address)' vendors --rpc-url $R)         # → 我們的 resolver
 cast call $RES 'resolve(bytes,bytes)(bytes)' $DNS "$(cast calldata 'addr(bytes32)' $NODE)" --rpc-url $R
 ```
 
-2026-09-08 13:35 UTC 的實際輸出:
+2026-09-08 16:36 UTC 的實際輸出:
 
 ```
-1. RootRegistry.getSubregistry("eth")      = 0xBDC85dD5b15D7ecb354cd7cb6f2c50b4f2c4F0E2
-2. ETHRegistry.getSubregistry("leash")     = 0xD5fFf12CB229A1Ea9F2487681A627B9a3Bf73d29  ← 我們的
-3. LeashRegistry.getResolver("vendors")    = 0x27fe60bABD73bbcdDff3f0448D3F4eB550A844F9  ← 我們的
-4. resolve(dns, addr(node))                = 0x…b70f52e0ffc361e6e3c7765a58068308d4fa75cc  ← StandardPolicy
+hop1  ETHRegistry.getSubregistry("leash")   = 0x6fB6CB4a789067b2283C4d4C657d3422ce742A51  ← 我們的
+hop2  LeashRegistry.getResolver("vendors")  = 0x607a4d7363d9E7511a932F82eAE1e12FB609915b  ← 我們的
+hop3  resolve(dns, addr(node))              = 0x…88f2bff031bb4cf2beaa28d47ada52ebeebbc33b  ← StandardPolicy
 ```
 
-**拿掉 ENS,第 4 步就沒有答案,任何花費都過不了(理由碼 3)。**
+**拿掉 ENS,第三步就沒有答案,任何 agent 發起的花費都過不了(理由碼 3)。**
 
-### 官方 UniversalResolver 也解得出來
+> ⚠️ **不要說「唯一的花費路徑」。** EIP-7702 只約束打到那個 EOA 的呼叫;
+> WALLET 私鑰照樣能直簽 `USDC.transfer`。正確的說法是
+> 「**agent 的**唯一花費路徑」,而 WALLET 不受約束**既是邊界也是逃生口** ——
+> 錢包持有者永遠拿得回自己的錢。
 
-```bash
-UR=0x4a1817d13e9cf196f471725176355c1234b63c70
-cast call $UR 'resolve(bytes,bytes)(bytes,address)' $DNS "$(cast calldata 'addr(bytes32)' $NODE)" --rpc-url $R
-#  → 0x…b70f52e0ffc361e6e3c7765a58068308d4fa75cc
-#    0x27fe60bABD73bbcdDff3f0448D3F4eB550A844F9
-```
+### 每一跳的回傳長度不一樣(實作陷阱)
 
-**`LeashRegistry` 在 ENS 自己的解析基礎設施裡是一等公民** ——
-不需要我們的程式碼、不需要我們的 RPC,任何人用官方工具都查得到 `vendors.leash.eth`
-指向哪一份 policy。這不是我們自己搭一套平行系統,是真的接進 ENS。
+| 跳 | 原始 returndata | 為什麼 |
+|---|---|---|
+| 1 | **32 bytes** | 回傳 `address` |
+| 2 | **32 bytes** | 回傳 `address` |
+| 3 | **96 bytes** | 回傳 `bytes`:offset(32) + length(32) + 內層(32) |
+
+第三跳寫成檢查 `== 32` 的話**快樂路徑永遠不成立**,而且錯誤碼會是「ENS 讀不到 policy」,
+完全誤導除錯方向。
 
 ---
 
@@ -112,6 +154,8 @@ cast call $UR 'resolve(bytes,bytes)(bytes,address)' $DNS "$(cast calldata 'addr(
 | **重** | `ETHRegistry.setSubregistry(leash.eth, 0x0)` | **全部 agent 同時停機** |
 
 外加一個不需要任何交易的:**agent 子名的 `expiry` 到了就自動失效**
-(`getResolver` 回 `0x0`)。續期要人 —— 免費的 dead-man's switch。
+(`getResolver` 回 `0x0`)。續期要人,**而且要一份背書**(`renew` 需要 attestation)——
+免費的 dead-man's switch。上限 `MAX_DURATION = 365 days`,
+所以「發一個永不過期的名字」這件事做不到。
 
 **四種手段全程都沒有碰 agent 的帳戶。**
