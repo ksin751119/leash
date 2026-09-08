@@ -163,4 +163,137 @@ contract LeashAccountBindingTest is Test {
 
         assertTrue(d1 != d2, "same wallet, different impl version, different digest");
     }
+
+    // --- 🔴 M2 迴歸:node 與 label 必須一致 ---
+
+    /// **`node` 不只是 resolver 的 key —— 它也是 `rules` / `payees` / `spent` 的 key。**
+    ///
+    /// 所以 `bindAgent(agentB, node=vendors, label="payroll")` 會讓 agentB 花
+    /// **vendors 那份真人核准過的額度與預算**,卻由 **payroll 的 policy** 判斷。
+    /// 而 `AgentBound(agent, node)` 事件不帶 label,鏈下**完全看不出來**。
+    ///
+    /// 固定父層之下算 namehash 只要**兩次 keccak**(約 200 gas),
+    /// 把一個看不見的錯誤設定換成一個 revert。
+    function test_bind_rejects_a_node_label_mismatch() public {
+        bytes32 payrollNode = 0x2686785985b68816fe9d6dde5bf58d194ff9991d3d9dc89c14daf6f8224ba9a8;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LeashAccount.NodeLabelMismatch.selector, acct.nodeFor(LABEL), payrollNode
+            )
+        );
+        vm.prank(wallet);
+        acct.bindAgent(AGENT, payrollNode, LABEL);
+    }
+
+    function test_nodeFor_matches_the_recorded_namehashes() public view {
+        assertEq(acct.nodeFor("vendors"), NODE);
+        assertEq(
+            acct.nodeFor("payroll"),
+            0x2686785985b68816fe9d6dde5bf58d194ff9991d3d9dc89c14daf6f8224ba9a8
+        );
+    }
+
+    // --- 🔴 M4 迴歸:撤銷後不能免費重綁 ---
+
+    /// 凍結文件對理由碼 2 的規定是「縮權免刷臉,**恢復要刷臉**」。
+    /// 如果 `bindAgent` 能覆蓋既有綁定,那撤銷之後免費重綁就繞過了那條規定。
+    function test_bind_rejects_an_existing_binding() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        vm.expectRevert(LeashAccount.AlreadyBound.selector);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        vm.stopPrank();
+    }
+
+    /// 恢復一個被撤銷的 agent 要背書。
+    function test_restore_requires_an_attestation() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+        (,, bool revoked) = acct.bindingOf(AGENT);
+        assertTrue(revoked);
+
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+        (,, bool after_) = acct.bindingOf(AGENT);
+        assertFalse(after_, "restored");
+        vm.stopPrank();
+    }
+
+    /// **但綁錯名字不能變成永久的。** `unbindAgent` 完全免費(解綁是縮權),
+    /// 之後就能重新綁到正確的名字 —— 兩步都是縮權,中間沒有任何一刻權限比原本大。
+    function test_a_mis_binding_is_correctable_for_free() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+
+        acct.unbindAgent(AGENT);
+        (bytes32 n,,) = acct.bindingOf(AGENT);
+        assertEq(n, bytes32(0), "back to unbound");
+
+        bytes32 payrollNode = 0x2686785985b68816fe9d6dde5bf58d194ff9991d3d9dc89c14daf6f8224ba9a8;
+        acct.bindAgent(AGENT, payrollNode, "payroll");
+        (bytes32 n2,,) = acct.bindingOf(AGENT);
+        assertEq(n2, payrollNode, "rebound with no attestation");
+        vm.stopPrank();
+    }
+
+    // --- 縮權任何時候都能做 ---
+
+    /// agent 可以撤銷自己 —— 縮權不該有門檻。
+    function test_an_agent_can_revoke_itself() public {
+        vm.prank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+
+        vm.prank(AGENT);
+        acct.revokeAgent(AGENT);
+        (,, bool revoked) = acct.bindingOf(AGENT);
+        assertTrue(revoked);
+    }
+
+    function test_a_stranger_cannot_revoke_someone_elses_agent() public {
+        vm.prank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+
+        vm.expectRevert(LeashAccount.NotSelfOrAgent.selector);
+        vm.prank(ATTACKER);
+        acct.revokeAgent(AGENT);
+    }
+
+    // --- 🔴 M6 迴歸:pause 免費,unpause 也必須免費 ---
+
+    /// 任何未被撤銷的被綁定 agent 都能踩煞車 —— 踩煞車只會讓系統更嚴。
+    function test_any_bound_agent_can_pause() public {
+        vm.prank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+
+        vm.prank(AGENT);
+        acct.pause();
+        assertTrue(acct.paused());
+    }
+
+    function test_a_revoked_agent_cannot_pause() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+        vm.stopPrank();
+
+        vm.expectRevert(LeashAccount.NotBoundAgent.selector);
+        vm.prank(AGENT);
+        acct.pause();
+    }
+
+    /// **`unpause` 不能要背書。** 否則被入侵的 agent 可以免費 `pause`、
+    /// 反覆逼持有者刷臉 —— 那是一個 DoS。免費的煞車必須配免費的放開。
+    /// 凍結文件也把理由碼 10 列為「ADMIN 的日常操作」,不需刷臉。
+    function test_unpause_is_free_and_only_the_wallet_can_do_it() public {
+        vm.prank(wallet);
+        acct.pause();
+
+        vm.expectRevert(LeashAccount.NotSelf.selector);
+        vm.prank(AGENT);
+        acct.unpause();
+
+        vm.prank(wallet);
+        acct.unpause();
+        assertFalse(acct.paused());
+    }
 }
