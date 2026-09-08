@@ -52,7 +52,7 @@
 | 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟢 |
 | 9 | Subgraph:schema + mappings + 部署 Studio + 索引 | 6 | M | 2,6,7a | 🟡 索引要時間 |
 | 10 | Agent 決策迴路:查 subgraph → 判斷 → 簽 → 送 | 6 | M | 9 | 🟢 |
-| 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M | 8 | 🟢 **9/7 解除**,旗標已開通 |
+| 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M | 8 | 🟢 **IDKit + 後端驗證 9/7 實測走通**(`world/`),只剩 EIP-712 簽發 |
 | 12 | 前端單頁 | 5 | M | 8,9,11 | 🟢 |
 | 13 | 端對端彩排 + 修 | 5 | M | 全部 | 🟡 |
 | 14 | README(公開 repo、架構圖、跑法) | 3 | M | 13 | 🟢 |
@@ -206,5 +206,7 @@ EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風�
 ## 每日自問(30 秒,不要跳過)
 
 1. 今天的里程碑到了嗎?沒到 → **現在就砍單**,不是明天
-2. ~~World 有回音嗎?~~ 已結案(9/7)。改問:**`max_verifications` 改成 0 了嗎?** 沒改 demo 只能跑一次
+2. ~~World 有回音嗎?~~ 已結案(9/7)。改問:**錄影片 / demo 前有建新 action 嗎?**
+   `max_verifications` 改不了(Portal 沒有這個設定),但它綁在 action 上不是綁在人上 ——
+   **建新 action 就等於重置**。`expand-policy` 目前還沒被用掉
 3. 有沒有撞到新的 World 摩擦?→ 當場記進 `world-feedback.md`

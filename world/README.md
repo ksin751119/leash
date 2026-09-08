@@ -24,37 +24,56 @@ Portal → `expand-policy` → **max verifications 改成 0(unlimited)**。
 
 ---
 
-## 一個還沒解開的矛盾(2026-09-07)
+## ✅ 實測走通了(2026-09-07)
 
-四個來源互相打架:
+```
+刷臉 → World App 產出 proof → 後端 POST v4 → HTTP 200 "Proof verified successfully"
+```
 
-| 來源 | 說什麼 |
+**四個官方來源對同一個 app 講四種話,只有實測分得出誰對:**
+
+| 來源 | 說什麼 | 對嗎 |
+|---|---|---|
+| 官方文件 | Selfie Check 只跑 3.0,「4.0 support not yet available」 | 半對 —— **proof 是 3.0 格式,但驗證要送 v4** |
+| `precheck` (v1) | `enable_face_check: true` | ✅ 對 |
+| v2 verify | `invalid_action: Action not found.` | ❌ **拿真 proof 打也一樣**。這個 app 是 4.0 RP,v2 看不到它的 action |
+| v4 verify | 「Verifies World ID 4.0 proofs **and legacy 3.0 proofs**」 | ✅ **這條才對** |
+
+### 正確的做法
+
+`POST https://developer.worldcoin.org/api/v4/verify/{rp_id}`,包成 `VerifyV4LegacyProofRequest`。
+**IDKit 回傳的欄位不能照原樣送**,三處要動:
+
+| 動作 | 欄位 |
 |---|---|
-| 官方文件 | Selfie Check「currently uses World ID **3.0**, with World ID 4.0 support not yet available」 |
-| `precheck` (v1) | `enable_face_check: true`、`can_user_verify: "yes"`、action `active` |
-| **v2 verify 端點** | **`invalid_action: Action not found.`** |
-| v4 verify 端點 | 認得這個 app,只抱怨缺 `responses`(**沒有**回「尚未遷移到 4.0」) |
+| 改名 | `nullifier_hash` → `responses[].nullifier` |
+| **拿掉** | `credential_type`、`verification_level`(v4 不收) |
+| 補上 | `protocol_version: "3.0"`、`nonce`、`environment` |
 
-v2 對 `expand-policy`、一個不存在的 action、空字串**回完全相同的錯誤**,
-所以那不是名字打錯 —— **v2 看不到這個 app 的任何 action**。
-配上 v4 認得它,合理的解讀是:**我們的 app 是照 World ID 4.0 RP 開的**
-(Portal 上有 RP ID 和 signer address 可以佐證),而 Selfie Check 文件說只支援 3.0。
+> 諷刺的是 v4 文件寫「Forward the complete IDKit result **without remapping response
+> identifiers**」—— 但實際上非改名不可,`nullifier_hash` 直接送會被拒。
 
-> 保留一個可能:v2 也許是為了不洩漏 action 清單,才對所有情況回同一個錯誤。
-> 那樣的話「Action not found」就只是誤導,不是實情 —— 但那本身也是 feedback 素材。
+### 另外兩個實測結論
 
-**這個矛盾從外面問不出答案。** 唯一的決定性測試就是真的跑一次 IDKit。
-而那會燒掉唯一的一次驗證 —— 所以上面那件事要先做。
+**IDKit 不會送 `signal_hash`,後端一定要自己算。** `keccak256(signal) >> 8`
+(右移是為了讓值落在 SNARK 的 field 內)。
+**不能用 node 內建的 `crypto.createHash("sha3-256")`** —— SHA3 和 keccak256 的
+padding 不同,算出來的值不一樣,World 會拒絕。驗算基準:
+`signal_hash("")` 必須等於 `0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`。
 
-三種可能的結果,各自的下一步:
+**nullifier 是決定性的。** 同一個人 + 同一個 action = 同一個 `nullifier_hash`,
+跨次數完全相同(實測兩次都是 `0x04a2cce3…`)。這就是 `AttesterGate` 要記的匿名身分。
 
-1. **跑得完** —— 文件的 3.0 說法過時了,改用 v4 驗證。最好的情況。
-2. **IDKit 說這個 credential 不可用** —— 需要 World 把 app 降到 3.0,或等
-   Selfie Check 的 4.0 支援。這時候才真的需要找 Mateo,而且問題很具體、好回答。
-3. **跑得完但後端驗不過** —— 換 v4 的 `responses` 格式重送。
+### ⚠️ proof 裡看不出這是 Selfie Check
 
-無論哪一種,結果都要記進 `../docs/world-feedback.md`。
-「四個官方來源對同一個 app 講四種話」本身就是那份文件裡的好素材。
+`credential_type` 和 `verification_level` 都是 `"device"` —— **沒有 `selfie`,沒有 `face`。**
+
+也就是說:「這是一張真人的臉做的」這個保證**不在 proof 裡**,而在 app 設定的
+`enable_face_check: true` 上。後端拿到 proof **分不出**「剛做完臉部檢查」和
+「舊的、已被 deprecate 的裝置憑證」。
+
+對 Leash 來說這一點必須誠實講:我們的論點是「擴權綁在真人身上」,
+而那個綁定的強度來自 app 設定,不是密碼學上的憑證型別。
 
 ---
 

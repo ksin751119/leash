@@ -9,27 +9,42 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { keccak_256 } from "@noble/hashes/sha3";
+import { randomBytes } from "node:crypto";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
 const ACTION = process.env.WORLD_ACTION || "expand-policy";
+const RP_ID = process.env.WORLD_RP_ID || "rp_ef35d4e2d4f1a031";
 
-// Selfie Check 目前跑 World ID **3.0**,官方原文:「Currently uses World ID 3.0
-// technology, with World ID 4.0 support not yet available.」
-// 所以驗證要走 v2 端點吃 app_id,不是 v4 吃 rp_id —— v4 會回
-// 「This app has not been migrated to World ID 4.0. Please use the v2 verify endpoint」。
-const VERIFY_URL = `https://developer.worldcoin.org/api/v2/verify/${APP_ID}`;
+// Selfie Check 產出的是 World ID **3.0** 格式的 proof(官方原文:「Currently uses
+// World ID 3.0 technology, with World ID 4.0 support not yet available」),
+// 但驗證要送去 **v4** 端點 —— 這是 2026-09-07 拿真 proof 實測出來的,不是文件寫的。
+//
+// v2 (`/api/v2/verify/{app_id}`) 對這個 app **永遠**回
+// `invalid_action: Action not found.` —— 真 action、假 action、空字串全都一樣,
+// 拿真 proof 打也一樣。它看不到我們的 action,因為這個 app 是照 4.0 RP 開的。
+//
+// v4 的文件說它「Verifies World ID 4.0 proofs **and legacy 3.0 proofs**」,
+// 並吃 `rp_id`。3.0 的 proof 要包成 `VerifyV4LegacyProofRequest` 送。
+const VERIFY_URL = `https://developer.worldcoin.org/api/v4/verify/${RP_ID}`;
 
 /**
  * World ID 的 signal hash:keccak256(signal) 右移 8 bits。
  * 右移是因為 proof 在 SNARK 體系裡要落在 field 之內,keccak 的 256 bits 會溢出。
- * @dev 之後接 AttesterGate 時,signal 要換成那筆擴權的 EIP-712 payload hash ——
+ *
+ * @dev **實測(2026-09-07):IDKit 回傳的 proof 裡沒有 `signal_hash`。**
+ *      所以這不是備援路徑,是必經之路 —— 後端一定要自己算。第一次跑就是倒在這裡:
+ *      `@noble/hashes` 沒裝 → 500 → World App 顯示「Verification Declined」,
+ *      看起來像 World 拒絕了我們,其實是我們自己的後端掛掉。
+ *
+ *      注意不能用 node 內建的 `crypto.createHash("sha3-256")` —— SHA3 和 keccak256
+ *      的 padding 不同,算出來的值不一樣,World 會拒絕。
+ *
+ *      之後接 AttesterGate 時,signal 要換成那筆擴權的 EIP-712 payload hash ——
  *      這樣一次刷臉只能放寬那一條規則,proof 被攔截也重放不到別的地方。
  */
 function hashSignal(signal) {
-  if (!keccak) throw new Error("IDKit 沒送 signal_hash,而 @noble/hashes 沒裝:npm i @noble/hashes");
-  const { keccak_256 } = keccak;
   const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
   return "0x" + h.toString(16).padStart(64, "0");
 }
@@ -81,15 +96,27 @@ const server = createServer(async (req, res) => {
       const { proof, action, signal } = await readBody(req);
       if (!proof) return json(res, 400, { error: "missing proof" });
 
+      // 3.0 的 proof 包成 v4 的 legacy 請求。**欄位名字要改**:
+      //   nullifier_hash → responses[].nullifier
+      // 而 credential_type / verification_level **不能送** —— v4 不收這兩個。
       const payload = {
-        nullifier_hash: proof.nullifier_hash,
-        merkle_root: proof.merkle_root,
-        proof: proof.proof,
-        verification_level: proof.verification_level,
+        protocol_version: "3.0",
+        nonce: "0x" + randomBytes(16).toString("hex"),
         action: action ?? ACTION,
-        signal_hash: proof.signal_hash ?? hashSignal(signal ?? ""),
+        environment: "production", // app 是 is_staging: false
+        responses: [
+          {
+            identifier: proof.credential_type ?? proof.verification_level,
+            signal_hash: proof.signal_hash ?? hashSignal(signal ?? ""),
+            merkle_root: proof.merkle_root,
+            nullifier: proof.nullifier_hash,
+            proof: proof.proof,
+          },
+        ],
       };
 
+      console.log("\n← IDKit 回傳的完整 proof:");
+      console.log(JSON.stringify(proof, null, 2));
       console.log("\n→ POST", VERIFY_URL);
       console.log(JSON.stringify(payload, null, 2));
 
@@ -113,20 +140,15 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// keccak 只在 hashSignal 用得到,而 IDKit 通常已經把 signal_hash 一起送來了。
-// 動態載入:沒裝也不影響主路徑。
-let keccak = null;
-try {
-  keccak = await import("@noble/hashes/sha3");
-} catch {
-  console.warn("⚠️  @noble/hashes 沒裝 —— 只有 IDKit 沒送 signal_hash 時才會用到");
-}
-
-server.listen(PORT, () => {
+// 只綁 loopback。這台有公網 IP,綁 *:8787 等於開一個公開代理 ——
+// 沒有秘密會外洩(precheck 本來就公開,verify 只是轉發),但沒必要。
+// SSH tunnel 打到的就是 localhost,所以完全不影響使用。
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`\n  Leash · Selfie Check 驗證測試`);
   console.log(`  http://localhost:${PORT}\n`);
   console.log(`  app_id  ${APP_ID}`);
   console.log(`  action  ${ACTION}`);
+  console.log(`  rp_id   ${RP_ID}`);
   console.log(`  verify  ${VERIFY_URL}\n`);
   console.log(`  設定檢查:curl -s localhost:${PORT}/api/precheck\n`);
 });

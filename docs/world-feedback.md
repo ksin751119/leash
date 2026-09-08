@@ -552,44 +552,207 @@ If one change comes out of this document, we would like it to be the one in 6.1.
 
 ---
 
+## 7. Integrating it: what the four official sources each got wrong
+
+*Logged 2026-09-07, immediately after a successful end-to-end verification.
+`{"success": true, ..., "message": "Proof verified successfully"}`*
+
+**Selfie Check works, and it does exactly what we needed.** This section is about the
+four hours between "the flag is on" and "the proof verified", almost all of which went to
+reconciling official sources that contradict each other.
+
+### 7.1 Four sources, four answers, and only a real proof can tell you which is right
+
+| Source | Says | Correct? |
+|---|---|---|
+| Docs (`credentials`) | Selfie Check "currently uses World ID **3.0**, with World ID 4.0 support not yet available" | **Half.** The *proof* is 3.0-shaped; the *verification* must go to **v4** |
+| `precheck` (v1) | `enable_face_check: true` | ✅ |
+| **v2 verify** | `invalid_action: Action not found.` | ❌ Returns this for a real action, a fake action, an empty string, **and a valid proof** |
+| v4 verify | "Verifies World ID 4.0 proofs **and legacy 3.0 proofs**" | ✅ **This is the one** |
+
+Reading the docs, the obvious inference from "Selfie Check uses World ID 3.0" is "so use
+the 3.0 verification endpoint." That inference is wrong, and the error it produces —
+`Action not found` — points at the *action name*, which is the one thing that was never
+the problem. We created a second action to rule out a typo. It returned the same error.
+
+**The single sentence that would have saved this:** on the Selfie Check credential page,
+"Selfie Check issues a 3.0-format proof; verify it at the v4 endpoint using
+`protocol_version: "3.0"`."
+
+**Suggested fix for the error itself:** when an app is registered as a 4.0 RP, the v2
+endpoint should say so — `"this app is registered for World ID 4.0; use the v4 verify
+endpoint"` — exactly as v4 already does in the opposite direction. v4 returns a helpful
+"This app has not been migrated to World ID 4.0. Please use the v2 verify endpoint" when
+you get it backwards. **v2 has no such message.** One direction of the migration is
+signposted and the other is a dead end.
+
+### 7.2 "Forward the complete IDKit result without remapping" — you must remap
+
+The v4 reference says, verbatim:
+
+> Forward the complete IDKit result without remapping response identifiers.
+
+You cannot. IDKit returns `{verification_level, nullifier_hash, proof, credential_type,
+merkle_root}`. The v4 legacy request needs `responses[].nullifier` — **`nullifier_hash`
+is rejected** — and does not accept `credential_type` or `verification_level` at all.
+Three changes are mandatory:
+
+| Change | Field |
+|---|---|
+| Rename | `nullifier_hash` → `responses[].nullifier` |
+| Remove | `credential_type`, `verification_level` |
+| Add | `protocol_version`, `nonce`, `environment` |
+
+The instruction is not merely unhelpful, it is the opposite of what works. A developer who
+follows it gets a validation error whose `attribute` names a field they were told to send.
+
+### 7.3 IDKit does not return `signal_hash`, and the docs do not say you must compute it
+
+The proof object contains no `signal_hash`. The backend has to derive it:
+`keccak256(signal) >> 8` — the shift being necessary to land inside the SNARK field.
+
+Two things make this a trap rather than a detail:
+
+1. **It is silent.** With no signal, or with the default empty-string signal, everything
+   works and you never learn the field is missing. It fails only once you use a real
+   signal — which is to say, once your integration starts doing something meaningful.
+2. **The obvious implementation is wrong.** Node's built-in
+   `crypto.createHash("sha3-256")` is SHA3, not keccak256; the padding differs, so the
+   hash differs and the proof is rejected with no indication that hashing is the cause.
+
+**Suggested fix:** document the derivation next to the proof-response schema, with the
+known-answer test — `signal_hash("")` must equal
+`0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4` — and an explicit
+"this is keccak256, not SHA3-256" warning.
+
+### 7.4 A failing backend is indistinguishable from a declined verification
+
+Our first attempt died in our own backend (the missing `signal_hash` above). The World App
+showed **"Verification Declined — We couldn't complete your request. Please try again."**
+
+That message describes a *rejection by World*. What actually happened was our own server
+returning 500. We spent the next stretch investigating World's gating instead of reading
+our own stack trace. Later, on the attempt that failed at the v2 endpoint, the phone
+showed **success** while the browser showed **declined** — the two ends of the same
+verification disagreeing on the outcome.
+
+**Suggested fix:** distinguish "the relying party's `handleVerify` threw" from "World
+declined this verification". Even "The app couldn't complete verification" instead of
+"We couldn't complete your request" would point the developer at their own code.
+
+### 7.5 The proof does not say a face was checked
+
+This is the finding with real security consequences, and we want to state it plainly
+because our project depends on it.
+
+A successful Selfie Check proof comes back as:
+
+```json
+{ "verification_level": "device", "credential_type": "device", ... }
+```
+
+There is no `selfie`, no `face`, no `face_check`. **The proof is byte-shaped identically
+to one from `deviceLegacy`** — the credential the docs mark deprecated and tell you to
+replace with Selfie Check.
+
+So the assurance "a live human face was checked" is carried **entirely** by the app-level
+`enable_face_check` flag, not by anything in the credential the verifier receives. A
+backend holding a verified proof cannot tell the two apart. Concretely, that means:
+
+- The guarantee is a property of *app configuration*, revocable by whoever administers the
+  app, not a property of the proof.
+- Nothing in the verify response lets a relying party assert "this specific approval was
+  backed by a face check" — which is precisely the claim an audit log would need.
+- Two apps, one with the flag and one without, produce indistinguishable proofs at the
+  same `verification_level`.
+
+For **Leash** this is load-bearing: our whole design is that *expanding* an agent's
+spending authority requires a live human, while *reducing* it never does. We can state
+that the expansion path runs through Selfie Check, and we do — but we cannot prove it from
+the proof alone, and our documentation says so rather than overclaiming.
+
+**Suggested fix:** return the credential that was actually exercised. If `enable_face_check`
+caused a face check, say `face_check` (or set a boolean alongside `verification_level`).
+Verifiers should not have to trust out-of-band configuration for the security property that
+is the entire point of the credential.
+
+### 7.6 `max_verifications` cannot be changed after an action is created
+
+Following on from §6.3: we looked for the setting. It is not on the action, not in
+`World ID Configuration`, and the create-action form does not offer it either — a second
+action we created for testing also came out `max_verifications: 1`. As far as we can find,
+the Portal provides no way to set or change it.
+
+The workaround, for anyone reading this with the same problem: **`max_verifications` is
+scoped to the action, not to the person.** Creating a fresh action resets it. That is what
+we will do before recording our demo. It works, but it means the nullifier changes, so
+anything the integration persisted against the old nullifier is orphaned.
+
+---
+
 ## Summary
 
-*Rewritten 2026-09-07 after section 6. The earlier version of this summary said we were
-blocked by "an unbounded, un-SLA'd wait on a hard access gate." That turned out to be
-wrong in an instructive way, and the correction is the most useful thing here.*
+*Rewritten 2026-09-07, after Selfie Check verified end to end. Two earlier versions of
+this summary were wrong in ways worth keeping visible: the first said we were blocked by
+"an unbounded, un-SLA'd wait on a hard access gate"; the second said the gate had never
+been closed. Both were about access. The real story is that **nothing was ever gated
+against us — every hour we lost went to surfaces that could not tell us what was true.**
+The corrections are the most useful thing in this document.*
 
-**What worked well:** the version story (3.0 vs 4.0) is stated plainly instead of left
+**Selfie Check itself is not the problem anywhere in this document.** It does precisely
+what our project needs: a medium-assurance human check that gates privilege *expansion*
+in an AI-agent wallet, without demanding an Orb from someone approving a payment on their
+phone. We chose it on the merits, it verified on the first attempt that reached the right
+endpoint, and we would choose it again.
+
+**What worked well:** the 3.0-vs-4.0 version story is stated plainly rather than left
 implicit; the credential's limits are described honestly, including what it explicitly
-does not guarantee; the Sandbox coverage matrix and the disclosed known limitations are
-genuinely useful and saved us from re-reporting them; `.md` URL suffixes make the docs
-greppable; and the Portal's **Install World ID Sandbox** panel is the best-built thing we
+does not guarantee; the Sandbox coverage matrix and the disclosed known limitations saved
+us from re-reporting them; `.md` URL suffixes make the docs greppable; v4's error messages
+are specific and actionable (`attribute` naming the offending field is genuinely good);
+and the Portal's **Install World ID Sandbox** panel is the best-built thing we
 touched — clear steps, visible pending state, tells you what happens next. It is exactly
 the pattern the credential gate needs and does not have.
 
 **What cost us the most time,** in order:
 
-1. **We were never actually blocked.** The Selfie Check flag was enabled on our app, and
-   no surface in the product said so — not the Portal, not an email, not the docs. Five
-   days were lost to the absence of a status display, not to the absence of access. One
-   read-only boolean on the World ID Configuration page would have prevented all of it.
+1. **We were never blocked.** The flag was enabled on our app and no surface said so —
+   not the Portal, not an email, not the docs. Five days went to the absence of a status
+   display. One read-only boolean on the World ID Configuration page prevents all of it.
    (§6.1, §6.2)
-2. **The iOS install instructions are stale and contradict the product** — the documented
+2. **Four official sources disagreed about how to verify**, and the docs' own inference —
+   "Selfie Check is 3.0, so use the 3.0 endpoint" — is the wrong one. The resulting error,
+   `Action not found`, accuses the action name, the one thing that was never wrong. v4
+   tells you when you should be using v2; **v2 never tells you to use v4.** (§7.1)
+3. **The iOS install instructions are stale and contradict the product** — the documented
    public link is closed, and the docs explicitly deny needing the per-email enrolment
    that actually works and is only discoverable in the Portal. (§4.3)
-3. Two separate access gates with two separate channels, never described together, and
-   the more important of the two having no self-serve entry point at all. (§1.1, §5)
-4. The access requirement being invisible on the page where you most need it, and phrased
-   there without an actual contact address. (§1.1)
-5. `max_verifications: 1` as a silent default that breaks the second demo run, discovered
-   only by reading an undocumented API response. (§6.3)
-6. Onchain verification being neither documented nor explicitly ruled out. (§2)
+4. **"Forward the complete IDKit result without remapping" is the opposite of what
+   works** — `nullifier_hash` must be renamed and two fields must be dropped. (§7.2)
+5. **`signal_hash` must be computed by the relying party, undocumented**, and the obvious
+   implementation (`sha3-256`) is silently wrong. It also fails *late*: everything works
+   until you use a real signal. (§7.3)
+6. **A relying-party 500 is reported to the user as "Verification Declined"**, sending you
+   to investigate World instead of your own stack trace — and the phone and the browser can
+   disagree about whether the same verification succeeded. (§7.4)
+7. `max_verifications: 1` is a silent default that breaks the second demo run, is not
+   settable anywhere we can find, and is discoverable only through an undocumented API.
+   (§6.3, §7.6)
 
-Every one of these is a documentation, surfacing, or process issue — **not one of them is
-a problem with the credential.** Selfie Check does exactly what we needed: a
-medium-assurance human check that gates privilege *expansion* in an AI-agent wallet,
-without demanding an Orb from someone approving a payment on their phone. We picked it on
-the merits and would pick it again.
+**And one finding that is not about time at all** (§7.5): a Selfie Check proof arrives as
+`verification_level: "device"`, `credential_type: "device"` — **indistinguishable from the
+deprecated `deviceLegacy` credential.** The assurance that a live human face was checked
+rests entirely on the app-level `enable_face_check` flag, not on anything in the proof.
+A verifier cannot assert "this approval was backed by a face check", which is exactly the
+claim an audit trail needs. For a project whose security model is "expanding an agent's
+spending power requires a live human", that gap is the difference between a guarantee and
+a configuration setting. We document it honestly rather than overclaim.
 
-**The one change we would ask for:** show a developer, in the Developer Portal, which
-credentials their app can use. The data is already public and unauthenticated — it just
-is not rendered.
+**The two changes we would ask for:**
+
+1. **Show a developer, in the Developer Portal, which credentials their app can use.** The
+   data is already public and unauthenticated — it simply is not rendered. (§6.1)
+2. **Return the credential that was actually exercised.** If `enable_face_check` caused a
+   face check, say so in the proof. Verifiers should not have to trust out-of-band
+   configuration for the security property that is the entire point of the credential.
+   (§7.5)

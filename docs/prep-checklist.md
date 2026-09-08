@@ -19,8 +19,8 @@
 |---|---|---|---|
 | 1 | World Sandbox 表單 | World 全線 | ✅ 已送(9/2) |
 | 2 | World Developer Portal app | 步驟 3 | ✅ `app_452654c9…1c00`,已寫入 `.env`(9/2)。**注意是 production(`is_staging: false`),不是 Staging** |
-| 3 | Selfie Check feature flag 申請信 | World 全線 | ✅ **已開通** —— 9/7 用 precheck API 確認 `enable_face_check: true`。信從頭到尾沒人回,旗標卻是開的 |
-| 4 | 安裝 Sandbox App | World demo | ⏳ 待核准(9/2)。**但很可能不需要** —— app 是 production,Selfie Check 不用 Orb,真的 World App + 真自拍就能測 |
+| 3 | Selfie Check feature flag | World 全線 | ✅ **已開通且實測驗證成功**(9/7)。信從頭到尾沒人回,旗標卻一直是開的 |
+| 4 | ~~安裝 Sandbox App~~ | — | ✅ **不需要,已證實**(9/7)—— 用正式版 World App + 真自拍完整驗證成功。整條 TestFlight / Firebase 依賴砍掉 |
 | 5 | The Graph Studio 帳號 + deploy key | subgraph 部署 | ✅ key 已驗證(`graph auth` 通過),CLI v0.98.1(9/2) |
 | 6 | 產生兩把 key | 所有鏈上動作 | ✅ 已產生,寫入 `.env`(9/2) |
 | 7 | 領 Sepolia ETH | 所有鏈上動作 | ✅ human 0.126 / agent 0.053 ETH(9/2) |
