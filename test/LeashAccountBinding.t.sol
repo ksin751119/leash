@@ -20,6 +20,18 @@ contract MockApprovals is IPolicyApprovals {
     }
 }
 
+/// @dev 永遠拒絕 —— 用來證明「沒有效背書就恢復不了」。定義在這個測試檔裡
+///      而不是從 LeashRegistry.t.sol 匯入,兩邊各自獨立。
+contract RejectingAttester is IAttester {
+    function verify(bytes32, bytes calldata) external pure returns (bool) {
+        return false;
+    }
+
+    function describe() external pure returns (string memory) {
+        return "RejectingAttester";
+    }
+}
+
 contract LeashAccountBindingTest is Test {
     LeashAccount impl;
     MockApprovals approvals;
@@ -205,8 +217,30 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    /// 恢復一個被撤銷的 agent 要背書。
+    /// 恢復一個被撤銷的 agent 要背書 —— **缺一不可**。
+    ///
+    /// 原本這條測試只走「有效背書 → 成功」,如果把 `restoreAgent` 裡的
+    /// `_consumeAttestation` 整段拿掉,它一樣會過。這裡先用一個永遠拒絕的
+    /// attester 證明「沒有效背書就恢復不了」,再走一次成功路徑,
+    /// 證明「有效背書確實能恢復」——兩段都能各自因為刪掉檢查而失敗。
     function test_restore_requires_an_attestation() public {
+        // 沒有效背書:即使呼叫者是錢包自己,restoreAgent 也要 revert。
+        RejectingAttester rejecting = new RejectingAttester();
+        LeashAccount strictImpl = new LeashAccount(ETH_REGISTRY, approvals, rejecting);
+        uint256 strictPk = 0xBAD5EED;
+        address strictWallet = vm.addr(strictPk);
+        vm.signAndAttachDelegation(address(strictImpl), strictPk);
+        LeashAccount strictAcct = LeashAccount(payable(strictWallet));
+
+        vm.startPrank(strictWallet);
+        strictAcct.bindAgent(AGENT, NODE, LABEL);
+        strictAcct.revokeAgent(AGENT);
+
+        vm.expectRevert(LeashAccount.NotAttested.selector);
+        strictAcct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+        vm.stopPrank();
+
+        // 有效背書:恢復照常成功(既有的成功路徑斷言,保留不刪)。
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
         acct.revokeAgent(AGENT);
@@ -217,6 +251,61 @@ contract LeashAccountBindingTest is Test {
         (,, bool after_) = acct.bindingOf(AGENT);
         assertFalse(after_, "restored");
         vm.stopPrank();
+    }
+
+    /// 恢復一個被撤銷的 agent 要 `msg.sender == address(this)` —— 這是
+    /// 「兩個都要」的另一半。agent 自己能免費 `revokeAgent` 自己,但不能
+    /// 跳過真人背書把自己恢復回來。
+    function test_restore_requires_self() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+        vm.stopPrank();
+
+        vm.expectRevert(LeashAccount.NotSelf.selector);
+        vm.prank(AGENT);
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+    }
+
+    /// 同一份背書用過一次就作廢 —— 不能拿同一個 nonce 重放去恢復。
+    /// 換一個新的 nonce 才能再次恢復,證明消費的是「這一份背書」而不是
+    /// 「這個 agent 曾經被恢復過」這種較弱的狀態。
+    function test_restore_attestation_cannot_be_replayed() public {
+        bytes32 d = _restoreDigest(AGENT, NODE, LABEL, 1);
+
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+
+        // 縮權不需要背書,可以再撤一次。
+        acct.revokeAgent(AGENT);
+
+        vm.expectRevert(abi.encodeWithSelector(LeashAccount.AttestationReused.selector, d));
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+
+        acct.restoreAgent(AGENT, NODE, LABEL, 2, ATT);
+        (,, bool revoked) = acct.bindingOf(AGENT);
+        assertFalse(revoked, "restored with a fresh nonce");
+        vm.stopPrank();
+    }
+
+    /// `LeashAccount` 沒有對外公開 `restoreDigest()`,所以照 `_consumeAttestation`
+    /// 的公式在測試裡重算一次 —— 跟 `LeashRegistry.t.sol` 那些重放測試用
+    /// `reg.renewDigest(...)` 拿到現成 digest 是同一種目的,只是這裡沒有
+    /// 現成的 getter 可以借。
+    function _restoreDigest(address agent, bytes32 node, string memory label, uint256 nonce)
+        private
+        view
+        returns (bytes32)
+    {
+        bytes32 restoreTypehash = keccak256(
+            "RestoreAgent(address impl,address agent,bytes32 node,string label,uint256 nonce)"
+        );
+        bytes32 structHash = keccak256(
+            abi.encode(restoreTypehash, acct.SELF(), agent, node, keccak256(bytes(label)), nonce)
+        );
+        return keccak256(abi.encodePacked(hex"1901", acct.domainSeparator(), structHash));
     }
 
     /// **但綁錯名字不能變成永久的。** `unbindAgent` 完全免費(解綁是縮權),
