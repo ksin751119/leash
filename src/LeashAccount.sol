@@ -65,6 +65,9 @@ contract LeashAccount {
     bytes32 private constant RESTORE_TYPEHASH = keccak256(
         "RestoreAgent(address impl,address agent,bytes32 node,string label,uint256 nonce)"
     );
+    bytes32 private constant RULE_TYPEHASH = keccak256(
+        "SetRule(address impl,bytes32 node,address token,bool allowed,uint256 txLimit,uint256 periodLimit,uint64 period,uint16 windowStart,uint16 windowEnd,uint256 nonce)"
+    );
 
     event AgentBound(address indexed agent, bytes32 indexed node);
     /// @dev 證明這個 EOA 現在委派給 LeashAccount。**subgraph 的 template 觸發點** ——
@@ -73,6 +76,25 @@ contract LeashAccount {
     event AgentRevoked(address indexed agent, address indexed by);
     event Paused(address indexed by);
     event Unpaused(address indexed by, bytes32 attestationHash);
+    event TokenAllowed(bytes32 indexed node, address indexed token, bytes32 attestationHash);
+    event LimitRaised(
+        bytes32 indexed node,
+        address indexed token,
+        uint256 oldLimit,
+        uint256 newLimit,
+        uint64 period,
+        bytes32 attestationHash
+    );
+    event TokenRemoved(bytes32 indexed node, address indexed token, address indexed by);
+    event LimitLowered(
+        bytes32 indexed node,
+        address indexed token,
+        uint256 oldLimit,
+        uint256 newLimit,
+        address indexed by
+    );
+    event PayeeAllowed(bytes32 indexed node, address indexed payee, bytes32 attestationHash);
+    event PayeeRemoved(bytes32 indexed node, address indexed payee, address indexed by);
 
     error NotSelf();
     error NotAttested();
@@ -82,6 +104,7 @@ contract LeashAccount {
     error AlreadyBound();
     error NotBoundAgent();
     error NotSelfOrAgent();
+    error NotTighter();
 
     /// @dev per-EOA 的權限只有這一種。`address(this)` 在 delegate 裡是那個 EOA,
     ///      而只有它的私鑰能讓它送出交易 —— 所以這就是「錢包自己」。
@@ -258,7 +281,31 @@ contract LeashAccount {
         LeashStorage.layout().payees[node][token][payee] = true;
     }
 
-    /// @notice 設定規則。**擴權 —— 兩個都要。** 完整邏輯在任務 4。
+    /// @notice 讀取 (node, token) 目前的規則。
+    function ruleOf(bytes32 node, address token)
+        external
+        view
+        returns (LeashStorage.TokenRule memory)
+    {
+        return LeashStorage.layout().rules[node][token];
+    }
+
+    function isPayeeAllowed(bytes32 node, address token, address payee)
+        external
+        view
+        returns (bool)
+    {
+        return LeashStorage.layout().payees[node][token][payee];
+    }
+
+    function spentInCurrentPeriod(bytes32 node, address token) external view returns (uint256) {
+        LeashStorage.TokenRule storage r = LeashStorage.layout().rules[node][token];
+        return LeashStorage.layout().spent[node][token][_bucket(r)];
+    }
+
+    /// @notice 設定規則。**擴權 —— 兩個都要。**
+    /// @dev `period` 改變時 `epoch` 自動遞增。**這是唯一能讓 `spent` 換桶的路徑**,
+    ///      而它需要 attestation —— 所以清帳永遠要一份背書。
     function setRule(
         bytes32 node,
         address token,
@@ -266,9 +313,81 @@ contract LeashAccount {
         uint256 nonce,
         bytes calldata attestation
     ) external onlySelf {
-        nonce;
-        attestation;
-        LeashStorage.layout().rules[node][token] = rule;
+        _consumeAttestation(
+            keccak256(
+                abi.encode(
+                    RULE_TYPEHASH,
+                    SELF,
+                    node,
+                    token,
+                    rule.allowed,
+                    rule.txLimit,
+                    rule.periodLimit,
+                    rule.period,
+                    rule.windowStart,
+                    rule.windowEnd,
+                    nonce
+                )
+            ),
+            attestation
+        );
+
+        LeashStorage.TokenRule storage cur = LeashStorage.layout().rules[node][token];
+        // 全零代表這個 (node, token) 從未被 setRule 寫過 —— 沒有舊帳可清,
+        // 不算「換週期」。少了這個判斷,第一次 setRule 就會把 epoch 從 0 誤判成
+        // 「period 從預設值 0 變成了 rule.period」而白白 +1,跟
+        // `test_setRule_bumps_epoch_only_when_period_changes` 對不上。
+        bool exists = cur.allowed || cur.txLimit != 0 || cur.periodLimit != 0 || cur.period != 0
+            || cur.windowStart != 0 || cur.windowEnd != 0 || cur.epoch != 0;
+        bool wasAllowed = cur.allowed;
+        uint256 oldLimit = cur.periodLimit;
+        uint32 epoch = cur.epoch;
+        if (exists && cur.period != rule.period) epoch += 1; // 換週期 = 換一套帳
+
+        cur.allowed = rule.allowed;
+        cur.txLimit = rule.txLimit;
+        cur.periodLimit = rule.periodLimit;
+        cur.period = rule.period;
+        cur.windowStart = rule.windowStart;
+        cur.windowEnd = rule.windowEnd;
+        cur.epoch = epoch;
+
+        bytes32 h = keccak256(attestation);
+        if (!wasAllowed && rule.allowed) emit TokenAllowed(node, token, h);
+        emit LimitRaised(node, token, oldLimit, rule.periodLimit, rule.period, h);
+    }
+
+    /// @notice 收緊規則。**縮權 —— 只要 `address(this)`,不需要背書。**
+    /// @dev 要求**每一個欄位都弱單調收緊**。這把「更嚴」變成一個可檢查的斷言,
+    ///      而配對式的 raise/lower 函式會漏掉 window 和 period ——
+    ///      而漏掉的那些正好可以被用來放寬。
+    function tightenRule(bytes32 node, address token, LeashStorage.TokenRule calldata rule)
+        external
+        onlySelf
+    {
+        LeashStorage.TokenRule storage cur = LeashStorage.layout().rules[node][token];
+        if (!_isTighter(cur, rule)) revert NotTighter();
+
+        bool wasAllowed = cur.allowed;
+        uint256 oldLimit = cur.periodLimit;
+
+        cur.allowed = rule.allowed;
+        cur.txLimit = rule.txLimit;
+        cur.periodLimit = rule.periodLimit;
+        cur.windowStart = rule.windowStart;
+        cur.windowEnd = rule.windowEnd;
+        // period 與 epoch 刻意不動 —— 見 `_isTighter`
+
+        if (wasAllowed && !rule.allowed) emit TokenRemoved(node, token, msg.sender);
+        if (oldLimit != rule.periodLimit) {
+            emit LimitLowered(node, token, oldLimit, rule.periodLimit, msg.sender);
+        }
+    }
+
+    /// @notice 移除一個收款人。**縮權,不需要背書。**
+    function removePayee(bytes32 node, address token, address payee) external onlySelf {
+        LeashStorage.layout().payees[node][token][payee] = false;
+        emit PayeeRemoved(node, payee, msg.sender);
     }
 
     function payeeDigest(bytes32 node, address token, address payee, uint256 nonce)
@@ -291,5 +410,73 @@ contract LeashAccount {
         if ($.attestationUsed[d]) revert AttestationReused(d);
         if (!ATTESTER.verify(d, attestation)) revert NotAttested();
         $.attestationUsed[d] = true;
+    }
+
+    /// @dev **弱單調收緊**的定義。每一條都有專門測試。
+    function _isTighter(LeashStorage.TokenRule storage old_, LeashStorage.TokenRule calldata new_)
+        private
+        view
+        returns (bool)
+    {
+        if (old_.allowed && !new_.allowed) return true; // 直接關掉一定更嚴
+        if (!old_.allowed) return false; // 原本就關著,沒有更嚴可言
+        // period 與 epoch 不准動:改 period 會換桶,累計歸零 ——
+        // 「調低上限」反而讓可花的變多。清帳只能走 setRule(要背書)。
+        if (new_.period != old_.period || new_.epoch != old_.epoch) return false;
+        return _lteOrUnlimited(new_.txLimit, old_.txLimit)
+            && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
+            && _windowIsSubset(new_.windowStart, new_.windowEnd, old_.windowStart, old_.windowEnd);
+    }
+
+    /// @dev `0 = 不限`,所以比較會反轉:
+    ///      `0 → 100` 收緊(true);`100 → 0` 放寬(false);`100 → 50` 收緊。
+    ///      **這是最容易寫反的一行。**
+    function _lteOrUnlimited(uint256 new_, uint256 old_) private pure returns (bool) {
+        if (old_ == 0) return true; // 原本無限,任何值(含 0)都不更寬
+        if (new_ == 0) return false; // 原本有限,改成無限 = 放寬
+        return new_ <= old_;
+    }
+
+    /// @dev 新的分鐘集合必須是舊的子集。三種情況:
+    ///      - 舊的是全天(`start == end`)→ 任何新時段都是收緊
+    ///      - 新的是全天、舊的不是 → 放寬
+    ///      - 兩者都是有限區間 → 逐分鐘檢查子集
+    ///
+    ///      **刻意用 O(1440) 的迴圈,不用不等式湊。** `pure`/`view` 只代表不寫
+    ///      state,不代表免費 —— 這個迴圈是從 `tightenRule`(external,會改狀態)
+    ///      呼叫的,gas 是在交易裡真的付的。兩個常見情況(「舊的全天」「新的
+    ///      全天、舊的不是」)都提前 return,是 O(1);迴圈只在兩邊都是有限
+    ///      區間、且新的確實是舊的子集(跑滿全部 1440 分鐘才能確認)時才吃到
+    ///      全部成本 —— 實測約 480k gas(`test_a_narrower_overnight_window_is_tightening`)。
+    ///      `tightenRule` 是縮權操作,一天跑不到幾次,Sepolia 上多付這筆 gas
+    ///      無關痛癢。換成不等式湊的跨午夜子集判斷很容易寫反,而寫反**沒有任何
+    ///      revert、任何錯誤** —— 只是靜默地放寬規則。花這筆 gas 換掉一個
+    ///      不會被發現的 bug,划算。
+    function _windowIsSubset(uint16 ns, uint16 ne, uint16 os, uint16 oe)
+        private
+        pure
+        returns (bool)
+    {
+        if (os == oe) return true; // 舊的全天
+        if (ns == ne) return false; // 新的全天、舊的不是
+        for (uint16 m = 0; m < 1440; ++m) {
+            if (_inWindow(m, ns, ne) && !_inWindow(m, os, oe)) return false;
+        }
+        return true;
+    }
+
+    /// @dev 與 `StandardPolicy._inWindow` 同語意。`start > end` 表示跨午夜。
+    function _inWindow(uint16 minuteOfDay, uint16 start, uint16 end) private pure returns (bool) {
+        if (start == end) return true;
+        if (start < end) return minuteOfDay >= start && minuteOfDay < end;
+        return minuteOfDay >= start || minuteOfDay < end;
+    }
+
+    /// @dev `spent` 的 key。`epoch` 放高位、週期索引放低位,兩者不互相污染
+    ///      (`period` 最小 1 秒,`timestamp / 1` 遠小於 `2^224`)。
+    ///      `period == 0` 時所有花費累計進同一個桶 = 永不重置的終身額度。
+    function _bucket(LeashStorage.TokenRule storage r) private view returns (uint256) {
+        uint256 hi = uint256(r.epoch) << 224;
+        return r.period == 0 ? hi : hi | (block.timestamp / r.period);
     }
 }
