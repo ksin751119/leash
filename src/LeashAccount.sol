@@ -537,6 +537,14 @@ contract LeashAccount {
     ///      別人的合約 revert 就讓帳戶整個卡死 —— 解不出來就是 `NO_POLICY`,
     ///      錢不動,而那正是安全的預設。
     ///
+    ///      **長度對不代表結構對,而且全程不對外部回傳資料呼叫 `abi.decode`。**
+    ///      `abi.decode` 對畸形輸入(header 的 offset/length 不對、或
+    ///      `address` 高 12 bytes 不乾淨)會 revert,而不是回傳失敗值 ——
+    ///      那樣一個壞掉(或惡意)的 ENS 合約回傳長度對但內容假的資料,
+    ///      就能讓 `resolvePolicy` revert,壞了「絕不 revert」的保證。
+    ///      所以三跳全部只用 assembly 讀 word、自己驗證結構與 padding,
+    ///      細節見 `_wordToAddress`。
+    ///
     ///      這條路徑同時是三層撤銷的實作:hop1 回 0 = 全滅、
     ///      hop2 回 0 = 這一個 agent 死(撤銷或 `expiry` 到期)、
     ///      hop3 回 0 = 換規則那一層清空了指標。
@@ -554,11 +562,23 @@ contract LeashAccount {
         (bool ok, bytes memory ret) = res.staticcall{ gas: HOP_GAS }(
             abi.encodeWithSignature("resolve(bytes,bytes)", dnsName, inner)
         );
-        // 96 = offset(32) + length(32) + 內層(32)
+        // 96 = offset(32) + length(32) + 內層(32)。**只檢查總長度不夠** ——
+        // 長度對但 header 是假的(例如 offset 不是 0x20)一樣會讓
+        // `abi.decode(ret, (bytes))` revert,壞了「絕不 revert」的保證
+        // (2026-09-08 用一個孤立的 forge 測試實測過:`abi.decode` 對這類
+        // 畸形輸入真的會 revert,不是理論風險)。所以完全不對外部回傳的
+        // bytes 呼叫 `abi.decode`,自己用 assembly 讀三個字、自己驗證結構。
         if (!ok || ret.length != 96) return address(0);
-        bytes memory decoded = abi.decode(ret, (bytes));
-        if (decoded.length != 32) return address(0);
-        address policy = abi.decode(decoded, (address));
+        uint256 offset;
+        uint256 innerLength;
+        uint256 word;
+        assembly {
+            offset := mload(add(ret, 0x20))
+            innerLength := mload(add(ret, 0x40))
+            word := mload(add(ret, 0x60))
+        }
+        if (offset != 0x20 || innerLength != 0x20) return address(0);
+        address policy = _wordToAddress(word);
         // policy 不能是自己 —— 同樣的憑證問題,見 `spend` 的 BadTarget 護欄
         if (policy == address(this)) return address(0);
         return policy;
@@ -570,7 +590,34 @@ contract LeashAccount {
     function _staticAddress(address target, bytes memory cd) private view returns (address) {
         (bool ok, bytes memory ret) = target.staticcall{ gas: HOP_GAS }(cd);
         if (!ok || ret.length != 32) return address(0);
-        return abi.decode(ret, (address));
+        // 同樣不對外部回傳資料用 `abi.decode` —— 理由跟 hop3 一樣,見下面
+        // `_wordToAddress` 的註解。
+        uint256 word;
+        assembly {
+            word := mload(add(ret, 0x20))
+        }
+        return _wordToAddress(word);
+    }
+
+    /// @dev 把一個 32-byte word 當 address 讀出來,**自己驗證高 12 bytes 是 0**。
+    ///
+    ///      這裡有兩個都不能用的選項:
+    ///      - `abi.decode(bytes, (address))` 會檢查高位並在不乾淨時 revert
+    ///        (已實測驗證),但 `resolvePolicy` 的合約是「絕不 revert」——
+    ///        一個回傳髒資料的 ENS 合約會直接把整個帳戶卡死。
+    ///      - 直接用 assembly 把 word 截斷成 `uint160`(`address(uint160(word))`)
+    ///        不會 revert,但也不驗證 —— 一個回傳高位有垃圾的 resolver 會被
+    ///        安靜地截斷成一個看起來合法、但完全不是它原本意圖的地址放行。
+    ///
+    ///      兩者都不安全,所以自己做這個檢查:高位不乾淨就直接當作
+    ///      `address(0)`(跟 hop1/hop2/hop3 其他失敗情形共用同一個「解不出來」
+    ///      的訊號,呼叫端不需要另外分辨),乾淨才截斷回傳。**這是唯一驗證
+    ///      padding 的地方** —— 呼叫端(`resolvePolicy`、`_staticAddress`)
+    ///      直接信任這裡回傳的值,不再重複檢查,以免出現「兩處都要改」
+    ///      的重複邏輯。
+    function _wordToAddress(uint256 word) private pure returns (address) {
+        if (word >> 160 != 0) return address(0);
+        return address(uint160(word));
     }
 
     /// @dev DNS wire format:`<len><label>...<len>eth<0>`。
