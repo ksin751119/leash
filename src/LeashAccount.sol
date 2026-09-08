@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import { LeashStorage } from "./LeashStorage.sol";
 import { IPolicyApprovals } from "./IPolicyApprovals.sol";
 import { IAttester } from "./IAttester.sol";
+import { IPolicy, SpendContext } from "./IPolicy.sol";
 import { Reason } from "./Reason.sol";
 
 /// @title LeashAccount —— agent 唯一的花費路徑
@@ -96,6 +97,32 @@ contract LeashAccount {
     event PayeeAllowed(bytes32 indexed node, address indexed payee, bytes32 attestationHash);
     event PayeeRemoved(bytes32 indexed node, address indexed payee, address indexed by);
 
+    /// @dev `node` 刻意不 indexed —— 三個 indexed 名額給 `agent`/`payee`/`token`,
+    ///      這三個是 subgraph 查詢最常拿來 filter 的欄位(見 `docs/events.md`)。
+    event PolicyResolved(bytes32 indexed node, address indexed policy, bool approved);
+    event SpendExecuted(
+        bytes32 node,
+        address indexed agent,
+        address indexed payee,
+        address indexed token,
+        uint256 amount,
+        address policy,
+        uint256 spentAfter,
+        uint256 limit,
+        uint64 periodEnd
+    );
+    event SpendBlocked(
+        bytes32 node,
+        address indexed agent,
+        address indexed payee,
+        address indexed token,
+        uint256 amount,
+        uint8 reason,
+        address policy,
+        uint256 spentSoFar,
+        uint256 limit
+    );
+
     error NotSelf();
     error NotAttested();
     error AttestationReused(bytes32 digest);
@@ -105,6 +132,10 @@ contract LeashAccount {
     error NotBoundAgent();
     error NotSelfOrAgent();
     error NotTighter();
+    error Reentrant();
+    error BadTarget();
+    error ZeroAmount();
+    error TransferFailed();
 
     /// @dev per-EOA 的權限只有這一種。`address(this)` 在 delegate 裡是那個 EOA,
     ///      而只有它的私鑰能讓它送出交易 —— 所以這就是「錢包自己」。
@@ -625,5 +656,221 @@ contract LeashAccount {
     ///      實測:`vendors.leash.eth` = `0x0776656e646f7273056c656173680365746800`
     function _dnsEncode(string memory label) private pure returns (bytes memory) {
         return abi.encodePacked(uint8(bytes(label).length), label, hex"056c656173680365746800");
+    }
+
+    /// @notice **agent 唯一的花費路徑。**
+    ///
+    /// @dev `node` 與 `label` 不由 caller 提供,從 `bindings[msg.sender]` 讀 ——
+    ///      那消滅了「node 與 label 不一致」一整類要驗證的錯誤。
+    ///
+    ///      **被擋 ≠ revert。** 政策違反 → 不轉帳、發 `SpendBlocked`、正常結束,
+    ///      因為 subgraph 要索引得到「為什麼被擋」。只有 **2a(caller 根本不是
+    ///      被綁定的 agent)** 才 revert —— 那不是政策決定,是入侵;而 **2b
+    ///      (已綁定但被撤銷)不 revert** —— 撤銷是行政動作,那個 agent
+    ///      該查得到自己為什麼不能動了(revert 的 log 會被丟棄)。
+    function spend(address token, address payee, uint256 amount) external {
+        LeashStorage.AccountStorage storage $ = LeashStorage.layout();
+
+        // 1. 重入鎖 —— 第一道防線,連「這是不是被綁定的 agent」都還沒查就先擋。
+        if ($.entered) revert Reentrant();
+        $.entered = true;
+
+        // 2a. 綁定過嗎 —— 沒有就 revert,這是入侵而不是政策決定。
+        LeashStorage.AgentBinding storage b = $.bindings[msg.sender];
+        if (b.node == bytes32(0)) revert NotBoundAgent();
+        bytes32 node = b.node;
+
+        // 護欄:token / payee 不能指回自己或 0,token 必須有 code。
+        // 放在授權之後、政策之前 —— 這不是政策違反,是格式錯誤。
+        if (amount == 0) revert ZeroAmount();
+        if (token == address(this) || payee == address(this)) revert BadTarget();
+        if (token == address(0) || payee == address(0)) revert BadTarget();
+        if (token.code.length == 0) revert BadTarget();
+
+        // 被擋分支(2b/3/4/5)共用同一組「目前累計/上限」——`token` 這時已經
+        // 通過護欄驗證,查表安全。在這裡先查一次、往下傳值而不是傳
+        // storage 參照,是為了讓 `_blocked` 不用自己重算 —— 沒有
+        // `--via-ir` 時,重算會讓那個函式自己疊出 stack too deep(實測踩過)。
+        LeashStorage.TokenRule storage r = $.rules[node][token];
+        uint256 spentSoFar = $.spent[node][token][_bucket(r)];
+
+        // 2b. 被撤銷了嗎 —— **不 revert**,發可索引的事件。
+        if (b.revoked) {
+            _blocked(
+                $,
+                node,
+                payee,
+                token,
+                amount,
+                Reason.AGENT_REVOKED,
+                address(0),
+                spentSoFar,
+                r.periodLimit
+            );
+            return;
+        }
+
+        // 3. 暫停
+        if ($.paused) {
+            _blocked(
+                $, node, payee, token, amount, Reason.PAUSED, address(0), spentSoFar, r.periodLimit
+            );
+            return;
+        }
+
+        // 4. ENS 三跳
+        address policy = resolvePolicy(node, b.label);
+        if (policy == address(0)) {
+            _blocked(
+                $,
+                node,
+                payee,
+                token,
+                amount,
+                Reason.NO_POLICY,
+                address(0),
+                spentSoFar,
+                r.periodLimit
+            );
+            return;
+        }
+
+        // 5. 批准清單 —— **事件在這裡發,帶真值**。排在檢查之後的話這個欄位
+        //    永遠只能是 true,而「指標指到一份沒被批准的 policy」正是
+        //    ADMIN 金鑰被偷時唯一的鏈上訊號。
+        bool approved = APPROVALS.isApproved(policy);
+        emit PolicyResolved(node, policy, approved);
+        if (!approved) {
+            _blocked(
+                $,
+                node,
+                payee,
+                token,
+                amount,
+                Reason.POLICY_NOT_APPROVED,
+                policy,
+                spentSoFar,
+                r.periodLimit
+            );
+            return;
+        }
+
+        // 6-13 抽到獨立函式:單一 `spend` 裡塞進 ctx 建構 + policy 呼叫 + 轉帳
+        // 全部的區域變數,在沒有 `--via-ir` 時會炸 "stack too deep"
+        // (實測踩過)。拆開純粹是編譯器限制,不是邏輯分層。
+        _execute($, node, token, payee, amount, policy);
+    }
+
+    /// @dev `spend` 的後半段:組 `SpendContext`、限 gas 問 policy、
+    ///      **先記帳再轉帳**、發事件。`msg.sender` 沿用外層呼叫的值 ——
+    ///      private 函式呼叫不是外部呼叫,不會換掉 `msg.sender`。
+    function _execute(
+        LeashStorage.AccountStorage storage $,
+        bytes32 node,
+        address token,
+        address payee,
+        uint256 amount,
+        address policy
+    ) private {
+        // 6-7. 組 SpendContext —— policy 不碰帳戶的 storage,只看這包輸入。
+        LeashStorage.TokenRule storage r = $.rules[node][token];
+        uint256 bucket = _bucket(r);
+        uint256 spentSoFar = $.spent[node][token][bucket];
+
+        // 8. 呼叫 policy,限 gas、檢查回傳長度、fail-closed。
+        uint8 reason = _askPolicy(
+            policy,
+            SpendContext({
+                agent: msg.sender,
+                payee: payee,
+                token: token,
+                amount: amount,
+                tokenAllowed: r.allowed,
+                payeeAllowed: $.payees[node][token][payee],
+                txLimit: r.txLimit,
+                periodLimit: r.periodLimit,
+                spentSoFar: spentSoFar,
+                nowTs: uint64(block.timestamp),
+                windowStart: r.windowStart,
+                windowEnd: r.windowEnd
+            })
+        );
+
+        // 9. 被擋
+        if (reason != Reason.OK) {
+            $.entered = false;
+            emit SpendBlocked(
+                node, msg.sender, payee, token, amount, reason, policy, spentSoFar, r.periodLimit
+            );
+            return;
+        }
+
+        // 10. **先記帳** —— 在外部呼叫之前。重入鎖是第一道防線,這是第二道,
+        //     兩道都失效才會出事(轉帳能重入、記帳卻只認第一次)。
+        uint256 spentAfter = spentSoFar + amount;
+        $.spent[node][token][bucket] = spentAfter;
+
+        // 11-12 也抽出去:同一個原因,`_execute` 自己塞了 ctx 建構跟 policy
+        // 呼叫之後,再疊上轉帳跟事件的區域變數一樣會 stack too deep。
+        _transferAndEmit(node, token, payee, amount, policy, r.period, r.periodLimit, spentAfter);
+
+        // 13. 解鎖
+        $.entered = false;
+    }
+
+    /// @dev `_execute` 的最後一段:轉帳、發 `SpendExecuted`。純粹是為了不讓
+    ///      `_execute` 自己塞進太多區域變數(stack too deep,見上面的註解)。
+    function _transferAndEmit(
+        bytes32 node,
+        address token,
+        address payee,
+        uint256 amount,
+        address policy,
+        uint64 period,
+        uint256 periodLimit,
+        uint256 spentAfter
+    ) private {
+        // 11. 轉帳。**嚴格檢查:恰好 32 bytes 且是 true。** 不用 SafeERC20 的
+        //     寬鬆版 —— 寬鬆換來的相容性,代價是「回報成功但沒轉帳」。
+        (bool ok, bytes memory ret) =
+            token.call(abi.encodeWithSignature("transfer(address,uint256)", payee, amount));
+        if (!ok || ret.length != 32 || !abi.decode(ret, (bool))) revert TransferFailed();
+
+        // 12. 事件
+        uint64 periodEnd = period == 0 ? 0 : uint64(((block.timestamp / period) + 1) * period);
+        emit SpendExecuted(
+            node, msg.sender, payee, token, amount, policy, spentAfter, periodLimit, periodEnd
+        );
+    }
+
+    /// @dev 限 gas 呼叫 policy,任何異常都當成理由碼 12(policy 壞了,不是
+    ///      「policy 說不行」)。**一份能燒掉全部 gas 的 policy 等於一個 DoS
+    ///      開關**,所以上限是刻意的;回傳長度不是 32 一樣 fail-closed。
+    function _askPolicy(address policy, SpendContext memory ctx) private returns (uint8) {
+        (bool ok, bytes memory ret) =
+            policy.call{ gas: POLICY_GAS }(abi.encodeCall(IPolicy.check, (ctx)));
+        if (!ok || ret.length != 32) return Reason.POLICY_FAILED;
+        uint256 raw = abi.decode(ret, (uint256));
+        if (raw > type(uint8).max) return Reason.POLICY_FAILED;
+        return uint8(raw);
+    }
+
+    /// @dev 被擋的共用路徑:解鎖重入鎖、發 `SpendBlocked`。**不 revert** ——
+    ///      政策違反的證據是「錢沒有動」,不是交易紅字。
+    ///      `spentSoFar`/`limit` 由呼叫端算好傳進來,這裡不再查表 ——
+    ///      理由見呼叫端 `spend` 裡的註解(stack too deep)。
+    function _blocked(
+        LeashStorage.AccountStorage storage $,
+        bytes32 node,
+        address payee,
+        address token,
+        uint256 amount,
+        uint8 reason,
+        address policy,
+        uint256 spentSoFar,
+        uint256 limit
+    ) private {
+        $.entered = false;
+        emit SpendBlocked(node, msg.sender, payee, token, amount, reason, policy, spentSoFar, limit);
     }
 }

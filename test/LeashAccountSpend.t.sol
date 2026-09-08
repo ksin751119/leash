@@ -2,7 +2,11 @@
 pragma solidity 0.8.28;
 
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 import { LeashAccount } from "../src/LeashAccount.sol";
+import { LeashStorage } from "../src/LeashStorage.sol";
+import { StandardPolicy } from "../src/StandardPolicy.sol";
+import { Reason } from "../src/Reason.sol";
 import { IPolicyApprovals } from "../src/IPolicyApprovals.sol";
 import { MockAttester } from "../src/MockAttester.sol";
 import {
@@ -13,10 +17,26 @@ import {
     DirtyPaddingResolver,
     DirtyAddressRegistry
 } from "./mocks/MockRegistry.sol";
+import { MockToken } from "./mocks/MockToken.sol";
+import {
+    FalseReturnToken,
+    NoReturnToken,
+    ReenteringToken,
+    GasBurningPolicy,
+    ShortReturnPolicy
+} from "./mocks/BadTokens.sol";
 
 contract YesApprovals is IPolicyApprovals {
     function isApproved(address) external pure returns (bool) {
         return true;
+    }
+}
+
+/// @dev 跟 `LeashAccountRules.t.sol` 的 `NoApprovals` 撞名 —— Foundry 把整個
+///      test/ 目錄當同一個編譯單元,頂層合約名字要全域唯一,所以加個 2。
+contract NoApprovals2 is IPolicyApprovals {
+    function isApproved(address) external pure returns (bool) {
+        return false;
     }
 }
 
@@ -26,12 +46,18 @@ contract LeashAccountSpendTest is Test {
     MockRegistry ethRegistry;
     MockRegistry leashRegistry;
     MockResolver resolver;
+    MockToken token;
 
     uint256 walletPk = 0x8A11E7;
     address wallet;
     address constant POLICY = address(0xB01C);
     string constant LABEL = "vendors";
     bytes32 constant NODE = 0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121;
+    address constant AGENT = address(0xA6E17);
+    address constant PAYEE = address(0xBEEF);
+
+    uint256 nonce;
+    bytes constant ATT = hex"c0ffee";
 
     function setUp() public {
         ethRegistry = new MockRegistry();
@@ -42,11 +68,48 @@ contract LeashAccountSpendTest is Test {
         leashRegistry.set(address(0), address(resolver));
         resolver.set(POLICY);
 
+        // POLICY(0xB01C) 是任務 5 湊出來、從沒被真的呼叫過的死地址 —— `spend()`
+        // 真的會 `call` 它,codeless 位址的呼叫會「成功」但回傳空 returndata,
+        // 每一條快樂路徑都會被誤判成 12 POLICY_FAILED。用 `vm.etch` 把
+        // `StandardPolicy` 的 runtime bytecode 貼到這個固定位址上 ——
+        // resolver 完全不用改,任務 5 那 10 條「只比較位址」的測試也不受影響。
+        vm.etch(POLICY, address(new StandardPolicy()).code);
+
         impl = new LeashAccount(address(ethRegistry), new YesApprovals(), new MockAttester());
         wallet = vm.addr(walletPk);
         vm.signAndAttachDelegation(address(impl), walletPk);
         acct = LeashAccount(payable(wallet));
+
+        token = new MockToken();
+        token.mint(wallet, 1_000_000);
     }
+
+    /// 一份完全開放的規則:允許、三個上限都是 0(=不限)、全天時段。
+    function _openRule() internal pure returns (LeashStorage.TokenRule memory) {
+        return LeashStorage.TokenRule({
+            allowed: true,
+            txLimit: 0,
+            periodLimit: 0,
+            period: 1 days,
+            windowStart: 0,
+            windowEnd: 0,
+            epoch: 0
+        });
+    }
+
+    /// 把 AGENT 綁到 NODE、對 `token` 開一條全開的規則、把 PAYEE 加進白名單。
+    /// 大多數 `spend()` 測試都只是想要一條「一定會過」的快樂路徑當起點。
+    function _bindAndAllow() internal {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.setRule(NODE, address(token), _openRule(), ++nonce, ATT);
+        acct.allowPayee(NODE, address(token), PAYEE, ++nonce, ATT);
+        vm.stopPrank();
+    }
+
+    // ============================================================
+    // 任務 5 遺留:ENS 三跳解析(不動)
+    // ============================================================
 
     /// 快樂路徑:三跳都通,解出 policy 位址。
     function test_resolves_the_policy_through_three_hops() public view {
@@ -143,5 +206,266 @@ contract LeashAccountSpendTest is Test {
         DirtyAddressRegistry dirty = new DirtyAddressRegistry(address(resolver));
         ethRegistry.set(address(dirty), address(0));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
+    }
+
+    // ============================================================
+    // 任務 6:spend() —— 把四道關卡串起來
+    // ============================================================
+
+    // --- 🔴 C3 迴歸:假成功 ---
+
+    /// **`token` 和 `payee` 由 agent 指定,可以是 `address(this)`。**
+    ///
+    /// 第 11 步 `token.transfer(...)` 送出去時 `msg.sender == address(this)` ——
+    /// 那正是 `bindAgent` / `tightenRule` / `removePayee` 接受的憑證。
+    /// 而如果用 SafeERC20 那種寬鬆的回傳檢查:
+    ///   - `token == address(this)` → 打到自己的 fallback
+    ///   - `token == address(0)` → 對空位址的呼叫永遠成功、回傳空 returndata
+    /// 兩種情況都是 **`spent` 增加、`SpendExecuted` 發出,而錢一分都沒動。**
+    /// subgraph 會記下一筆不存在的付款。
+    function test_rejects_targets_that_point_back_at_the_account() public {
+        _bindAndAllow();
+        vm.startPrank(AGENT);
+
+        vm.expectRevert(LeashAccount.BadTarget.selector);
+        acct.spend(wallet, PAYEE, 1);
+
+        vm.expectRevert(LeashAccount.BadTarget.selector);
+        acct.spend(address(token), wallet, 1);
+
+        vm.expectRevert(LeashAccount.BadTarget.selector);
+        acct.spend(address(0), PAYEE, 1);
+
+        vm.expectRevert(LeashAccount.BadTarget.selector);
+        acct.spend(address(token), address(0), 1);
+
+        vm.stopPrank();
+    }
+
+    /// 沒有 code 的位址不可能是代幣。
+    function test_rejects_a_token_with_no_code() public {
+        _bindAndAllow();
+        vm.expectRevert(LeashAccount.BadTarget.selector);
+        vm.prank(AGENT);
+        acct.spend(address(0xC0DE1E55), PAYEE, 1);
+    }
+
+    /// **回傳值檢查要嚴格:恰好 32 bytes 且解出來是 `true`。**
+    /// 不用 SafeERC20 的寬鬆版 —— 我們只需要支援自己 demo 用的代幣,
+    /// 而寬鬆換來的相容性,在這裡的代價是一個假的成功。
+    function test_rejects_tokens_that_do_not_return_true() public {
+        _bindAndAllow();
+        FalseReturnToken f = new FalseReturnToken();
+        NoReturnToken n = new NoReturnToken();
+
+        vm.startPrank(wallet);
+        acct.setRule(NODE, address(f), _openRule(), ++nonce, ATT);
+        acct.allowPayee(NODE, address(f), PAYEE, ++nonce, ATT);
+        acct.setRule(NODE, address(n), _openRule(), ++nonce, ATT);
+        acct.allowPayee(NODE, address(n), PAYEE, ++nonce, ATT);
+        vm.stopPrank();
+
+        vm.expectRevert(LeashAccount.TransferFailed.selector);
+        vm.prank(AGENT);
+        acct.spend(address(f), PAYEE, 1);
+
+        vm.expectRevert(LeashAccount.TransferFailed.selector);
+        vm.prank(AGENT);
+        acct.spend(address(n), PAYEE, 1);
+    }
+
+    function test_zero_amount_reverts() public {
+        _bindAndAllow();
+        vm.expectRevert(LeashAccount.ZeroAmount.selector);
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 0);
+    }
+
+    // --- 🔴 重入 ---
+
+    /// 重入鎖是第一道防線,**先記帳是第二道** —— 兩道都失效才會出事。
+    ///
+    /// **重入呼叫走的是一條除了重入鎖之外完全合法的路徑**:`address(rt)`
+    /// 自己也被綁成 agent,`payee` 用真正被允許的 `PAYEE`(不是 `msg.sender`)。
+    /// 這樣安排是刻意的 —— 如果重入那筆會被 `NotBoundAgent` 或 `BadTarget`
+    /// 這些跟重入無關的護欄擋下來,測試就算重入鎖被整個拿掉也一樣會綠燈,
+    /// mutation check 抓不到(這個坑已經實測踩過一次)。
+    function test_reentrancy_is_blocked_and_the_ledger_is_already_updated() public {
+        ReenteringToken rt = new ReenteringToken();
+        vm.startPrank(wallet);
+        acct.setRule(NODE, address(rt), _openRule(), ++nonce, ATT);
+        acct.allowPayee(NODE, address(rt), PAYEE, ++nonce, ATT);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.bindAgent(address(rt), NODE, LABEL); // 重入呼叫的 msg.sender 就是 rt 自己
+        vm.stopPrank();
+
+        rt.arm(wallet, PAYEE);
+        vm.prank(AGENT);
+        acct.spend(address(rt), PAYEE, 100);
+
+        // 只記了一次 —— 內層的 spend 被鎖擋掉了。少了鎖的話,重入那筆會
+        // 完整跑完(它自己合法),把這裡變成 101。
+        assertEq(acct.spentInCurrentPeriod(NODE, address(rt)), 100);
+    }
+
+    // --- 🔴 快樂路徑:前面全部測的是「被擋」或「壞代幣」,補一條「真的成功」 ---
+
+    /// OK 路徑釘住:錢真的動、`SpendExecuted` 帶對的欄位。
+    function test_happy_path_executes_and_emits_spend_executed() public {
+        _bindAndAllow();
+        uint256 beforeWallet = token.balanceOf(wallet);
+        uint256 beforePayee = token.balanceOf(PAYEE);
+        uint64 expectedPeriodEnd = uint64(((block.timestamp / 1 days) + 1) * 1 days);
+
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendExecuted(
+            NODE, AGENT, PAYEE, address(token), 1, POLICY, 1, 0, expectedPeriodEnd
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+
+        assertEq(token.balanceOf(wallet), beforeWallet - 1, "wallet balance decreased");
+        assertEq(token.balanceOf(PAYEE), beforePayee + 1, "payee balance increased");
+        assertEq(acct.spentInCurrentPeriod(NODE, address(token)), 1);
+    }
+
+    // --- 🔴 理由碼全覆蓋:每一個都要「有事件」且「餘額沒變」 ---
+
+    function test_blocked_paths_emit_and_do_not_move_money() public {
+        _bindAndAllow();
+        uint256 before = token.balanceOf(wallet);
+
+        // 10 PAUSED
+        vm.prank(wallet);
+        acct.pause();
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.PAUSED, address(0), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "paused: no movement");
+        vm.prank(wallet);
+        acct.unpause();
+
+        // 3 NO_POLICY
+        resolver.set(address(0));
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.NO_POLICY, address(0), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "no policy: no movement");
+        resolver.set(POLICY);
+
+        // 2 AGENT_REVOKED —— **不 revert**,要留可索引的紀錄
+        vm.prank(wallet);
+        acct.revokeAgent(AGENT);
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.AGENT_REVOKED, address(0), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "revoked: no movement");
+    }
+
+    /// **2a 沒綁定 → revert;2b 已撤銷 → 不 revert。**
+    /// 凍結文件把 revert 的例外限定在「caller **根本不是**被綁定的 agent」,
+    /// 而被撤銷的 agent 是「已綁定」的 —— 撤銷是行政動作,那個 agent
+    /// 應該查得到自己為什麼不能動了(revert 的 log 會被丟棄)。
+    function test_unbound_reverts_but_revoked_does_not() public {
+        _bindAndAllow();
+
+        vm.expectRevert(LeashAccount.NotBoundAgent.selector);
+        vm.prank(address(0x4007));
+        acct.spend(address(token), PAYEE, 1);
+
+        vm.prank(wallet);
+        acct.revokeAgent(AGENT);
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1); // 不 revert
+    }
+
+    /// 🔴 M8 迴歸:`PolicyResolved.approved` 要送**真值**。
+    /// 初版把事件排在批准檢查之後,那時它只可能是 `true` —— 凍結 schema 裡
+    /// 那個欄位就永遠是死的。而「指標指到一份沒被批准的 policy」正是
+    /// ADMIN 金鑰被偷時唯一的鏈上訊號。
+    function test_policy_resolved_carries_the_real_approval_flag() public {
+        _bindAndAllow();
+        LeashAccount implNo =
+            new LeashAccount(address(ethRegistry), new NoApprovals2(), new MockAttester());
+        vm.signAndAttachDelegation(address(implNo), walletPk);
+        uint256 before = token.balanceOf(wallet);
+
+        vm.expectEmit(true, true, false, true);
+        emit LeashAccount.PolicyResolved(NODE, POLICY, false);
+        vm.prank(AGENT);
+        LeashAccount(payable(wallet)).spend(address(token), PAYEE, 1);
+
+        assertEq(token.balanceOf(wallet), before, "not approved: no movement");
+    }
+
+    /// 12 POLICY_FAILED 的三種觸發方式。
+    function test_policy_failure_modes_all_fail_closed() public {
+        _bindAndAllow();
+        uint256 before = token.balanceOf(wallet);
+
+        GasBurningPolicy gasBurner = new GasBurningPolicy();
+        resolver.set(address(gasBurner));
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_FAILED, address(gasBurner), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "gas burner: no movement");
+
+        ShortReturnPolicy shortReturn = new ShortReturnPolicy();
+        resolver.set(address(shortReturn));
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_FAILED, address(shortReturn), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "short return: no movement");
+
+        resolver.set(address(0xDEAD)); // 沒有 code
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_FAILED, address(0xDEAD), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(token.balanceOf(wallet), before, "no code: no movement");
+    }
+
+    // --- 🔴 C4 迴歸:WALLET 私鑰不受約束,而那是逃生口 ---
+
+    /// **這條測試把邊界釘成規格。**
+    /// EIP-7702 只約束打到那個 EOA 的呼叫;WALLET 私鑰照樣能直簽
+    /// `USDC.transfer`,policy 那條路徑根本不會執行。
+    /// 說「唯一的花費路徑」會被評審一問就破 —— 正確的說法是
+    /// 「**agent 的**唯一花費路徑」,而 WALLET 不受約束既是邊界也是逃生口:
+    /// 錢包持有者永遠拿得回自己的錢,不會被自己設的 policy 鎖死。
+    function test_the_wallet_key_can_always_transfer_directly() public {
+        _bindAndAllow();
+        uint256 before = token.balanceOf(PAYEE);
+
+        vm.recordLogs();
+        vm.prank(wallet);
+        token.transfer(PAYEE, 500); // 沒有經過 spend()
+
+        assertEq(token.balanceOf(PAYEE) - before, 500, "the money moved");
+        // 而且沒有發出 SpendExecuted
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics[0] != LeashAccount.SpendExecuted.selector,
+                "no SpendExecuted for a direct transfer"
+            );
+        }
     }
 }

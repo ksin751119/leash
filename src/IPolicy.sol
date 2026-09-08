@@ -40,6 +40,13 @@ interface IPolicy {
     ///
     ///      實作可以收緊可變性(Solidity 允許 override 時收緊)——
     ///      `StandardPolicy` 就是 `pure` 的。
+    ///
+    ///      🔴 **policy 只能在回傳 `Reason.OK` 時記帳。**
+    ///
+    ///      因為帳戶在被擋時**不 revert** —— 如果 policy 先扣了共用預算才回傳
+    ///      「超限」,那筆扣款不會被回滾,共用預算會漏。
+    ///      `SharedBudgetPolicy` 現在的寫法剛好是對的(先檢查再累加),
+    ///      但那是巧合而不是被要求的。**現在它被要求了。**
     function check(SpendContext calldata ctx) external returns (uint8 reason);
 
     /// @notice 給人看的識別字串,會出現在前端與 demo 裡
