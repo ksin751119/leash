@@ -44,12 +44,12 @@
 | 2 | **事件 schema 定稿**(寫死在文件裡再動工) | 2 | M | — | 🟡 改動代價高 |
 | 3 | `StandardPolicy` + `Reason` + `IPolicy`(額度、白名單、週期預算、時段) | 6 | M | 2 | ✅ **已完成 9/6**,16 個測試綠燈 |
 | 3b | `SharedBudgetPolicy` —— 多 agent 共用總預算(policy 自己記帳) | 1 | S | 3 | 🟢 09-07 設計改版後只剩一份合約 |
-| 4 | `LeashRegistry` —— 實作 ENSv2 `IRegistry` | 5 | M | 2 | 🟡 介面沒範例 |
+| 4 | `LeashRegistry` —— 實作 ENSv2 `IRegistry` | 5 | M | 2 | ✅ **已完成 9/8**,29 測試。tokenId 規則從鏈上反推 |
 | 5 | `LeashResolver` —— **只實作 ENSIP-10 `resolve(bytes,bytes)`** | 4 | M | — | ✅ **已完成 9/7**,23 個測試綠燈。實作起來不依賴項目 4 |
-| 6 | ENS 接線 + 鏈上解析走通(`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | 🟢 指令已備 |
+| 6 | ENS 接線 + 鏈上解析走通(`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | ✅ **已完成 9/8**,官方 UniversalResolver 也解得出來 |
 | 7a | `LeashAccount` —— 執行前強制過 policy 的合約錢包(含重入鎖、policy gas 上限、`isLeashed`) | 5 | M | 3,6 | 🟢 |
 | 7b | 升級成 **EIP-7702 delegate**(EOA 直接被 policy 管) | 5 | **X** | 1,7a | 🔴 工具鏈風險 |
-| 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟢 |
+| 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟠 **一半完成 9/8**:`IAttester` + `MockAttester` + `PolicyApprovals` 已部署,剩 `WorldAttester` |
 | 9 | Subgraph:schema + mappings + 部署 Studio + 索引 | 6 | M | 2,6,7a | 🟡 索引要時間 |
 | 10 | Agent 決策迴路:查 subgraph → 判斷 → 簽 → 送 | 6 | M | 9 | 🟢 |
 | 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M | 8 | 🟢 **IDKit + 後端驗證 9/7 實測走通**(`world/`),只剩 EIP-712 簽發 |
