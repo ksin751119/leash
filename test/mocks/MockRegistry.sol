@@ -151,3 +151,17 @@ contract DirtyAddressRegistry {
         }
     }
 }
+
+/// @dev `getResolver` 燒掉所有 gas —— 測 `_staticAddress` 共用的 `HOP_GAS`
+///      上限。`getSubregistry` 不需要燒,因為這個 mock 是拿來當 hop1 解出的
+///      `reg`,燒 gas 的那一跳是 hop2(`reg.getResolver(label)`)。
+contract GasBurningRegistry {
+    function getSubregistry(string calldata) external pure returns (address) {
+        return address(0);
+    }
+
+    function getResolver(string calldata) external pure returns (address) {
+        while (true) { }
+        return address(0);
+    }
+}

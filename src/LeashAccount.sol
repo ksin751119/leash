@@ -152,7 +152,12 @@ contract LeashAccount {
     }
 
     /// @notice **必須有。** 純轉 ETH = 用空 calldata 呼叫 delegate;
-    ///         沒有這個函式,委派之後那個錢包就收不到 ETH、加不了 gas。
+    ///         沒有這個函式,委派之後這個錢包就收不到用足額 gas 送出的 ETH。
+    /// @dev 這個保證是有上限的:`.transfer()`/`.send()` 那種只帶 2300 gas
+    ///      stipend 的老式轉帳,打進一個 7702 委派過的錢包**還是會失敗**——
+    ///      委派後每一筆呼叫都要先過 dispatcher,那筆固定開銷本身就超過
+    ///      2300 gas,跟有沒有 `receive()` 無關。這裡救得到的只有「足額 gas
+    ///      的純值轉帳」,不是那兩個限流 API。
     receive() external payable { }
 
     /// @notice 打錯 selector 明確 revert,不要靜默吞掉。
@@ -336,8 +341,15 @@ contract LeashAccount {
     }
 
     /// @notice 設定規則。**擴權 —— 兩個都要。**
-    /// @dev `period` 改變時 `epoch` 自動遞增。**這是唯一能讓 `spent` 換桶的路徑**,
-    ///      而它需要 attestation —— 所以清帳永遠要一份背書。
+    /// @dev `period` 改變時 `epoch` 自動遞增。**光是換 `period` 就已經換桶了**
+    ///      ——`_bucket` 的低位直接是 `timestamp / period`,跟 `epoch` 無關。
+    ///      `epoch` 真正的作用是**鍵空間隔離**:放在 `_bucket` 的高位,擋掉
+    ///      「新一代 period 剛好算出跟舊一代相同的桶」這個重疊風險,讓每一代
+    ///      的帳本各佔自己的位址,不會被前一代的餘額汙染或覆寫。
+    ///      「清帳永遠要一份背書」這件事也不是靠 `epoch` 本身撐的——是因為
+    ///      整個合約只有這個函式會寫 `period`,而 `tightenRule` 的
+    ///      `_isTighter` 檢查保證它絕不動 `period`,所以能換桶的路徑就只剩
+    ///      這條需要 attestation 的路。
     function setRule(
         bytes32 node,
         address token,

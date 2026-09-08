@@ -15,7 +15,8 @@ import {
     NameCheckingResolver,
     MalformedHeaderResolver,
     DirtyPaddingResolver,
-    DirtyAddressRegistry
+    DirtyAddressRegistry,
+    GasBurningRegistry
 } from "./mocks/MockRegistry.sol";
 import { MockToken } from "./mocks/MockToken.sol";
 import {
@@ -24,6 +25,7 @@ import {
     ReenteringToken,
     GarbageReturnToken,
     GasBurningPolicy,
+    OverflowingPolicy,
     ShortReturnPolicy
 } from "./mocks/BadTokens.sol";
 
@@ -319,13 +321,21 @@ contract LeashAccountSpendTest is Test {
         acct.bindAgent(address(rt), NODE, LABEL); // 重入呼叫的 msg.sender 就是 rt 自己
         vm.stopPrank();
 
-        rt.arm(wallet, PAYEE);
+        rt.arm(wallet, PAYEE, NODE);
         vm.prank(AGENT);
         acct.spend(address(rt), PAYEE, 100);
 
         // 只記了一次 —— 內層的 spend 被鎖擋掉了。少了鎖的話,重入那筆會
         // 完整跑完(它自己合法),把這裡變成 101。
         assertEq(acct.spentInCurrentPeriod(NODE, address(rt)), 100);
+
+        // 第二道防線:「先記帳、後轉帳」。重入鎖擋得住內層呼叫,不代表順序
+        // 對——如果帳戶把 `$.spent` 的寫入搬到轉帳之後,鎖依然生效、上面
+        // 那個斷言依然是 100(外層呼叫結束後兩種順序看起來一樣),唯一能
+        // 分辨的時間點是轉帳「當下」。`observedSpent` 就是 `rt.transfer`
+        // 被呼叫的那一刻反查到的值:順序對的話是 100(已入帳),順序被換掉
+        // 的話是 0。
+        assertEq(rt.observedSpent(), 100, "spend must be recorded before the external transfer");
     }
 
     // --- 🔴 快樂路徑:前面全部測的是「被擋」或「壞代幣」,補一條「真的成功」 ---
@@ -467,6 +477,77 @@ contract LeashAccountSpendTest is Test {
         vm.prank(AGENT);
         acct.spend(address(token), PAYEE, 1);
         assertEq(token.balanceOf(wallet), before, "no code: no movement");
+    }
+
+    /// 🔴 `_askPolicy` 的 `uint8` clamp:policy 回傳 256,低位元組截斷後
+    /// 剛好等於 `Reason.OK`(0)。少了 `if (raw > type(uint8).max) return
+    /// POLICY_FAILED` 這一行,這筆會被誤判成放行,錢真的會轉出去——
+    /// 整條分支唯一的 fail-open 路徑。
+    function test_policy_return_over_uint8_max_is_clamped_to_policy_failed() public {
+        _bindAndAllow();
+        OverflowingPolicy overflowing = new OverflowingPolicy();
+        resolver.set(address(overflowing));
+        uint256 before = token.balanceOf(wallet);
+
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_FAILED, address(overflowing), 0, 0
+        );
+        vm.prank(AGENT);
+        acct.spend(address(token), PAYEE, 1);
+        assertEq(
+            token.balanceOf(wallet),
+            before,
+            "a policy return > uint8.max must fail closed, not truncate to OK"
+        );
+    }
+
+    // --- 🔴 兩個 gas 上限:光「有沒有被呼叫到」測不出上限有沒有生效 ---
+    //
+    //     EIP-150 的 63/64 規則會留給帳戶足夠的 gas 去發 SpendBlocked,
+    //     不管呼叫有沒有真的被 `{gas: ...}` 限住 —— 所以斷言必須量實際
+    //     燒掉的 gas,不能只看「有沒有被擋」。
+
+    /// `POLICY_GAS` 上限:`GasBurningPolicy` 會一路燒到上限,帳戶消耗的 gas
+    /// 必須被夾在一個遠低於「無上限燒到底」、又舒服地高於誠實路徑實際花費
+    /// 的區間裡。
+    function test_policy_gas_is_capped() public {
+        _bindAndAllow();
+        GasBurningPolicy gasBurner = new GasBurningPolicy();
+        resolver.set(address(gasBurner));
+
+        vm.prank(AGENT);
+        uint256 g = gasleft();
+        acct.spend(address(token), PAYEE, 1);
+        uint256 consumed = g - gasleft();
+        // 實測:誠實路徑(StandardPolicy,見 test_happy_path)約 94,789 gas;
+        // 這裡(POLICY_GAS 上限生效)約 243,458 gas;拿掉 `{gas: POLICY_GAS}`
+        // 之後會燒到約 1,040,101,586 gas(整個 block gas limit)。500_000
+        // 舒服地夾在「有上限」跟「無上限」兩個量級之間。
+        assertLt(consumed, 500_000, "POLICY_GAS must cap the policy call");
+    }
+
+    /// `HOP_GAS` 上限:把 hop1 解出的 registry 換成一個 `getResolver` 會
+    /// 燒光 gas 的 mock,量測同樣的道理套用在 ENS 三跳上。
+    function test_hop_gas_is_capped() public {
+        _bindAndAllow();
+        GasBurningRegistry gbr = new GasBurningRegistry();
+        ethRegistry.set(address(gbr), address(0)); // hop1 解出 gbr 當 reg
+        uint256 before = token.balanceOf(wallet);
+
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.NO_POLICY, address(0), 0, 0
+        );
+        vm.prank(AGENT);
+        uint256 g = gasleft();
+        acct.spend(address(token), PAYEE, 1);
+        uint256 consumed = g - gasleft();
+        // 實測:這裡(HOP_GAS 上限生效)約 114,976 gas;拿掉
+        // `{gas: HOP_GAS}` 之後會燒到約 1,040,090,224 gas。同一個 500_000
+        // 邊界,理由同 `test_policy_gas_is_capped`。
+        assertLt(consumed, 500_000, "HOP_GAS must cap each ENS hop");
+        assertEq(token.balanceOf(wallet), before, "hop gas exhaustion: no movement");
     }
 
     // --- 🔴 C4 迴歸:WALLET 私鑰不受約束,而那是逃生口 ---
