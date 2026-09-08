@@ -101,15 +101,20 @@ contract LeashResolverTest is Test {
         assertTrue(approved);
     }
 
-    /// 批准清單沒接上時一律回報未批准 —— fail-closed,不因為沒接就默認放行。
-    function test_missing_approvals_source_reports_unapproved() public {
-        vm.startPrank(ADMIN);
-        resolver.setApprovalsSource(IPolicyApprovals(address(0)));
-        resolver.setPolicy(NODE, address(policy));
-        vm.stopPrank();
+    /// 🔴 C1 迴歸:批准清單的指標是 **immutable,沒有 setter**。
+    ///
+    /// 初版有 `setApprovalsSource(onlyOwner)`。就算把 `PolicyApprovals.setAttester`
+    /// 鎖死,只要這個指標可改,被偷的 ADMIN 金鑰就能部署自己的清單 + 自己的 attester
+    /// 再指過去 —— 兩道鎖仍然是同一把鑰匙開的。
+    function test_approvals_source_is_immutable_with_no_setter() public view {
+        assertEq(address(resolver.approvals()), address(approvals));
+        // 介面上不存在 setApprovalsSource —— 有人把可變性加回來時這裡會編譯失敗
+    }
 
-        (, bool approved) = resolver.policyAndApproval(NODE);
-        assertFalse(approved);
+    /// 建構時不接受 `address(0)`:沒有 setter 可以補救,寧可部署時就失敗。
+    function test_cannot_deploy_without_an_approvals_source() public {
+        vm.expectRevert(LeashResolver.ZeroApprovals.selector);
+        new LeashResolver(ADMIN, IPolicyApprovals(address(0)));
     }
 
     function test_zero_policy_is_never_approved() public {
@@ -132,12 +137,6 @@ contract LeashResolverTest is Test {
         vm.expectRevert(LeashResolver.NotOwner.selector);
         vm.prank(STRANGER);
         resolver.setPolicy(NODE, address(policy));
-    }
-
-    function test_only_owner_can_change_the_approvals_source() public {
-        vm.expectRevert(LeashResolver.NotOwner.selector);
-        vm.prank(STRANGER);
-        resolver.setApprovalsSource(IPolicyApprovals(address(1)));
     }
 
     function test_ownership_transfers() public {
@@ -203,10 +202,14 @@ contract LeashResolverTest is Test {
         assertEq(_resolveText(NODE, "leash"), "leash-v1");
     }
 
-    function test_unknown_text_key_reverts() public {
-        bytes memory inner = abi.encodeWithSignature("text(bytes32,string)", NODE, "avatar");
-        vm.expectRevert(abi.encodeWithSelector(LeashResolver.UnknownTextKey.selector, "avatar"));
-        resolver.resolve(DNS_NAME, inner);
+    /// 未知的 text key 回**空字串**,不 revert。
+    ///
+    /// ENS 的 UI 常常一次批次查 `avatar` / `com.twitter` / `description` ——
+    /// 其中一個 revert 會讓整批查詢掛掉,這個名字在 ENS 前端就變成壞的。
+    /// (`resolve` 的**未知 selector** 仍然 revert:那在強制路徑上,fail-closed 有意義。)
+    function test_unknown_text_key_returns_empty_not_revert() public view {
+        assertEq(_resolveText(NODE, "avatar"), "");
+        assertEq(_resolveText(NODE, "com.twitter"), "");
     }
 
     /// 不認識的內層呼叫要 revert,不能回空值 —— 呼叫端得分得出

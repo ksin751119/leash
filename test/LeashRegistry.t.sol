@@ -4,6 +4,38 @@ pragma solidity 0.8.28;
 import { Test } from "forge-std/Test.sol";
 import { LeashRegistry } from "../src/LeashRegistry.sol";
 import { IRegistry, IERC1155Singleton } from "../src/IRegistry.sol";
+import { IAttester } from "../src/IAttester.sol";
+import { MockAttester } from "../src/MockAttester.sol";
+
+/// @dev 永遠拒絕 —— 用來證明「沒有背書就發不出子名」。
+contract RejectingAttester is IAttester {
+    function verify(bytes32, bytes calldata) external pure returns (bool) {
+        return false;
+    }
+
+    function describe() external pure returns (string memory) {
+        return "RejectingAttester";
+    }
+}
+
+/// @dev 可以中途關掉 —— 用來把「發子名」和「續期」兩條路徑分開測。
+///      attester 是 immutable,所以要測「續期需要背書」就得讓同一份 attester
+///      先接受再拒絕,而不是換一份。
+contract ToggleAttester is IAttester {
+    bool public accepting = true;
+
+    function setAccepting(bool v) external {
+        accepting = v;
+    }
+
+    function verify(bytes32, bytes calldata) external view returns (bool) {
+        return accepting;
+    }
+
+    function describe() external pure returns (string memory) {
+        return "ToggleAttester";
+    }
+}
 
 contract LeashRegistryTest is Test {
     LeashRegistry reg;
@@ -18,17 +50,27 @@ contract LeashRegistryTest is Test {
 
     uint64 constant DAY = 1 days;
     string constant LABEL = "vendors";
+    bytes constant ATT = hex"c0ffee";
+
+    /// namehash("leash.eth") —— 09-08 算出並與 docs/deployments.md 對過
+    bytes32 constant PARENT_NODE =
+        0x91fbe3f2c79f13bf641a8f388bc00cc7b13192a0a6c5a986e9ceb50456706fbf;
+
+    MockAttester attester;
+    uint256 nonce;
 
     function setUp() public {
         vm.warp(1_757_000_000);
-        reg = new LeashRegistry(ADMIN);
+        attester = new MockAttester();
+        reg = new LeashRegistry(ADMIN, attester, PARENT_NODE);
         vm.prank(ADMIN);
         reg.setRegistrar(REGISTRAR, true);
     }
 
+    /// @dev 每次用新的 nonce —— 背書用過就不能重放(與 PolicyApprovals 同語意)。
     function _register(uint64 duration) internal returns (uint256) {
         vm.prank(REGISTRAR);
-        return reg.register(LABEL, HOLDER, address(0), RESOLVER, duration);
+        return reg.register(LABEL, HOLDER, address(0), RESOLVER, duration, ++nonce, ATT);
     }
 
     // --- tokenId 推導:對照鏈上實測的規則 ---
@@ -70,17 +112,17 @@ contract LeashRegistryTest is Test {
         _register(30 * DAY);
         vm.expectRevert();
         vm.prank(REGISTRAR);
-        reg.register(LABEL, STRANGER, address(0), RESOLVER2, 30 * DAY);
+        reg.register(LABEL, STRANGER, address(0), RESOLVER2, 30 * DAY, ++nonce, ATT);
     }
 
     function test_rejects_empty_label_and_zero_duration() public {
         vm.startPrank(REGISTRAR);
         vm.expectRevert(LeashRegistry.EmptyLabel.selector);
-        reg.register("", HOLDER, address(0), RESOLVER, DAY);
+        reg.register("", HOLDER, address(0), RESOLVER, DAY, ++nonce, ATT);
         vm.expectRevert(LeashRegistry.ZeroDuration.selector);
-        reg.register(LABEL, HOLDER, address(0), RESOLVER, 0);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, 0, ++nonce, ATT);
         vm.expectRevert(LeashRegistry.ZeroOwner.selector);
-        reg.register(LABEL, address(0), address(0), RESOLVER, DAY);
+        reg.register(LABEL, address(0), address(0), RESOLVER, DAY, ++nonce, ATT);
         vm.stopPrank();
     }
 
@@ -117,7 +159,7 @@ contract LeashRegistryTest is Test {
         vm.warp(block.timestamp + DAY + 1);
 
         vm.prank(REGISTRAR);
-        uint256 newId = reg.register(LABEL, STRANGER, address(0), RESOLVER2, 30 * DAY);
+        uint256 newId = reg.register(LABEL, STRANGER, address(0), RESOLVER2, 30 * DAY, ++nonce, ATT);
 
         assertTrue(newId != oldId, "version bumped");
         assertEq(newId, reg.canonicalIdOf(LABEL) | 1);
@@ -132,7 +174,7 @@ contract LeashRegistryTest is Test {
     function test_renew_extends_the_leash() public {
         _register(DAY);
         vm.prank(REGISTRAR);
-        reg.renew(LABEL, 30 * DAY);
+        reg.renew(LABEL, 30 * DAY, ++nonce, ATT);
 
         vm.warp(block.timestamp + DAY + 1);
         assertEq(reg.getResolver(LABEL), RESOLVER, "survived the original expiry");
@@ -143,7 +185,7 @@ contract LeashRegistryTest is Test {
         _register(DAY);
         vm.expectRevert(LeashRegistry.NotRegistrar.selector);
         vm.prank(STRANGER);
-        reg.renew(LABEL, DAY);
+        reg.renew(LABEL, DAY, ++nonce, ATT);
     }
 
     function test_cannot_renew_a_dead_name() public {
@@ -151,7 +193,7 @@ contract LeashRegistryTest is Test {
         vm.warp(block.timestamp + DAY + 1);
         vm.expectRevert();
         vm.prank(REGISTRAR);
-        reg.renew(LABEL, DAY);
+        reg.renew(LABEL, DAY, ++nonce, ATT);
     }
 
     // --- 撤銷:三層撤銷的中間那一層 ---
@@ -160,7 +202,7 @@ contract LeashRegistryTest is Test {
     function test_admin_can_revoke_instantly_without_attestation() public {
         uint256 tokenId = _register(30 * DAY);
         vm.prank(REGISTRAR);
-        reg.register("payroll", HOLDER, address(0), RESOLVER2, 30 * DAY);
+        reg.register("payroll", HOLDER, address(0), RESOLVER2, 30 * DAY, ++nonce, ATT);
 
         vm.prank(ADMIN);
         reg.revoke(LABEL);
@@ -190,7 +232,7 @@ contract LeashRegistryTest is Test {
         reg.revoke(LABEL);
 
         vm.prank(REGISTRAR);
-        uint256 newId = reg.register(LABEL, STRANGER, address(0), RESOLVER2, DAY);
+        uint256 newId = reg.register(LABEL, STRANGER, address(0), RESOLVER2, DAY, ++nonce, ATT);
         assertTrue(newId != oldId);
         assertEq(reg.getResolver(LABEL), RESOLVER2);
     }
@@ -204,18 +246,41 @@ contract LeashRegistryTest is Test {
         assertEq(reg.getResolver(LABEL), RESOLVER2);
     }
 
-    function test_name_owner_can_repoint_too() public {
+    /// 🔴 #6 迴歸:**名字持有者不能改自己的 resolver。**
+    ///
+    /// 這刻意偏離 ENS 的常態 —— 標準 ENS 裡持有者當然能設自己的 resolver。
+    /// 在 Leash 的模型裡**名字是韁繩,不是財產**:它管住持有者,不屬於持有者。
+    /// 初版接受 `msg.sender == e.owner`,那讓「把子名發給 WALLET」變成
+    /// 「WALLET 可以改自己的 policy」—— 與實測的 `roles(WALLET) = 0` 直接矛盾。
+    function test_name_owner_cannot_repoint_their_own_leash() public {
         _register(30 * DAY);
+        vm.expectRevert(LeashRegistry.NotOwner.selector);
         vm.prank(HOLDER);
         reg.setResolver(LABEL, RESOLVER2);
-        assertEq(reg.getResolver(LABEL), RESOLVER2);
+        assertEq(reg.getResolver(LABEL), RESOLVER, "unchanged");
+    }
+
+    function test_name_owner_cannot_repoint_subregistry_either() public {
+        _register(30 * DAY);
+        vm.expectRevert(LeashRegistry.NotOwner.selector);
+        vm.prank(HOLDER);
+        reg.setSubregistry(LABEL, SUBREG);
     }
 
     function test_stranger_cannot_repoint() public {
         _register(30 * DAY);
-        vm.expectRevert(LeashRegistry.NotNameOwner.selector);
+        vm.expectRevert(LeashRegistry.NotOwner.selector);
         vm.prank(STRANGER);
         reg.setResolver(LABEL, RESOLVER2);
+    }
+
+    /// 但持有者仍然能**撤銷**自己的名字 —— 縮權永遠不該被擋。
+    /// 這條測試守住那個不對稱:不能放寬,可以放棄。
+    function test_name_owner_can_still_revoke_but_not_repoint() public {
+        _register(30 * DAY);
+        vm.prank(HOLDER);
+        reg.revoke(LABEL);
+        assertEq(reg.getResolver(LABEL), address(0));
     }
 
     function test_subregistry_can_be_set_and_read() public {
@@ -230,11 +295,11 @@ contract LeashRegistryTest is Test {
     function test_only_registrar_or_owner_can_register() public {
         vm.expectRevert(LeashRegistry.NotRegistrar.selector);
         vm.prank(STRANGER);
-        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, ++nonce, ATT);
 
         // owner 不必先把自己加進 registrar
         vm.prank(ADMIN);
-        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, ++nonce, ATT);
         assertEq(reg.getResolver(LABEL), RESOLVER);
     }
 
@@ -243,7 +308,7 @@ contract LeashRegistryTest is Test {
         reg.setRegistrar(REGISTRAR, false);
         vm.expectRevert(LeashRegistry.NotRegistrar.selector);
         vm.prank(REGISTRAR);
-        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, ++nonce, ATT);
     }
 
     function test_only_owner_manages_registrars_and_parent() public {
@@ -287,15 +352,22 @@ contract LeashRegistryTest is Test {
         assertEq(reg.balanceOf(STRANGER, tokenId), 1);
         assertEq(reg.balanceOf(HOLDER, tokenId), 0);
 
-        // 而且新持有者真的握有名字的權限
+        // 而且新持有者真的握有名字的權限 —— 用 revoke 驗證,
+        // 因為 setResolver 已經收窄成 registry owner 專屬(見 #6)
         vm.prank(STRANGER);
-        reg.setResolver(LABEL, RESOLVER2);
-        assertEq(reg.getResolver(LABEL), RESOLVER2);
+        reg.revoke(LABEL);
+        assertEq(reg.getResolver(LABEL), address(0), "new holder could revoke");
+    }
 
-        // 舊持有者已經沒有了
+    /// 轉讓之後,舊持有者不能再撤銷這個名字。
+    function test_old_holder_loses_authority_after_transfer() public {
+        uint256 tokenId = _register(30 * DAY);
+        vm.prank(HOLDER);
+        reg.safeTransferFrom(HOLDER, STRANGER, tokenId, 1, "");
+
         vm.expectRevert(LeashRegistry.NotNameOwner.selector);
         vm.prank(HOLDER);
-        reg.setResolver(LABEL, RESOLVER);
+        reg.revoke(LABEL);
     }
 
     function test_advertises_iregistry_and_erc1155() public view {
@@ -320,6 +392,158 @@ contract LeashRegistryTest is Test {
         assertTrue(exp != 0, "expiry is visible");
         assertFalse(live2, "not usable");
         assertEq(r2, RESOLVER, "record kept; the live flag is the answer");
+    }
+
+    // --- 🔴 #5 迴歸:發子名與續期都要背書 ---
+
+    /// `PLAN.md` 的不對稱表寫「開新 agent 子名 → ✅ 要刷臉」。
+    /// 初版整個合約裡**沒有任何需要背書的路徑** —— 那句話當時是假的。
+    function test_register_requires_an_attestation() public {
+        LeashRegistry strict = new LeashRegistry(ADMIN, new RejectingAttester(), PARENT_NODE);
+        vm.prank(ADMIN);
+        strict.setRegistrar(REGISTRAR, true);
+
+        vm.expectRevert(LeashRegistry.NotAttested.selector);
+        vm.prank(REGISTRAR);
+        strict.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 1, ATT);
+
+        assertEq(strict.getResolver(LABEL), address(0), "nothing was issued");
+    }
+
+    /// 續期延長 dead-man's switch,那是擴權,所以也要背書。
+    ///
+    /// attester 是 immutable(C1 修正),所以用一份**可以中途關掉**的 attester:
+    /// 先讓它接受、把名字發出來,再關掉、證明續期過不了。
+    function test_renew_requires_an_attestation() public {
+        ToggleAttester toggle = new ToggleAttester();
+        LeashRegistry r = new LeashRegistry(ADMIN, toggle, PARENT_NODE);
+        vm.prank(ADMIN);
+        r.setRegistrar(REGISTRAR, true);
+
+        vm.prank(REGISTRAR);
+        r.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 1, ATT);
+        assertEq(r.getResolver(LABEL), RESOLVER);
+
+        toggle.setAccepting(false);
+
+        vm.expectRevert(LeashRegistry.NotAttested.selector);
+        vm.prank(REGISTRAR);
+        r.renew(LABEL, DAY, 2, ATT);
+
+        // 而**撤銷**在同樣的狀況下必須仍然可行 —— 縮權不需要背書
+        vm.prank(ADMIN);
+        r.revoke(LABEL);
+        assertEq(r.getResolver(LABEL), address(0), "reduction never needs attestation");
+    }
+
+    /// 背書用過就不能重放 —— 語意與 `PolicyApprovals` 一致。
+    /// **必須用同一組參數**:digest 包含 label / owner / resolver / duration / nonce,
+    /// 換任何一項都是另一份背書。
+    function test_renew_attestation_cannot_be_replayed() public {
+        _register(DAY);
+        bytes32 d = reg.renewDigest(LABEL, DAY, 42);
+
+        vm.prank(REGISTRAR);
+        reg.renew(LABEL, DAY, 42, ATT);
+        assertTrue(reg.attestationUsed(d), "digest recorded");
+
+        vm.expectRevert(abi.encodeWithSelector(LeashRegistry.AttestationReused.selector, d));
+        vm.prank(REGISTRAR);
+        reg.renew(LABEL, DAY, 42, ATT);
+    }
+
+    /// 發子名的重放:發 → 撤銷 → 用**同一個 nonce** 再發一次,必須失敗。
+    /// (撤銷之後重新發需要一份新 nonce 的背書。)
+    function test_register_attestation_cannot_be_replayed_after_revoke() public {
+        bytes32 d = reg.registerDigest(LABEL, HOLDER, RESOLVER, DAY, 7);
+
+        vm.prank(REGISTRAR);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 7, ATT);
+        assertTrue(reg.attestationUsed(d));
+
+        vm.prank(ADMIN);
+        reg.revoke(LABEL);
+
+        vm.expectRevert(abi.encodeWithSelector(LeashRegistry.AttestationReused.selector, d));
+        vm.prank(REGISTRAR);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 7, ATT);
+
+        // 換一個新 nonce 就可以
+        vm.prank(REGISTRAR);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 8, ATT);
+        assertEq(reg.getResolver(LABEL), RESOLVER);
+    }
+
+    function test_attestation_digest_is_standard_eip712() public view {
+        bytes32 domain = keccak256(
+            abi.encode(
+                keccak256(
+                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+                ),
+                keccak256("Leash"),
+                keccak256("1"),
+                block.chainid,
+                address(reg)
+            )
+        );
+        assertEq(reg.domainSeparator(), domain);
+    }
+
+    // --- 其他護欄 ---
+
+    /// 沒有上限的話,一次 `register(..., type(uint64).max)` 就**靜默地關掉**
+    /// dead-man's switch —— 而那正是這份合約存在的主要理由。
+    function test_duration_is_capped() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LeashRegistry.DurationTooLong.selector, 400 days, reg.MAX_DURATION()
+            )
+        );
+        vm.prank(REGISTRAR);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, 400 days, 1, ATT);
+    }
+
+    /// 反覆續期也不能繞過上限。
+    function test_renew_cannot_exceed_the_cap() public {
+        _register(300 days);
+        vm.expectRevert();
+        vm.prank(REGISTRAR);
+        reg.renew(LABEL, 300 days, 99, ATT);
+    }
+
+    /// label 裡有 `.` 會發出一個永遠解析不到的名字 —— ENS 是逐層走 label 的。
+    function test_label_with_a_dot_is_rejected() public {
+        vm.expectRevert(LeashRegistry.LabelHasDot.selector);
+        vm.prank(REGISTRAR);
+        reg.register("a.b", HOLDER, address(0), RESOLVER, DAY, 1, ATT);
+    }
+
+    function test_cannot_deploy_without_an_attester() public {
+        vm.expectRevert(LeashRegistry.ZeroAttester.selector);
+        new LeashRegistry(ADMIN, IAttester(address(0)), PARENT_NODE);
+    }
+
+    // --- 🔴 I3 迴歸:事件要帶 node,subgraph 才對得起來 ---
+
+    /// 凍結的 schema 以 `node`(namehash)為 join key。初版只發 tokenId,
+    /// 讓 subgraph 無法跟 `PolicyPointerSet` / `SpendExecuted` / `AgentBound` 對接。
+    function test_events_carry_the_namehash_node() public {
+        bytes32 node = reg.nodeOf(LABEL);
+        assertEq(node, 0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121);
+
+        vm.expectEmit(true, true, false, false);
+        emit LeashRegistry.SubnameRegistered(node, LABEL, HOLDER, 0, 0);
+        vm.prank(REGISTRAR);
+        reg.register(LABEL, HOLDER, address(0), RESOLVER, DAY, 1, ATT);
+    }
+
+    /// `nodeOf` 必須跟完整的 namehash 遞迴一致 —— 算錯的話 resolver 讀不到記錄。
+    function test_nodeOf_matches_full_namehash_recursion() public view {
+        // namehash("payroll.leash.eth"),09-08 用 cast 算出
+        assertEq(
+            reg.nodeOf("payroll"),
+            0x2686785985b68816fe9d6dde5bf58d194ff9991d3d9dc89c14daf6f8224ba9a8
+        );
     }
 
     // --- fuzz ---

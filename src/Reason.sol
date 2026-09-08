@@ -30,4 +30,13 @@ library Reason {
     /// @dev 多個 agent 共用一筆總預算時由 `SharedBudgetPolicy` 回傳。
     ///      帳戶不知道有這回事 —— 這正是重點。
     uint8 internal constant OVER_SHARED_LIMIT = 11;
+
+    // --- 帳戶層(2026-09-08 新增)---
+    /// @dev **policy 壞了**,不是「policy 說不行」—— 呼叫 revert、超過 gas 上限、
+    ///      或回傳長度不是 32。帳戶 fail-closed,錢不動。
+    ///
+    ///      刻意不挪用 4(`POLICY_NOT_APPROVED`):那個碼的語意是「沒被真人批准」,
+    ///      解除方式是刷臉;這個是「這份 policy 壞了」,解除方式是換一份。
+    ///      subgraph 要分得出來,agent 問「我為什麼被擋」時答案也不一樣。
+    uint8 internal constant POLICY_FAILED = 12;
 }

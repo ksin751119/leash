@@ -31,9 +31,19 @@ contract LeashResolver {
 
     address public owner;
 
-    /// @notice 批准清單。可以是 `address(0)`(尚未接上),那時一律回報「未批准」——
-    ///         fail-closed,不會因為清單沒接就默認放行。
-    IPolicyApprovals public approvals;
+    /// @notice 批准清單。**`immutable`,沒有 setter** —— 這是 C1 修正的另一半。
+    /// @dev 初版有 `setApprovalsSource(onlyOwner)`。就算把 `PolicyApprovals.setAttester`
+    ///      鎖死,只要這個指標可以被 ADMIN 改,被偷的金鑰就能:部署一份自己的
+    ///      `PolicyApprovals` + 自己的 attester → `setApprovalsSource(那份)` →
+    ///      `approve(任何東西)`。**兩道鎖仍然是同一把鑰匙開的,只是多一步。**
+    ///
+    ///      所以第二道鎖的**指標本身**也必須是不可變的。要換就部署一份新的
+    ///      `LeashResolver` 再 `LeashRegistry.setResolver(label, 新的)` ——
+    ///      那是一筆看得見的鏈上交易,而且新 resolver 的 policy 指標是空的,
+    ///      攻擊者得從頭把每一個名字重新指一次。
+    ///
+    ///      建構時不接受 `address(0)`:沒有 setter 可以補救,寧可部署時就失敗。
+    IPolicyApprovals public immutable approvals;
 
     /// @notice ENS 節點 → policy 位址。`address(0)` = 沒設 / 已清空 = 全面停機。
     mapping(bytes32 node => address policy) public policyOf;
@@ -41,16 +51,15 @@ contract LeashResolver {
     event PolicyPointerSet(
         bytes32 indexed node, address indexed policy, address indexed setBy, bool approved
     );
-    event ApprovalsSourceSet(address indexed approvals, address indexed setBy);
     event OwnerTransferred(address indexed from, address indexed to);
 
     error NotOwner();
     error ZeroOwner();
+    error ZeroApprovals();
     /// @dev 內層呼叫的 selector 我們不認識。**revert 而不是回空值** —— 呼叫端
     ///      分不出「沒設定」和「不支援」的話,fail-closed 就無從做起。
     error UnsupportedResolverCall(bytes4 selector);
     error UnsupportedCoinType(uint256 coinType);
-    error UnknownTextKey(string key);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -59,10 +68,10 @@ contract LeashResolver {
 
     constructor(address owner_, IPolicyApprovals approvals_) {
         if (owner_ == address(0)) revert ZeroOwner();
+        if (address(approvals_) == address(0)) revert ZeroApprovals();
         owner = owner_;
         approvals = approvals_;
         emit OwnerTransferred(address(0), owner_);
-        emit ApprovalsSourceSet(address(approvals_), msg.sender);
     }
 
     // ---------------------------------------------------------------
@@ -79,11 +88,6 @@ contract LeashResolver {
     function setPolicy(bytes32 node, address policy) external onlyOwner {
         policyOf[node] = policy;
         emit PolicyPointerSet(node, policy, msg.sender, _isApproved(policy));
-    }
-
-    function setApprovalsSource(IPolicyApprovals approvals_) external onlyOwner {
-        approvals = approvals_;
-        emit ApprovalsSourceSet(address(approvals_), msg.sender);
     }
 
     function transferOwnership(address to) external onlyOwner {
@@ -176,12 +180,20 @@ contract LeashResolver {
         if (k == keccak256("leash")) {
             return "leash-v1";
         }
-        revert UnknownTextKey(key);
+        // 未知的 text key **回空字串,不 revert。**
+        //
+        // 初版是 revert,理由是「呼叫端要分得出沒設定和不支援」。
+        // 那個理由對 `resolve` 的**未知 selector** 是對的(在強制路徑上,fail-closed
+        // 有意義),對 **text key** 是錯的:text 記錄純顯示、不在強制路徑上,
+        // 而 ENS 的 UI 常常一次批次查 `avatar` / `com.twitter` / `description`——
+        // 其中一個 revert 會讓整批查詢掛掉,這個名字在 ENS 前端就變成壞的。
+        return "";
     }
 
-    /// @dev 清單沒接上就一律「未批准」。fail-closed。
+    /// @dev `approvals` 是 immutable 且建構時不得為 0,所以只要擋掉 policy 為 0。
+    ///      fail-closed 仍然成立:0 位址永遠不是「已批准」。
     function _isApproved(address policy) private view returns (bool) {
-        if (policy == address(0) || address(approvals) == address(0)) return false;
+        if (policy == address(0)) return false;
         return approvals.isApproved(policy);
     }
 

@@ -1,7 +1,7 @@
 # 事件 Schema(定稿)
 
-**狀態:** 🔒 **已凍結**(2026-09-05 凍結;**2026-09-07 解凍一次改完又凍回去**,見變更紀錄)
-**日期:** 2026-09-07
+**狀態:** 🔒 **已凍結**(2026-09-05 凍結;**2026-09-07 與 09-08 各解凍一次改完又凍回去**,見變更紀錄)
+**日期:** 2026-09-08
 **為什麼先寫這份:** subgraph 吃的是事件。合約寫完才發現事件不夠用,
 代價是重新部署 → 重新索引 → 改 mapping → 改 agent 查詢,一次連鎖四層。
 見 `sprint.md` 判斷①。
@@ -56,8 +56,13 @@
 | 9 | `OUTSIDE_TIME_WINDOW` | 不在允許的時段內 | **刷臉** |
 | 10 | `PAUSED` | 整個帳戶被暫停 | ADMIN |
 | 11 | `OVER_SHARED_LIMIT` | 多個 agent 共用的總預算爆了 | **刷臉** |
+| 12 | `POLICY_FAILED` | policy 呼叫失敗、超過 gas 上限、或回傳格式不對 | 換一份 policy(ADMIN) |
 
-> 4–9、11 是「擴權」,一律要 Selfie Check。1–3、10 是 ADMIN 的日常操作。
+> 4–9、11 是「擴權」,一律要 Selfie Check。1–3、10、12 是 ADMIN 的日常操作。
+>
+> **12 為什麼需要獨立的碼:** 帳戶呼叫 policy 時會限 gas 並檢查回傳長度,
+> 不合就 fail-closed。挪用 4(`POLICY_NOT_APPROVED`)會誤導 —— 那個碼的語意是
+> 「這份 policy 沒被真人批准」,而 12 是「這份 policy 壞了」。兩者的處置完全不同。
 > 這張表就是 `PLAN.md`「擴權 / 縮權的不對稱」的機器可讀版本。
 
 ---
@@ -91,7 +96,17 @@ event PolicyPointerSet(
 ```
 
 **為什麼 `approved` 要記在這裡:** ENS 指標由 ADMIN 控制,批准清單由刷臉控制。
-兩者分離才有意義 —— ADMIN 金鑰被偷,攻擊者能改指標,但指不到一份沒被批准過的 policy。
+兩者分離才有意義 —— **ADMIN 金鑰被偷,攻擊者能改指標,但無法讓一份沒被批准的 policy
+在現有清單裡變成已批准**(`PolicyApprovals.attester` 與 `LeashResolver.approvals`
+都是 `immutable`,沒有 setter)。
+
+> ⚠️ **2026-09-08 修正過的措辭。** 原本寫的是「指不到一份沒被批准過的 policy」——
+> **那句話當時是假的。** code review 指出:`setAttester` 是 `onlyOwner` 且不需背書,
+> 而部署時三份合約的 owner 都是同一把 ADMIN 金鑰,所以
+> `setAttester(永遠回true)` → `approve(任何東西)` 一路通到底。
+> 修法是拿掉那兩個 setter(改 `immutable`),而**主張也要收斂到精確**:
+> ADMIN 仍然可以部署一整套新的控制面再把名字指過去 —— 但那是**一連串看得見的鏈上交易**,
+> 而且新清單是空的,他得把每一個名字重新指一次。他無法**安靜地**擴權。
 把當下的結果記進事件,subgraph 不必自己重算就能呈現「這個指標指到的東西被批准過嗎」。
 
 ---
@@ -185,7 +200,23 @@ event PolicyRevoked(address indexed policy, address indexed by);
 
 ---
 
-### 四、身分層 —— `AttesterGate`
+### 四、身分層 —— ~~`AttesterGate`~~ 由 attestation 的**消費者**發出
+
+> ⚠️ **2026-09-08:`AttesterGate` 這份合約不會存在。**
+>
+> attestation 的消費者只有三個(`PolicyApprovals`、`LeashRegistry`、之後的
+> `LeashAccount`),各自內嵌驗證比多一層轉發簡單,而多一份合約在 5 天的預算裡
+> 買不到東西。
+>
+> **歸屬定案:** `AttestationAccepted` 由 **`LeashAccount`** 發出(它是唯一持有
+> per-wallet nonce 的地方,那個事件的價值就在防重放的審計軌跡)。
+> `PolicyApprovals` 與 `LeashRegistry` 各自用自己的 `attestationUsed` mapping
+> 加上既有事件的 `attestationHash` 欄位承載同樣的資訊。
+>
+> **`AttesterChanged` 已刪除。** `attester` 現在在三份合約裡都是 `immutable`,
+> 沒有 setter,所以沒有這個事件可發 —— 見下方變更紀錄裡的 C1。
+>
+> `action` 欄位的值域從「理由碼 4–9」擴大到 **4–9 與 11**。
 
 ```solidity
 /// 一份 attestation 被接受並用掉。nonce 防重放。
@@ -242,3 +273,14 @@ event AttesterChanged(address indexed oldAttester, address indexed newAttester);
 | 2026-09-07 | 理由碼 4 改名 `POLICY_NOT_APPROVED`(**數字不動**);新增 11 `OVER_SHARED_LIMIT` | 共用預算改由一份 policy 自己記帳,不在帳戶開特例 |
 | 2026-09-07 | `SpendExecuted` / `SpendBlocked` 各補一個 `node` 欄位;新增 `Leashed` | 補上之前議定但沒寫進來的三項 |
 | 2026-09-07 | 🔒 **重新凍結** —— 合約還沒部署、subgraph 還沒寫,這是最後一次無痛改的機會 | — |
+| 2026-09-08 | **解凍第二次**:新增理由碼 **12 `POLICY_FAILED`** | 帳戶對 policy 限 gas 並檢查回傳長度,fail-closed 時沒有現成的碼。挪用 4 會誤導 subgraph |
+| 2026-09-08 | `SubnameRegistered` / `SubnameRevoked` 各補一個 `tokenId` 欄位;新增 `SubnameRenewed`;`ResolverChanged` / `SubregistryChanged` 改以 `node` 為第一個 indexed 欄位並帶 `tokenId` | registry 內部用 labelhash 推導的 tokenId,而 subgraph 的 join key 是 `node`(namehash)。**兩者都要有**,否則索引端得自己重建 tokenId→label→namehash 的對照 |
+| 2026-09-08 | **刪除 `AttesterChanged`**;`AttesterGate` 這份合約不會存在,`AttestationAccepted` 改由 `LeashAccount` 發出 | code review C1:可變的 attester 指標讓一把被偷的 ADMIN 金鑰同時開兩道鎖。`attester` 改成 `immutable` 之後就沒有 setter,也就沒有這個事件 |
+| 2026-09-08 | `PolicyApproved` 補 `nonce` 欄位 | code review C2:原本的 digest 沒有 nonce 也沒記錄用過的 attestation,加上公開的 `revoke` 就能重放 —— 撤銷後用同一份背書重新批准,不需要任何人再刷一次臉 |
+| 2026-09-08 | `action` 欄位值域從「理由碼 4–9」擴大到 4–9 與 11 | 共用預算(11)也是擴權,需要背書 |
+| 2026-09-08 | 🔒 **重新凍結**。合約已部署但 subgraph 還沒寫 —— 這一批改動要重新部署 `LeashRegistry` 與 `PolicyApprovals`,是有代價的,但比帶著錯的安全論證去評審便宜 | — |
+
+> **這一批改動的由來:** 2026-09-08 依 `superpowers:requesting-code-review` 派出的
+> code reviewer 對 `a9f5051..c3c704e` 做的 review,verdict 是 `With fixes`。
+> 兩個 Critical(一把鑰匙開兩道鎖、attestation 可重放)推翻的正好是這份文件
+> 第 94 行原本寫的那句主張。詳細經過見該次 review 的修正 commit。
