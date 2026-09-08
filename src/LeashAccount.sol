@@ -279,6 +279,7 @@ contract LeashAccount {
             keccak256(abi.encode(PAYEE_TYPEHASH, SELF, node, token, payee, nonce)), attestation
         );
         LeashStorage.layout().payees[node][token][payee] = true;
+        emit PayeeAllowed(node, payee, keccak256(attestation));
     }
 
     /// @notice 讀取 (node, token) 目前的規則。
@@ -342,6 +343,16 @@ contract LeashAccount {
         bool wasAllowed = cur.allowed;
         uint256 oldLimit = cur.periodLimit;
         uint32 epoch = cur.epoch;
+        // 判斷「有沒有變寬」要在寫入前做,用的是舊值 vs 新值 —— 寫完再比就是
+        // 拿 cur 跟自己比,永遠是 true。用 `_isTighterIgnoringEpoch`(不是
+        // `_isTighter`)——原因見它自己的註解:`rule.epoch` 對 `setRule` 而言
+        // 不受 attestation 保護、也從不被採信,拿它去跟 `cur.epoch` 比會把
+        // 「epoch 曾經被撞過」的無關噪音誤判成「變寬」。
+        // `_isTighterIgnoringEpoch` 對關閉中的舊規則一律回 false(「原本就關著,
+        // 沒有更嚴可言」),所以第一次開啟(或重新開啟)一定落在 !tighterOrEqual,
+        // `LimitRaised` 會跟著 `TokenAllowed` 一起發 —— 這正是「開一個沒有上限的
+        // token」該有的行為:兩個事件都要有。
+        bool tighterOrEqual = _isTighterIgnoringEpoch(cur, rule);
         if (exists && cur.period != rule.period) epoch += 1; // 換週期 = 換一套帳
 
         cur.allowed = rule.allowed;
@@ -354,7 +365,14 @@ contract LeashAccount {
 
         bytes32 h = keccak256(attestation);
         if (!wasAllowed && rule.allowed) emit TokenAllowed(node, token, h);
-        emit LimitRaised(node, token, oldLimit, rule.periodLimit, rule.period, h);
+        // 「Raised」只在真的變寬時發 —— 逐位元組相同(或更嚴)的 setRule 不該發
+        // 一個名字叫「放寬」的事件。用跟 `tightenRule` 共用的同一套子集/大小
+        // 判準(`_isTighterIgnoringEpoch`)當依據,而不是另外湊一條「periodLimit
+        // 有沒有變大」的規則,否則 window/period 變寬又會漏掉,重演
+        // `tightenRule` 當初要修的同一個洞。
+        if (!tighterOrEqual) {
+            emit LimitRaised(node, token, oldLimit, rule.periodLimit, rule.period, h);
+        }
     }
 
     /// @notice 收緊規則。**縮權 —— 只要 `address(this)`,不需要背書。**
@@ -423,6 +441,26 @@ contract LeashAccount {
         // period 與 epoch 不准動:改 period 會換桶,累計歸零 ——
         // 「調低上限」反而讓可花的變多。清帳只能走 setRule(要背書)。
         if (new_.period != old_.period || new_.epoch != old_.epoch) return false;
+        return _lteOrUnlimited(new_.txLimit, old_.txLimit)
+            && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
+            && _windowIsSubset(new_.windowStart, new_.windowEnd, old_.windowStart, old_.windowEnd);
+    }
+
+    /// @dev 跟 `_isTighter` 判準相同,但**完全不看 `epoch`** —— 只有 `setRule`
+    ///      用它來決定要不要發 `LimitRaised`。`RULE_TYPEHASH` 沒有 `epoch` 這個
+    ///      欄位,attestation 保護不到它,`setRule` 其餘地方也完全不採信呼叫者
+    ///      填的 `rule.epoch`(見 `setRule` 內 epoch 的計算,只從 `cur.epoch`
+    ///      往上加)。如果直接用 `_isTighter` 比,一旦 `epoch` 曾經被撞過
+    ///      (period 換過一次),之後任何一次逐位元組相同的重放呼叫都會因為
+    ///      呼叫者慣用的 `epoch: 0` 對不上目前非零的 `cur.epoch`,被誤判成
+    ///      「變寬」而白白發一次 `LimitRaised`。
+    function _isTighterIgnoringEpoch(
+        LeashStorage.TokenRule storage old_,
+        LeashStorage.TokenRule calldata new_
+    ) private view returns (bool) {
+        if (old_.allowed && !new_.allowed) return true;
+        if (!old_.allowed) return false;
+        if (new_.period != old_.period) return false; // 理由同 `_isTighter`,epoch 除外
         return _lteOrUnlimited(new_.txLimit, old_.txLimit)
             && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
             && _windowIsSubset(new_.windowStart, new_.windowEnd, old_.windowStart, old_.windowEnd);

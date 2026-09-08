@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import { Test } from "forge-std/Test.sol";
+import { Vm } from "forge-std/Vm.sol";
 import { LeashAccount } from "../src/LeashAccount.sol";
 import { LeashStorage } from "../src/LeashStorage.sol";
 import { IPolicyApprovals } from "../src/IPolicyApprovals.sol";
@@ -207,6 +208,55 @@ contract LeashAccountRulesTest is Test {
         acct.removePayee(NODE, TOKEN, PAYEE); // 縮權,不需背書
         assertFalse(acct.isPayeeAllowed(NODE, TOKEN, PAYEE));
         vm.stopPrank();
+    }
+
+    /// `allowPayee` 是擴權路徑,凍結事件裡對應的是 `PayeeAllowed`。
+    /// 少了這個 emit,subgraph 看不到白名單一個收款人這件事 ——
+    /// 那是擴權稽核軌跡的另一半(另一半是 `setRule` 的 `TokenAllowed`/`LimitRaised`)。
+    function test_allow_payee_emits_payee_allowed() public {
+        vm.expectEmit(true, true, false, true);
+        emit LeashAccount.PayeeAllowed(NODE, PAYEE, keccak256(ATT));
+        vm.prank(wallet);
+        acct.allowPayee(NODE, TOKEN, PAYEE, ++nonce, ATT);
+    }
+
+    /// `LimitRaised` 是「放寬」事件,不該在什麼都沒變的 setRule 上發。
+    /// 用 `_isTighter`(而不是另外湊一條「periodLimit 有沒有變大」)當判準,
+    /// 逐位元組相同的重放應該被判為「仍然一樣嚴」,不算變寬。
+    function test_setRule_emits_no_limit_raised_when_nothing_changes() public {
+        _set(_rule(100, 1000, 1 days, 0, 0));
+
+        vm.recordLogs();
+        _set(_rule(100, 1000, 1 days, 0, 0)); // 內容逐位元組相同
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 limitRaisedTopic =
+            keccak256("LimitRaised(bytes32,address,uint256,uint256,uint64,bytes32)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != limitRaisedTopic, "no-op setRule must not emit LimitRaised"
+            );
+        }
+    }
+
+    /// 迴歸測試:一旦 `epoch` 曾經被撞過(period 換過一次),之後逐位元組相同
+    /// 的重放呼叫仍然不該發 `LimitRaised`。`rule.epoch`(這裡是 `_rule` helper
+    /// 固定填的 0)對不上目前非零的 `cur.epoch`,不能被拿來當「有沒有變寬」的
+    /// 依據 —— 那是 `RULE_TYPEHASH` 沒保護、`setRule` 本來就不採信的欄位。
+    function test_setRule_no_limit_raised_after_epoch_has_advanced() public {
+        _set(_rule(100, 1000, 1 days, 0, 0));
+        _set(_rule(100, 1000, 7 days, 0, 0)); // period 換了,epoch 撞到 1
+        assertEq(acct.ruleOf(NODE, TOKEN).epoch, 1);
+
+        vm.recordLogs();
+        _set(_rule(100, 1000, 7 days, 0, 0)); // 逐位元組相同的重放(epoch 傳的還是 0)
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 limitRaisedTopic =
+            keccak256("LimitRaised(bytes32,address,uint256,uint256,uint64,bytes32)");
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics[0] != limitRaisedTopic, "epoch drift must not fake a widen");
+        }
     }
 
     // --- 兩個都要 ---
