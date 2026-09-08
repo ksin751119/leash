@@ -48,6 +48,16 @@ contract ReenteringToken {
     }
 }
 
+/// @dev 回傳長度剛好 32 bytes,但不是 0 也不是 1 的代幣 —— 用來測「回傳值
+///      不是 `abi.decode(ret, (bool))` 吃得下的東西」不能讓 `spend` 炸出
+///      一個裸的 `Panic`,蓋掉真正的失敗理由。`TransferFailed()` 才是
+///      正確的失敗方式。
+contract GarbageReturnToken {
+    function transfer(address, uint256) external pure returns (uint256) {
+        return 2;
+    }
+}
+
 /// @dev 燒掉所有 gas 的 policy —— 測 `POLICY_GAS` 上限與 fail-closed。
 /// @notice **簽章要跟 `IPolicy.check` 完全一致**(`SpendContext calldata`),
 ///         不能用 `bytes calldata` 湊 —— selector 對不上,帳戶那層永遠打不進

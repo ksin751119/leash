@@ -22,6 +22,7 @@ import {
     FalseReturnToken,
     NoReturnToken,
     ReenteringToken,
+    GarbageReturnToken,
     GasBurningPolicy,
     ShortReturnPolicy
 } from "./mocks/BadTokens.sol";
@@ -274,6 +275,25 @@ contract LeashAccountSpendTest is Test {
         acct.spend(address(n), PAYEE, 1);
     }
 
+    /// review 找到的 Minor:回傳長度剛好 32 bytes,但不是 0/1(例如 `2`)
+    /// 的代幣,原本會讓 `abi.decode(ret, (bool))` 直接炸出裸的 `Panic`,
+    /// 蓋掉真正的失敗理由。**這裡斷言的是 `TransferFailed()`,不是任何
+    /// panic** —— `vm.expectRevert` 指定精確的 selector,如果實際 revert
+    /// 是 `Panic(uint256)` 而不是這個自訂錯誤,這條測試會失敗。
+    function test_a_garbage_but_32_byte_return_fails_cleanly_not_a_panic() public {
+        _bindAndAllow();
+        GarbageReturnToken g = new GarbageReturnToken();
+
+        vm.startPrank(wallet);
+        acct.setRule(NODE, address(g), _openRule(), ++nonce, ATT);
+        acct.allowPayee(NODE, address(g), PAYEE, ++nonce, ATT);
+        vm.stopPrank();
+
+        vm.expectRevert(LeashAccount.TransferFailed.selector);
+        vm.prank(AGENT);
+        acct.spend(address(g), PAYEE, 1);
+    }
+
     function test_zero_amount_reverts() public {
         _bindAndAllow();
         vm.expectRevert(LeashAccount.ZeroAmount.selector);
@@ -401,6 +421,13 @@ contract LeashAccountSpendTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit LeashAccount.PolicyResolved(NODE, POLICY, false);
+        // 跟其他理由碼測試一樣:不只看 PolicyResolved,連 SpendBlocked
+        // 本身有沒有發、理由碼對不對都要斷言 —— 光看 PolicyResolved.approved
+        // 是 false,不代表帳戶真的把這筆擋下來記成 POLICY_NOT_APPROVED。
+        vm.expectEmit(true, true, true, true);
+        emit LeashAccount.SpendBlocked(
+            NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_NOT_APPROVED, POLICY, 0, 0
+        );
         vm.prank(AGENT);
         LeashAccount(payable(wallet)).spend(address(token), PAYEE, 1);
 

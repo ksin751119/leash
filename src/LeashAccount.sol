@@ -796,12 +796,11 @@ contract LeashAccount {
             })
         );
 
-        // 9. 被擋
+        // 9. 被擋 —— 跟 2b/3/4/5 共用同一條路徑,不要重複貼一次
+        //    「解鎖 + 發 SpendBlocked」的邏輯(review 抓到的重複)。`$` 這裡
+        //    本來就在 scope 裡,呼叫 `_blocked` 沒有額外的 stack 代價。
         if (reason != Reason.OK) {
-            $.entered = false;
-            emit SpendBlocked(
-                node, msg.sender, payee, token, amount, reason, policy, spentSoFar, r.periodLimit
-            );
+            _blocked($, node, payee, token, amount, reason, policy, spentSoFar, r.periodLimit);
             return;
         }
 
@@ -832,9 +831,17 @@ contract LeashAccount {
     ) private {
         // 11. 轉帳。**嚴格檢查:恰好 32 bytes 且是 true。** 不用 SafeERC20 的
         //     寬鬆版 —— 寬鬆換來的相容性,代價是「回報成功但沒轉帳」。
+        //
+        //     跟 `_askPolicy` 用同一套解法,不對外部回傳資料直接
+        //     `abi.decode(ret, (bool))`:一個回傳 32 bytes 但不是 0/1 的
+        //     代幣(例如整數 2)會讓 `abi.decode` 直接 revert 成 `Panic`,
+        //     蓋掉真正的失敗理由。改成當 `uint256` 讀出來自己判斷,
+        //     失敗一律歸給 `TransferFailed()`。
         (bool ok, bytes memory ret) =
             token.call(abi.encodeWithSignature("transfer(address,uint256)", payee, amount));
-        if (!ok || ret.length != 32 || !abi.decode(ret, (bool))) revert TransferFailed();
+        if (!ok || ret.length != 32) revert TransferFailed();
+        uint256 rawReturn = abi.decode(ret, (uint256));
+        if (rawReturn != 1) revert TransferFailed();
 
         // 12. 事件
         uint64 periodEnd = period == 0 ? 0 : uint64(((block.timestamp / period) + 1) * period);
