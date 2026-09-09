@@ -53,7 +53,11 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     if (!res.ok) return { ok: false, error: `subgraph returned HTTP ${res.status}` };
     body = await res.json();
   } catch (err) {
-    return { ok: false, error: `subgraph unreachable: ${err?.message ?? err}` };
+    // Never put cfg.url in an error: a subgraph url can carry an API key.
+    // The exception path can leak the URL in err.message (Node's fetch does this).
+    const raw = String(err?.message ?? err);
+    const safe = cfg.url ? raw.split(cfg.url).join("<redacted>") : raw;
+    return { ok: false, error: `subgraph unreachable: ${safe}` };
   }
 
   if (body?.errors?.length) {
@@ -69,7 +73,7 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
 
   const payees = {};
   for (const p of d.payees ?? []) {
-    payees[lower(p.payee)] = { allowed: p.allowed === true, lastToken: p.lastToken ?? null };
+    payees[lower(p.payee)] = { allowed: p.allowed === true, lastToken: p.lastToken ? lower(p.lastToken) : null };
   }
 
   const chain = typeof cfg.chainBlock === "number" ? cfg.chainBlock : blockNumber;

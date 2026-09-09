@@ -102,7 +102,30 @@ test("absent optional rows are null, not an error", async () => {
   assert.equal(s.policy, null);
 });
 
-test("the error sentence never contains the url, which may carry a key", async () => {
+test("the error sentence never contains the url on the non-200 path", async () => {
   const s = await fetchSnapshot({ ...CFG, url: "https://x/secret-key-abc" }, stub({}, 500));
   assert.ok(!s.error.includes("secret-key-abc"));
+});
+
+test("the error sentence never contains the url on the throw path", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc123";
+  const fetchWithUrlInError = async () => {
+    throw new Error(`Failed to fetch from ${secretUrl}`);
+  };
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithUrlInError);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("SECRET-KEY-abc123"), "the secret key must not appear");
+  assert.ok(!s.error.includes(secretUrl), "the url must be redacted");
+  assert.ok(s.error.includes("Failed to fetch"), "other error details must survive redaction");
+});
+
+test("non-url error details like ECONNREFUSED survive redaction", async () => {
+  const fetchWithConnError = async () => {
+    throw new Error("ECONNREFUSED at https://hidden.example.com/query?key=xyz");
+  };
+  const s = await fetchSnapshot({ ...CFG, url: "https://hidden.example.com/query?key=xyz" }, fetchWithConnError);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("https://hidden.example.com"), "url must be redacted");
+  assert.ok(!s.error.includes("key=xyz"), "api key must be redacted");
+  assert.ok(s.error.includes("ECONNREFUSED"), "the diagnostic message must survive");
 });

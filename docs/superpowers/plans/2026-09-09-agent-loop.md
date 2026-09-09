@@ -668,9 +668,32 @@ test("absent optional rows are null, not an error", async () => {
   assert.equal(s.policy, null);
 });
 
-test("the error sentence never contains the url, which may carry a key", async () => {
+test("the error sentence never contains the url on the non-200 path", async () => {
   const s = await fetchSnapshot({ ...CFG, url: "https://x/secret-key-abc" }, stub({}, 500));
   assert.ok(!s.error.includes("secret-key-abc"));
+});
+
+test("the error sentence never contains the url on the throw path", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc123";
+  const fetchWithUrlInError = async () => {
+    throw new Error(`Failed to fetch from ${secretUrl}`);
+  };
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithUrlInError);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("SECRET-KEY-abc123"), "the secret key must not appear");
+  assert.ok(!s.error.includes(secretUrl), "the url must be redacted");
+  assert.ok(s.error.includes("Failed to fetch"), "other error details must survive redaction");
+});
+
+test("non-url error details like ECONNREFUSED survive redaction", async () => {
+  const fetchWithConnError = async () => {
+    throw new Error("ECONNREFUSED at https://hidden.example.com/query?key=xyz");
+  };
+  const s = await fetchSnapshot({ ...CFG, url: "https://hidden.example.com/query?key=xyz" }, fetchWithConnError);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("https://hidden.example.com"), "url must be redacted");
+  assert.ok(!s.error.includes("key=xyz"), "api key must be redacted");
+  assert.ok(s.error.includes("ECONNREFUSED"), "the diagnostic message must survive");
 });
 ```
 
@@ -737,7 +760,11 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     if (!res.ok) return { ok: false, error: `subgraph returned HTTP ${res.status}` };
     body = await res.json();
   } catch (err) {
-    return { ok: false, error: `subgraph unreachable: ${err?.message ?? err}` };
+    // The exception path can leak the URL in err.message (Node's fetch does this).
+    // Redact it, but keep other error details like ECONNREFUSED for debugging.
+    const raw = String(err?.message ?? err);
+    const safe = cfg.url ? raw.split(cfg.url).join("<redacted>") : raw;
+    return { ok: false, error: `subgraph unreachable: ${safe}` };
   }
 
   if (body?.errors?.length) {
@@ -753,7 +780,7 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
 
   const payees = {};
   for (const p of d.payees ?? []) {
-    payees[lower(p.payee)] = { allowed: p.allowed === true, lastToken: p.lastToken ?? null };
+    payees[lower(p.payee)] = { allowed: p.allowed === true, lastToken: p.lastToken ? lower(p.lastToken) : null };
   }
 
   const chain = typeof cfg.chainBlock === "number" ? cfg.chainBlock : blockNumber;
@@ -781,7 +808,7 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `cd agent && node --test subgraph.test.mjs`
-Expected: PASS, 9 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 5: Run it against the live index, once**
 
