@@ -1,107 +1,117 @@
 # Sprint Plan — Leash
 
-**期間:** 2026-09-04 → 2026-09-14(11 天)
-**團隊:** 1 人
+**Window:** 2026-09-04 → 2026-09-14 (11 days)
+**Team:** 1 person
 **Sprint Goal:**
 
-> 讓一個 AI agent 在鏈上花錢,額度規則存在 ENS 名字底下、agent 改不了;
-> agent 靠 subgraph 決定要不要送交易;人類刷臉才能放寬規則,收緊隨時可做。
+> Let an AI agent spend on chain, with the limit rules living under an ENS name where the
+> agent cannot change them; the agent decides whether to send a transaction by querying a
+> subgraph; a human face scan is required to loosen the rules, while tightening is always
+> available.
 
 ---
 
-## 假設(不對就告訴我,整份會重算)
+## Assumptions (say if any are wrong; the whole plan recomputes)
 
-| 假設 | 值 | 影響 |
+| Assumption | Value | Effect |
 |---|---|---|
-| 每日可投入 | **9 小時** | 直接決定能不能做完 |
-| 提交截止 | **9/14** | 9/13 必須全部完成,9/14 只留提交 |
-| 影片 | 2–4 分鐘,三個賽道共用一支 | 省 4 小時 |
+| Hours available per day | **9** | Directly decides whether this finishes |
+| Submission deadline | **9/14** | Everything must be done by 9/13; 9/14 is submission only |
+| Video | 2-4 minutes, one shared across all three tracks | Saves 4 hours |
 
 ---
 
-## 產能
+## Capacity
 
 ```
-理論產能   11 天 × 9 小時          = 99 小時
-有效產能   × 70%(除錯、卡住、重做) = 69 小時
+theoretical   11 days × 9 hours              = 99 hours
+effective     × 70% (debugging, being stuck, redoing) = 69 hours
 ```
 
-**必做項目合計 73 小時。**
+**The must-do items total 73 hours.**
 
-> ⚠️ **這是 106% 的產能,buffer 是負的。**
-> 標準做法是留 20% buffer(commit 到 55 小時)。我們留不起。
-> 所以下面有一份**預先講好的砍單清單** —— 落後時照順序砍,不要臨場才想。
+> ⚠️ **That is 106% of capacity, so the buffer is negative.**
+> Standard practice is a 20% buffer (committing to 55 hours). We cannot afford one.
+> Hence the **pre-agreed cut list** below — when behind, cut in order rather than deciding
+> in the moment.
 
 ---
 
-## 工作項目
+## Work items
 
-點數 = 小時。`M` = 必做(缺了就拿不到某個獎),`S` = 應做,`X` = 有餘力才做。
+Points = hours. `M` = must (without it a prize is unreachable), `S` = should,
+`X` = only with capacity to spare.
 
-| # | 項目 | h | 級別 | 依賴 | 風險 |
+| # | Item | h | Level | Depends on | Risk |
 |---|---|---|---|---|---|
-| 1 | Repo init、foundry、**EIP-7702 在 Sepolia 的可行性驗證** | 4 | M | — | 🔴 未驗證 |
-| 2 | **事件 schema 定稿**(寫死在文件裡再動工) | 2 | M | — | 🟡 改動代價高 |
-| 3 | `StandardPolicy` + `Reason` + `IPolicy`(額度、白名單、週期預算、時段) | 6 | M | 2 | ✅ **已完成 9/6**,16 個測試綠燈 |
-| 3b | `SharedBudgetPolicy` —— 多 agent 共用總預算(policy 自己記帳) | 1 | S | 3 | 🟢 09-07 設計改版後只剩一份合約 |
-| 4 | `LeashRegistry` —— 實作 ENSv2 `IRegistry` | 5 | M | 2 | ✅ **已完成 9/8**,29 測試。tokenId 規則從鏈上反推 |
-| 5 | `LeashResolver` —— **只實作 ENSIP-10 `resolve(bytes,bytes)`** | 4 | M | — | ✅ **已完成 9/7**,23 個測試綠燈。實作起來不依賴項目 4 |
-| 6 | ENS 接線 + 鏈上解析走通(`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | ✅ **已完成 9/8**,官方 UniversalResolver 也解得出來 |
-| 7a | `LeashAccount` —— 執行前強制過 policy 的合約錢包(含重入鎖、policy gas 上限、`isLeashed`) | 5 | M | 3,6 | 🟢 |
-| 7b | 升級成 **EIP-7702 delegate**(EOA 直接被 policy 管) | 5 | **X** | 1,7a | 🔴 工具鏈風險 |
-| 8 | `AttesterGate` —— EIP-712 驗證擴權簽章,**介面化雙實作** | 4 | M | 3 | 🟠 **一半完成 9/8**:`IAttester` + `MockAttester` + `PolicyApprovals` 已部署,剩 `WorldAttester` |
-| 9 | Subgraph:schema + mappings + 部署 Studio + 索引 | 6 | M | 2,6,7a | 🟡 索引要時間 |
-| 10 | Agent 決策迴路:查 subgraph → 判斷 → 簽 → 送 | 6 | M | 9 | 🟢 |
-| 11 | World:IDKit + 後端驗證 + EIP-712 簽發 | 6 | M | 8 | 🟢 **IDKit + 後端驗證 9/7 實測走通**(`world/`),只剩 EIP-712 簽發 |
-| 12 | 前端單頁 | 5 | M | 8,9,11 | 🟢 |
-| 13 | 端對端彩排 + 修 | 5 | M | 全部 | 🟡 |
-| 14 | README(公開 repo、架構圖、跑法) | 3 | M | 13 | 🟢 |
-| 15 | 影片 2–4 分鐘 | 4 | M | 13 | 🟡 常被壓到最後 |
-| 16 | World feedback document 定稿 | 2 | M | 11 | 🟢 已寫大半 |
-| 17 | 三個賽道各自提交 | 2 | M | 14,15,16 | 🟢 |
+| 1 | Repo init, foundry, **verify EIP-7702 is viable on Sepolia** | 4 | M | — | 🔴 unverified |
+| 2 | **Finalise the event schema** (write it down before any work starts) | 2 | M | — | 🟡 expensive to change |
+| 3 | `StandardPolicy` + `Reason` + `IPolicy` (limits, allow-lists, period budgets, time windows) | 6 | M | 2 | ✅ **done 9/6**, 16 tests green |
+| 3b | `SharedBudgetPolicy` — a budget pooled across agents (the policy keeps its own ledger) | 1 | S | 3 | 🟢 after the 09-07 redesign it is a single contract |
+| 4 | `LeashRegistry` — implementing the ENSv2 `IRegistry` | 5 | M | 2 | ✅ **done 9/8**, 29 tests. The tokenId rule was reverse-engineered from the chain |
+| 5 | `LeashResolver` — **ENSIP-10 `resolve(bytes,bytes)` only** | 4 | M | — | ✅ **done 9/7**, 23 tests green. Implementing it did not depend on item 4 |
+| 6 | ENS wiring and onchain resolution working end to end (`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | ✅ **done 9/8**; the official UniversalResolver resolves it too |
+| 7a | `LeashAccount` — the wallet that forces every execution through the policy (reentrancy lock, policy gas cap, `isLeashed`) | 5 | M | 3,6 | 🟢 |
+| 7b | Upgrade to an **EIP-7702 delegate** (the EOA itself governed by the policy) | 5 | **X** | 1,7a | 🔴 toolchain risk |
+| 8 | `AttesterGate` — EIP-712 verification of widening signatures, **behind an interface with two implementations** | 4 | M | 3 | 🟠 **half done 9/8**: `IAttester` + `MockAttester` + `PolicyApprovals` deployed; `WorldAttester` remains |
+| 9 | Subgraph: schema + mappings + deploy to Studio + index | 6 | M | 2,6,7a | 🟡 indexing takes time |
+| 10 | The agent decision loop: query the subgraph → decide → sign → send | 6 | M | 9 | 🟢 |
+| 11 | World: IDKit + backend verification + EIP-712 issuance | 6 | M | 8 | 🟢 **IDKit and backend verification worked end to end on 9/7** (`world/`); only EIP-712 issuance remains |
+| 12 | The single-page frontend | 5 | M | 8,9,11 | 🟢 |
+| 13 | End-to-end rehearsal and fixes | 5 | M | all | 🟡 |
+| 14 | README (public repo, architecture diagram, how to run it) | 3 | M | 13 | 🟢 |
+| 15 | A 2-4 minute video | 4 | M | 13 | 🟡 usually squeezed to the end |
+| 16 | Finalise the World feedback document | 2 | M | 11 | 🟢 mostly written |
+| 17 | Submit to each of the three tracks | 2 | M | 14,15,16 | 🟢 |
 
-~~**† 項目 11 卡在外部核准。**~~ **2026-09-07 解除** —— precheck API 確認 `enable_face_check: true`。
-從來就沒被擋住,只是 Portal 不顯示狀態。見 `world-feedback.md` §6。
+~~**† Item 11 is blocked on external approval.**~~ **Cleared 2026-09-07** — the precheck API
+confirms `enable_face_check: true`. It was never blocked at all; the Portal simply does not
+display the status. See `world-feedback.md` §6.
 
-**必做合計(不含 7b):73h** · **有效產能 69h**
+**Must-do total (excluding 7b): 73h** · **effective capacity 69h**
 
 ---
 
-## 日程
+## Day plan
 
-| 日 | 日期 | 主軸 | 項目 | h |
+| Day | Date | Theme | Items | h |
 |---|---|---|---|---|
-| 1 | 9/4 | **先驗證再動工** | 1, 2 | 6 |
-| 2 | 9/5 | Policy 核心 | 3 | 6 |
-| 3 | 9/6 | ENS 合約 | 4, 5 | 9 |
-| 4 | 9/7 | **ENS 走通** ⛳ | 6, 7a | 9 |
-| 5 | 9/8 | Subgraph 上線 ⛳ | 9, 8 | 10 |
-| 6 | 9/9 | Agent 會思考 ⛳ · **World 死線** | 10 | 6 |
-| 7 | 9/10 | World 整合 或 應變 | 11 | 6 |
-| 8 | 9/11 | 前端 | 12 | 5 |
-| 9 | 9/12 | **端對端跑得動** ⛳ | 13 | 5 |
-| 10 | 9/13 | **交件 + 提交(最後一天)** ⛳ | 14, 15, 16, 17 | 11 |
+| 1 | 9/4 | **Verify before building** | 1, 2 | 6 |
+| 2 | 9/5 | The policy core | 3 | 6 |
+| 3 | 9/6 | The ENS contracts | 4, 5 | 9 |
+| 4 | 9/7 | **ENS resolving end to end** ⛳ | 6, 7a | 9 |
+| 5 | 9/8 | Subgraph live ⛳ | 9, 8 | 10 |
+| 6 | 9/9 | The agent thinks ⛳ · **World deadline** | 10 | 6 |
+| 7 | 9/10 | World integration, or the contingency | 11 | 6 |
+| 8 | 9/11 | Frontend | 12 | 5 |
+| 9 | 9/12 | **End to end actually runs** ⛳ | 13 | 5 |
+| 10 | 9/13 | **Deliver and submit (the last day)** ⛳ | 14, 15, 16, 17 | 11 |
 
-⛳ = 里程碑,當天沒到就啟動砍單。
+⛳ = a milestone. Miss it on the day and the cut list starts.
 
-> 🔴 **提交死線:2026-09-13(日)12:00 EDT = 台北時間 9/14 00:00**(2026-09-07 查證)。
-> 原本排的第 11 天(9/14)**不存在** —— 9/13 一整天做完就要交,沒有緩衝日。
-> 活動辦到 9/16 是評審與閉幕,不是還能寫程式。
+> 🔴 **Submission deadline: Sunday 2026-09-13, 12:00 EDT = 9/14 00:00 Taipei** (confirmed
+> 2026-09-07). The eleventh day originally planned (9/14) **does not exist** — 9/13 is a
+> full working day that ends in submission, with no buffer day. The event running to 9/16 is
+> judging and closing, not more coding time.
 >
-> 評審分兩輪:先非同步書面篩選,入圍者再 live 評審 —— **4 分鐘 demo + 3 分鐘 Q&A**。
-> 影片和 demo 照 4 分鐘設計,不要做 10 分鐘的東西。
+> Judging has two rounds: an asynchronous written screen first, then a live round for
+> finalists — **a 4-minute demo plus 3 minutes of Q&A**. Design the video and the demo for
+> 4 minutes; do not build a 10-minute thing.
 
 ---
 
-## 三個決定性的判斷
+## Three decisive judgements
 
-### ① 事件 schema 先定稿,再寫合約(項目 2)
+### ① Finalise the event schema before writing contracts (item 2)
 
-Subgraph 吃的是事件。合約寫完才發現事件不夠用,代價是**重新部署 + 重新索引 + 改 mapping + 改 agent 查詢** —— 一次連鎖四層。
+A subgraph eats events. Discovering after the contracts are written that the events are
+insufficient costs **a redeploy + a reindex + mapping changes + agent query changes** —
+four layers in one chain.
 
-**2 小時先把事件寫死在文件裡**,是這整份計畫裡投報率最高的一筆。
+**Two hours spent writing the events down first** is the highest-return item in this whole
+plan.
 
-至少要有:
+The minimum set:
 ```
 PolicyResolved(agent, policyAddr, ensNode)
 SpendAttempted(agent, payee, token, amount, allowed, reason)
@@ -110,103 +120,113 @@ PayeeAdded(agent, payee, attestationHash)
 AgentRevoked(agent, by)
 ```
 
-### ② Attester 從第一天就介面化(項目 8)
+### ② Put the attester behind an interface from day one (item 8)
 
 ```solidity
 interface IAttester { function verify(bytes calldata) external view returns (bool); }
 ```
 
-兩個實作:`WorldAttester` 和 `MockAttester`。合約只認介面。
+Two implementations: `WorldAttester` and `MockAttester`. The contracts depend only on the
+interface.
 
-**這樣 World 什麼時候到都不痛** —— 核准來了就是換一個地址,30 分鐘的事,不是重寫。
-沒來就用 mock,而且在 README 和影片裡誠實說明卡在哪(理由已完整寫在 `world-feedback.md`)。
+**That way it does not matter when World lands** — approval arriving means swapping one
+address, a 30-minute job rather than a rewrite. If it never arrives, use the mock and say
+honestly in the README and the video where it is stuck (the reasoning is written out in full
+in `world-feedback.md`).
 
-**這 30 分鐘的設計,買掉整份計畫最大的一個風險。**
+**Thirty minutes of design buys away the single largest risk in this plan.**
 
-### ③ 7702 降級成「先做合約錢包,行有餘力再升級」(項目 7a/7b)
+### ③ Demote 7702 to "build the contract wallet first, upgrade only with capacity to spare" (items 7a/7b)
 
-EIP-7702 的故事比較好聽(既有 EOA 直接被 policy 管),但工具鏈風險高,而且**三個獎項沒有一個要求它**。
+EIP-7702 tells a better story (an existing EOA governed directly by the policy), but the
+toolchain risk is high and **none of the three prizes requires it**.
 
-先做 `LeashAccount`(一般合約錢包,執行前強制過 policy),demo 效果一樣。
-7b 列為 stretch,9/12 之前沒把必做做完就直接放棄。
+Build `LeashAccount` first (an ordinary contract wallet that forces every execution through
+the policy); the demo looks the same. 7b is a stretch goal, abandoned outright if the
+must-dos are not finished by 9/12.
 
 ---
 
-## 風險
+## Risks
 
-| # | 風險 | 機率 | 衝擊 | 對策 |
+| # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| 1 | ~~World 核准不來~~ | — | — | ✅ **2026-09-07 消滅**:旗標本來就是開的。`AttesterGate` 仍照判斷② 介面化,但理由從「避險」變成「乾淨」 |
-| 2 | **ENSv2 resolver 只吃 ENSIP-10** | 已確認 | 高 | 已實測:legacy `addr()`/`text()` **不支援**。只實作 `resolve(bytes,bytes)`,別浪費時間在相容層 |
-| 3 | EIP-7702 在 Sepolia 的工具鏈 | 中 | 中 | 第 1 天就驗,不通就砍 7b。不要拖到第 8 天才發現 |
-| 4 | Subgraph 索引比預期慢 | 中 | 中 | 9/8 就部署,留 4 天發現問題。**不要等功能全寫完才部署** |
-| 5 | 影片被壓到最後一天 | **高** | 高 | 9/13 排整段時間。9/12 端對端就要能跑,影片才有東西拍 |
-| 6 | 單人,任何卡住都是全面停擺 | 高 | 高 | 每個里程碑當天沒到就砍單,不要用「明天補回來」自我安慰 |
-| 7 | `leash.eth` 一年後過期 | 低 | 低 | 已註冊到 2027-09-02。評審期間內無虞 |
+| 1 | ~~World's approval never arrives~~ | — | — | ✅ **eliminated 2026-09-07**: the flag had been on all along. `AttesterGate` still goes behind an interface per judgement ②, but the reason changes from hedging to cleanliness |
+| 2 | **ENSv2 resolvers accept ENSIP-10 only** | confirmed | high | Measured: the legacy `addr()`/`text()` are **not supported**. Implement `resolve(bytes,bytes)` only; waste no time on a compatibility layer |
+| 3 | The EIP-7702 toolchain on Sepolia | medium | medium | Verify on day 1 and cut 7b if it does not work. Do not discover this on day 8 |
+| 4 | Subgraph indexing is slower than expected | medium | medium | Deploy on 9/8, leaving 4 days to find problems. **Do not wait until every feature is written to deploy** |
+| 5 | The video gets squeezed into the last day | **high** | high | Block out time on 9/13. End to end must run by 9/12 or there is nothing to film |
+| 6 | One person, so any blocker halts everything | high | high | Cut on the day a milestone is missed; do not console yourself with "I will catch up tomorrow" |
+| 7 | `leash.eth` expires in a year | low | low | Registered through 2027-09-02. Safe across the judging period |
 
 ---
 
-## 預先講好的砍單順序
+## The pre-agreed cut order
 
-落後時**從上往下砍**,不要臨場開會跟自己辯論:
+When behind, **cut from the top down**; do not convene a meeting with yourself in the
+moment:
 
-1. **7b** EIP-7702 升級 —— 已是 stretch,直接放棄 (−5h)
-2. **Agent 的第 4 個問題**(「我上次為什麼被擋」)—— 三個問題足以證明 load-bearing (−2h)
-3. **前端的 policy 顯示改成直接讀合約**,不走 subgraph —— agent 那邊仍在用,不影響 The Graph 的條件 (−2h)
-4. ~~**World → MockAttester**~~ —— **已不適用**,旗標開了 (−0h)
-5. **測試只留 happy path** —— hackathon 不是產品 (−4h)
+1. **7b** the EIP-7702 upgrade — already a stretch goal, so abandon it (−5h)
+2. **The agent's fourth question** ("why was I blocked last time?") — three questions
+   suffice to show the subgraph is load-bearing (−2h)
+3. **The frontend's policy display reads the contract directly** instead of the subgraph —
+   the agent still uses it, so The Graph's condition is unaffected (−2h)
+4. ~~**World → MockAttester**~~ — **no longer applicable**; the flag is on (−0h)
+5. **Keep only happy-path tests** — a hackathon is not a product (−4h)
 
-砍到第 3 項就回到 62h,低於產能,還有 7h buffer。
+Cutting through item 3 returns to 62h, below capacity, with 7h of buffer left.
 
 ---
 
-## 工時調整紀錄
+## Effort adjustment log
 
-| 日期 | 調整 | h |
+| Date | Adjustment | h |
 |---|---|---|
-| 2026-09-07 | 砍掉 `Write[]`/`_scratch` 代寫管線 | −1.0 |
-| 2026-09-07 | 砍掉 `SharedLedger` 獨立帳本(併進 `SharedBudgetPolicy`) | −1.0 |
-| 2026-09-07 | 砍掉帳戶層 `walletBudget` 特例 | −0.7 |
-| 2026-09-07 | 新增 `SharedBudgetPolicy` | +1.0 |
-| 2026-09-07 | 新增 `isLeashed`(併進 7a,不另立項目) | +1.0 |
-| | **淨變化** | **−0.7** |
+| 2026-09-07 | cut the `Write[]`/`_scratch` write-on-behalf pipeline | −1.0 |
+| 2026-09-07 | cut the standalone `SharedLedger` (folded into `SharedBudgetPolicy`) | −1.0 |
+| 2026-09-07 | cut the account-level `walletBudget` special case | −0.7 |
+| 2026-09-07 | added `SharedBudgetPolicy` | +1.0 |
+| 2026-09-07 | added `isLeashed` (folded into 7a, not a separate item) | +1.0 |
+| | **net change** | **−0.7** |
 
-原因見 `PLAN.md`「Policy 層的設計決定(2026-09-07 定案)」。
-`PolicySet`(DNF)降級為 9/11 之後的 stretch,不在上表內。
+The reasoning is in "Policy layer design decisions (settled 2026-09-07)" in `PLAN.md`.
+`PolicySet` (DNF) is demoted to a post-9/11 stretch goal and is not in the table above.
 
 ---
 
 ## Definition of Done
 
-**每個合約:**
-- [ ] 部署到 Sepolia,地址記進 `docs/deployments.md`
-- [ ] 至少一條 happy path 測試通過
-- [ ] 事件與 `docs/events.md` 定稿一致
+**Per contract:**
+- [ ] Deployed to Sepolia, with the address recorded in `docs/deployments.md`
+- [ ] At least one happy-path test passing
+- [ ] Events match the final `docs/events.md`
 
-**整體(9/12 收盤前):**
-- [ ] 四幕 demo 從頭到尾跑得動,不用手動介入
-- [ ] Agent 真的在查 subgraph,不是讀死資料
-- [ ] Policy 位址真的從 ENS 走過來,不是硬編碼
-- [ ] 撤銷 agent 的交易能當場執行,不需刷臉
+**Overall (by end of day 9/12):**
+- [ ] The four-act demo runs start to finish with no manual intervention
+- [ ] The agent really queries the subgraph rather than reading canned data
+- [ ] The policy address really comes through ENS rather than being hardcoded
+- [ ] Revoking an agent executes on the spot, with no face scan
 
-**保本底線(9/14,無論進度如何):**
-- [ ] **一定要送出提交。** ETHGlobal 規則:「You must submit your hack before the
+**The floor, whatever the progress (9/14):**
+- [ ] **Submit, no matter what.** ETHGlobal's rule: "You must submit your hack before the
       submission deadline. **Partial or incomplete hacks are still eligible for stake
-      being returned.**」不送 = 押金沒了 + 三個獎全空。做不完也要送。
-- [x] Team 已建立 ✅ 2026-09-07(Albert Lin,一人隊)
+      being returned.**" Not submitting = the stake is gone and all three prizes are lost.
+      Submit even if it is unfinished.
+- [x] Team created ✅ 2026-09-07 (Albert Lin, a team of one)
 
-**交件(9/13 收盤前):**
-- [ ] repo 公開,README 含架構圖與跑法
-- [ ] 影片 2–4 分鐘,四幕都拍到
-- [ ] `world-feedback.md` 定稿
-- [ ] 三個賽道的提交表單各自填好
+**Delivery (by end of day 9/13):**
+- [ ] The repo is public, and the README has an architecture diagram and how to run it
+- [ ] A 2-4 minute video covering all four acts
+- [ ] `world-feedback.md` finalised
+- [ ] The submission form filled in for each of the three tracks
 
 ---
 
-## 每日自問(30 秒,不要跳過)
+## Daily self-check (30 seconds; do not skip it)
 
-1. 今天的里程碑到了嗎?沒到 → **現在就砍單**,不是明天
-2. ~~World 有回音嗎?~~ 已結案(9/7)。改問:**錄影片 / demo 前有建新 action 嗎?**
-   `max_verifications` 改不了(Portal 沒有這個設定),但它綁在 action 上不是綁在人上 ——
-   **建新 action 就等於重置**。`expand-policy` 目前還沒被用掉
-3. 有沒有撞到新的 World 摩擦?→ 當場記進 `world-feedback.md`
+1. Did today's milestone land? If not → **cut now**, not tomorrow
+2. ~~Any word from World?~~ Closed (9/7). Ask instead: **has a fresh action been created
+   before recording the video / running the demo?** `max_verifications` cannot be changed
+   (the Portal has no such setting), but it binds to the action rather than the person —
+   **creating a new action resets it**. `expand-policy` has not been used up yet
+3. Hit any new friction with World? → record it in `world-feedback.md` on the spot
