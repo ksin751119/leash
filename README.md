@@ -55,12 +55,17 @@ in [`docs/deployments.md`](docs/deployments.md).
 
 | Contract | Address |
 |---|---|
-| `LeashAccount` (EIP-7702 delegate impl) | [`0x136b33c6…B83C`](https://sepolia.etherscan.io/address/0x136b33c68439C1ee8649048bb86E3a98ACd9B83C) |
+| `LeashAccount` (EIP-7702 delegate impl) | [`0x55528C70…7f23`](https://sepolia.etherscan.io/address/0x55528C707Bff43175CC7d7fCe6D9767060C67f23) |
 | `LeashRegistry` (ENSv2 `IRegistry`) | [`0x6fB6CB4a…2A51`](https://sepolia.etherscan.io/address/0x6fB6CB4a789067b2283C4d4C657d3422ce742A51) |
 | `LeashResolver` (ENSIP-10) | [`0x607a4d73…915b`](https://sepolia.etherscan.io/address/0x607a4d7363d9E7511a932F82eAE1e12FB609915b) |
 | `PolicyApprovals` | [`0x7CB9d4Ac…25B4`](https://sepolia.etherscan.io/address/0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4) |
 | `StandardPolicy` | [`0x88F2bfF0…75cc`](https://sepolia.etherscan.io/address/0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b) |
 | `LeashLens` | [`0xB6eB4C26…7B83`](https://sepolia.etherscan.io/address/0xB6eB4C26AF866057920f7AB6fAFf69A914067B83) |
+| `WorldAttester` | [`0xa4E208dA…5F26`](https://sepolia.etherscan.io/address/0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26) |
+
+The `LeashAccount` impl above is the **current** one — it was redeployed the same day to
+switch its attester; the superseded impl and the full history are in
+[`docs/deployments.md`](docs/deployments.md).
 
 Verify the central claim yourself in four `cast` calls — the recipe is in
 `docs/deployments.md`. It walks `leash.eth` down to a policy address; point the first
@@ -115,14 +120,37 @@ direction.
 makes the system stricter; gating the brake is how you help an attacker at the worst
 possible moment.
 
-> ⚠️ **The Attestation column above describes what the contracts require, and today only
-> half of it is really guarding.** The deployed system is wired to
-> [`MockAttester`](src/MockAttester.sol), which returns `true` for **any** input. So of
-> the two conditions behind "expansion needs a human", `msg.sender == address(this)` is
-> real and enforced, while the attestation half is a mock. Selfie Check was verified
-> end-to-end offchain (see the World section), so `WorldAttester` is buildable — it is not
-> deployed, and **nothing about World ID is enforced onchain yet**. `describe()` says so
-> on the mock itself, so a UI reading it cannot pretend otherwise.
+> **The Attestation column above is now real for `LeashAccount`, and still a mock for two
+> other contracts — the two claims are separate, so here they are separately.**
+>
+> [`WorldAttester`](src/WorldAttester.sol) is deployed, and `LeashAccount`'s current impl is
+> wired to it. `setRule`, `allowToken`, `allowPayee` and `restoreAgent` each now require a
+> valid EIP-712 signature from the World RP signer over that exact call's digest and
+> deadline, checked onchain — not just any bytes. Proved with free static calls against the
+> re-delegated wallet: `allowPayee` with 73 junk bytes, and separately with no bytes at all,
+> both revert `NotAttested()`; under the old `MockAttester` wiring both would have been
+> accepted. Addresses, the re-delegation transaction, and the readback that confirms nothing
+> else moved are in [`docs/deployments.md`](docs/deployments.md).
+>
+> **`MockAttester`** — which returns `true` for **any** input — **is still deployed and
+> still used**, by `PolicyApprovals.approve` and `LeashRegistry.register`. That is a
+> deliberate scoping decision, not an oversight: only `LeashAccount`'s widening paths became
+> real. So "approve a new policy" and "issue a new agent subname" in the table above still
+> accept any input; `describe()` on each contract says which it is wired to, and a UI reading
+> it cannot pretend otherwise.
+>
+> **The digest path has never been exercised against World's live API.** The World action
+> behind this deployment allows exactly one verification, and it was still unspent at
+> deployment time — reserved for the demo, because `max_verifications` cannot be raised. So
+> "widening needs a live human" currently rests on code correctness plus a hardcoded
+> measurement against IDKit's own bundle, not an end-to-end run. The first live proof of the
+> full chain will be the demo itself.
+>
+> **What `WorldAttester.verify` proves, stated exactly:** the RP signer signed this precise
+> digest before its deadline — not "a human approved this." The link to an actual human is
+> offchain: World App runs Selfie Check → World's v4 endpoint verifies the proof → the
+> backend signs only after that call returns HTTP 200. See the World section below for what a
+> proof does and does not establish about who was in front of the camera.
 
 ## Four ways to stop an agent
 
@@ -206,9 +234,12 @@ issuing a new agent. Reduction is never gated — see the asymmetry above.
 
 Verified end-to-end on **2026-09-07** with the production World App and a real selfie —
 no Sandbox App was needed, because Sandbox exists to simulate the Orb and Selfie Check
-does not use one. That verification is **offchain**: the backend in `world/` receives the
-proof and verifies it against World's v4 endpoint. The onchain `IAttester` is still the
-mock — see the callout above.
+does not use one. That verification exercised the **offchain** half: the backend in
+`world/` receives the proof and verifies it against World's v4 endpoint. The onchain
+`IAttester` behind `LeashAccount`'s widening paths is now `WorldAttester`, not the mock —
+see the callout above — but the digest path from a live proof through to an onchain
+`verify()` call has not itself been run end to end: the action reserved for that allows
+exactly one verification, and it is being saved for the demo rather than spent here.
 
 One limit worth stating rather than glossing: **a proof cannot prove it came from Selfie
 Check.** A successful verification returns `credential_type: "device"`, identical to the

@@ -19,13 +19,25 @@ redeployed" below)
 | `PolicyApprovals` | `0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4` | [`0x0a8a3162…`](https://sepolia.etherscan.io/tx/0x0a8a31625189c3d432413abdc3c57e00d51eccc03d3d1ab37f2fe911b501d930) |
 | `StandardPolicy` | `0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b` | [`0xff667665…`](https://sepolia.etherscan.io/tx/0xff6676659802654ca4ca35d0fa17b78a310df23fb95d1543cb2d729e14640ac7) |
 | `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
+| `WorldAttester` | `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` | [`0xec9a06d3…`](https://sepolia.etherscan.io/tx/0xec9a06d398d51868fa5b576bdc54f424d9826acfd461be3226dc2d3720368cfa) |
+
+`MockAttester` and `WorldAttester` are **both** live, and that is not a typo: `attester` is
+`immutable` per contract, and `PolicyApprovals` / `LeashRegistry` still point at the mock (see
+the callout below), while `LeashAccount`'s current impl points at `WorldAttester` (see
+"LeashAccount v2" at the end of this document). Which contract uses which is a per-contract
+fact, not a project-wide one.
 
 ### EIP-7702 execution layer (deployed 2026-09-09 01:18 UTC)
 
 | Contract | Address | Deployment tx |
 |---|---|---|
-| `LeashAccount` (impl) | `0x136b33c68439C1ee8649048bb86E3a98ACd9B83C` | [`0x1aab21e0…`](https://sepolia.etherscan.io/tx/0x1aab21e0658c060431b94a198cba6cde9c5f27bf98bab668b1b4b4c365d51538) |
+| `LeashAccount` (impl, **superseded** — see "LeashAccount v2" below) | `0x136b33c68439C1ee8649048bb86E3a98ACd9B83C` | [`0x1aab21e0…`](https://sepolia.etherscan.io/tx/0x1aab21e0658c060431b94a198cba6cde9c5f27bf98bab668b1b4b4c365d51538) |
 | `LeashLens` | `0xB6eB4C26AF866057920f7AB6fAFf69A914067B83` | [`0x4e615801…`](https://sepolia.etherscan.io/tx/0x4e615801b448399e13611a6490ddd59ed01771189e22325a13c76cd60a0c5004) |
+
+The wallet no longer delegates to the impl above — it was re-delegated the same day to a
+second impl wired to `WorldAttester` instead of `MockAttester`. The row is kept, not deleted:
+its deploy tx, its onchain readback below, and the end-to-end run further down this document
+all happened against it and remain true as history.
 
 `LeashAccount` is an **implementation, not an instance**. Wallets delegate to it via
 EIP-7702, and its code then executes in the wallet's own storage — so "deployed" and
@@ -61,11 +73,17 @@ both *which wallet* and *which impl version*.
 > `--auth` transaction pointing at `address(0)`, about 36,800 gas. **That is the wallet
 > owner's escape hatch.**
 
-> ⚠️ **`MockAttester` performs no verification and returns `true` for any input.** Its
-> `describe()` says so out loud — `"MockAttester (NO verification - testing only)"` — and
-> the frontend displays it. `attester` is **`immutable`** in both `PolicyApprovals` and
-> `LeashRegistry`, so switching to a real `WorldAttester` requires a **redeployment**,
-> which is a visible onchain transaction. That is deliberate; see C1 below.
+> ⚠️ **`MockAttester` performs no verification and returns `true` for any input, and it is
+> still what `PolicyApprovals` and `LeashRegistry` are wired to.** Its `describe()` says so
+> out loud — `"MockAttester (NO verification - testing only)"` — and the frontend displays
+> it. `attester` is **`immutable`** in both, so switching either of them to a real
+> `WorldAttester` would need its own redeployment, a visible onchain transaction, exactly
+> like the one this paragraph originally predicted for `LeashAccount`. That redeployment has
+> now happened, but **only for `LeashAccount`**: its current impl is wired to
+> `WorldAttester`, not the mock — see "LeashAccount v2" at the end of this document. This was
+> a deliberate scoping decision, not a partial fix that ran out of time; see C1 below and
+> decision 1 of the design spec for why `PolicyApprovals` and `LeashRegistry` were left as
+> they were.
 
 ## Wiring transactions
 
@@ -326,10 +344,86 @@ subgraph has no factory event to trigger a template from. `LeashAccount` emits `
 the first `bindAgent` instead, and the subgraph indexed it — wallet
 `0x46c09255…8eba6` → impl `0x136b33c6…d9b83c`.
 
-### ⚠️ Currently wired to `MockAttester`
+### That run's steps 3–4 used `MockAttester` — since fixed for `LeashAccount`
 
 Steps 3 and 4 pass `0x00` as the attestation, and `MockAttester` returns `true` for any
-input. So of the two conditions behind "widening requires a real human face", **only one
-is actually guarding**: `msg.sender == address(this)` is real (steps 3 and 4 must be sent
-by WALLET itself), while the attestation half is still a mock. Swapping in
-`WorldAttester` is the back half of sprint item 8.
+input. So at the time of that run, of the two conditions behind "widening requires a real
+human face", only one was actually guarding: `msg.sender == address(this)` was real (steps 3
+and 4 had to be sent by WALLET itself), while the attestation half was a mock. Nothing above
+is retroactively different — that run happened against the impl this document now marks
+superseded, and its logs say exactly what they always said.
+
+Swapping in `WorldAttester` was the back half of sprint item 8, and it is now done. See
+"LeashAccount v2: `WorldAttester` is live" below for the new impl, the re-delegation, and the
+static calls that prove the attestation half now actually guards something — plus what that
+does and does not yet establish.
+
+## LeashAccount v2: `WorldAttester` is live
+
+Later the same day, `LeashAccount` was redeployed a second time with one change: its
+`ATTESTER` is [`WorldAttester`](../src/WorldAttester.sol), not `MockAttester`. The wallet then
+re-delegated to it. Nothing else moved.
+
+| Contract | Address | Deployment tx |
+|---|---|---|
+| `WorldAttester` | `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` | [`0xec9a06d3…`](https://sepolia.etherscan.io/tx/0xec9a06d398d51868fa5b576bdc54f424d9826acfd461be3226dc2d3720368cfa) |
+| `LeashAccount` (impl, **current**) | `0x55528C707Bff43175CC7d7fCe6D9767060C67f23` | [`0xdf3ed24c…`](https://sepolia.etherscan.io/tx/0xdf3ed24ccf91f304d1e78432f46865bee4fded45b91405c806bea749067abc51) |
+
+Read back from chain rather than trusted from the deploy log:
+
+```
+WorldAttester.SIGNER()        0x85b89D21DB13f220601430d48244B2AE06120969   ← World RP signer, rp_ef35d4e2d4f1a031
+new impl.ATTESTER()            = WorldAttester above
+new impl.APPROVALS()           0x7CB9d4Ac…25B4   ← unchanged from the superseded impl
+new impl.ETH_REGISTRY()        0xBDC85dD5…F0E2   ← unchanged from the superseded impl
+```
+
+`APPROVALS()` and `ETH_REGISTRY()` matching means this deployment moved exactly one thing.
+
+| Action | Transaction |
+|---|---|
+| `WALLET` re-authorises (EIP-7702) to the new impl | [`0xfe8cb0fd…`](https://sepolia.etherscan.io/tx/0xfe8cb0fd6096fca1e5da9563fbec91b1dadcd066ed6f87f67520708fac458008) — type 4, block 11667630, gas 36,844 |
+
+Wallet storage was snapshotted before and after re-delegation and came back byte-identical —
+the ERC-7201 storage-layout property working as designed, not merely asserted:
+
+```
+bindingOf(agent)        (0x9b4cc576…e121, "vendors", false)
+ruleOf(node, MockUSDC)  (true, 500000000, 1000000000, 86400, 0, 0, 0)
+```
+
+Enforcement was then proved live with free static calls against the re-delegated wallet:
+
+```
+allowPayee(73 junk bytes)   → reverts 0x99efb890 = NotAttested()   (confirmed with `cast sig`)
+allowPayee(empty bytes)     → reverts 0x99efb890 = NotAttested()
+removePayee(no attestation) → succeeds, no error
+```
+
+Under the superseded impl's `MockAttester` wiring, the first two calls above would have been
+**accepted**. This is the first onchain evidence that the attestation half of "widening needs
+a live human" is actually guarding something, not decorative.
+
+**What this does not yet establish.** The digest path above has never been exercised against
+World's live API. The World action behind it, `expand-policy-demo1`
+(`action_1f91e0b88227d9c86c276c28d30c3324`), allows exactly one verification and it was still
+unspent as of this deployment — it is reserved for the demo itself, because
+`max_verifications` cannot be raised once set. So the static calls above prove the *contract*
+correctly rejects a malformed or missing attestation and would accept a well-formed signature
+from `SIGNER` — not yet that a live Selfie Check produced that signature end to end. The first
+live proof of that full chain will be the demo.
+
+Two more limits worth restating rather than letting the good news above imply past them:
+
+- **`MockAttester` is still deployed and still used**, by `PolicyApprovals.approve` and
+  `LeashRegistry.register`. Only `LeashAccount`'s widening paths (`setRule`, `allowToken`,
+  `allowPayee`, `restoreAgent`) became real; approving a new policy and issuing a new agent
+  subname still accept any input. Deliberate scope, not an oversight — see the callout above
+  and decision 1 of the design spec.
+- **A `WorldAttester` proof cannot prove it came from Selfie Check.** `verify()` proves only
+  that the RP signer signed this exact digest before its deadline — `describe()` on the
+  contract says as much. The link to a live human is offchain: World App runs Selfie Check →
+  World's v4 endpoint verifies the proof → the backend signs only after that call returns
+  HTTP 200. Even a successful proof reports `credential_type` and `verification_level` as
+  `"device"`, identical to a passcode-only session; the liveness guarantee lives in the app's
+  `enable_face_check` setting, not in the credential. See `docs/world-feedback.md`.
