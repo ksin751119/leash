@@ -18,7 +18,7 @@ curl -s -X POST localhost:8788/api/agent/tick   # run one cycle now, do not wait
 Extract single variables as above. **Never source `.env` wholesale** — it also holds
 `WALLET_PK` and `WORLD_RP_SIGNER_PK`, and this process must hold neither.
 
-## Two things that surprise people
+## Three things that surprise people
 
 **A block is not a revert.** `LeashAccount` emits `SpendBlocked` and returns normally so the
 subgraph can index it. A transaction that "succeeded" may have moved no money — the outcome
@@ -27,6 +27,13 @@ is in the logs.
 **Restarting re-arms every payment.** Intents are one-shot and that state is in memory, so a
 restart makes every executed intent eligible again. That is the intended reset before a
 rehearsal, and it is also how you accidentally pay twice.
+
+**A timed-out send leaves an intent `unconfirmed`, not retried.** `send.mjs` waits up to 120s
+(ten Sepolia blocks) for a receipt; if that times out, the transaction hash is real but no
+outcome was ever classified. The verdict becomes `unconfirmed`, the hash is in
+`lastAction.tx`, and the agent will not send that intent again on its own — the payment may
+still land, so guessing wrong risks paying it twice. Look the hash up and resolve it by
+hand.
 
 ## What it cannot predict
 

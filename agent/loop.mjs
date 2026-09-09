@@ -44,6 +44,16 @@ export function advance(state, snapshot, intents, nowSec) {
       rec.reason = null;
       rec.reasonName = null; // cleared with `reason`, or a previous block's name survives
       rec.explain = "already paid; intents are one-shot";
+    } else if (prev.lastAction?.kind === "sent" && prev.lastAction?.tx && prev.lastAction?.outcome == null) {
+      // A transaction hash was obtained but no receipt was ever classified into an outcome -
+      // most likely send.mjs's 120s wait timed out. The payment may still land on chain, so
+      // re-sending risks a second one on top of it. This is the duplicate-payment path a
+      // lost hash used to open: the hash must stay visible (it does, via lastAction, spread
+      // from `prev` below) so an operator can look it up instead of the agent guessing.
+      rec.verdict = "unconfirmed";
+      rec.reason = null;
+      rec.reasonName = null;
+      rec.explain = `sent but never confirmed (tx ${prev.lastAction.tx}); will not retry on its own`;
     } else if (prev.inFlight) {
       rec.verdict = "in-flight";
       rec.reason = null;
@@ -60,6 +70,51 @@ export function advance(state, snapshot, intents, nowSec) {
     next.intents[intent.id] = rec;
   }
   return { state: next, toSend };
+}
+
+// Send one intent's spend and record what happened, clearing `inFlight` in a `finally` so
+// that guard holds by construction rather than by every branch of `sendImpl` remembering to
+// return normally. `sendSpend` today always returns an object literal and never throws past
+// itself, so nothing currently exploits this - but that invariant living only in an audit of
+// a different module is exactly the shape of gap this project keeps finding. `sendImpl` is
+// injectable so this is testable without a chain: the real caller (`tick`, below) leaves it
+// at the default.
+export async function sendAndRecord(rec, intent, cfg, sendImpl = sendSpend) {
+  rec.inFlight = true;
+  rec.verdict = "in-flight";
+  try {
+    const res = await sendImpl({
+      rpcUrl: cfg.rpcUrl,
+      privKey: cfg.privKey,
+      wallet: cfg.wallet,
+      token: intent.token,
+      payee: intent.payee,
+      amount: intent.amount,
+    });
+    rec.lastAction = res.error
+      ? {
+          // A hash means the transaction was actually submitted - "sent, outcome unknown"
+          // - and must be told apart from "never sent". Conflating them is what let a
+          // timeout re-arm an intent whose transaction might still land, and pay it twice.
+          kind: res.tx ? "sent" : "error",
+          tx: res.tx ?? null,
+          outcome: null,
+          error: res.error,
+        }
+      : {
+          kind: "sent",
+          tx: res.tx,
+          outcome: res.outcome,
+          reason: res.reason ?? null,
+          reasonName: res.reasonName ?? null,
+          // The agent predicted this would pass. If the chain blocked it anyway, that is
+          // the thesis in miniature: the agent's optimism is bounded by the contract.
+          note: res.outcome === "blocked" ? "blocked-despite-green" : null,
+        };
+  } finally {
+    rec.inFlight = false;
+  }
+  return rec;
 }
 
 // --- IO half ---
@@ -115,32 +170,20 @@ async function tick() {
     state = advanced.state;
 
     for (const intent of advanced.toSend) {
-      state.intents[intent.id].inFlight = true;
-      state.intents[intent.id].verdict = "in-flight";
-      const res = await sendSpend({
+      const rec = await sendAndRecord(state.intents[intent.id], intent, {
         rpcUrl: process.env.SEPOLIA_RPC,
         privKey: process.env.AGENT_PK,
         wallet: process.env.WALLET_ADDR,
-        token: intent.token,
-        payee: intent.payee,
-        amount: intent.amount,
       });
-      state.intents[intent.id].inFlight = false;
-      state.intents[intent.id].lastAction = res.error
-        ? { kind: "error", error: res.error }
-        : {
-            kind: "sent",
-            tx: res.tx,
-            outcome: res.outcome,
-            reason: res.reason ?? null,
-            reasonName: res.reasonName ?? null,
-            // The agent predicted this would pass. If the chain blocked it anyway, that is
-            // the thesis in miniature: the agent's optimism is bounded by the contract.
-            note: res.outcome === "blocked" ? "blocked-despite-green" : null,
-          };
-      const a = state.intents[intent.id].lastAction;
+      const a = rec.lastAction;
       console.log(
-        `tick ${state.tick}  ${intent.id}  ${a.kind === "error" ? `error: ${a.error}` : `${a.outcome}${a.reason != null ? ` (${a.reasonName})` : ""} ${a.tx}`}`,
+        `tick ${state.tick}  ${intent.id}  ${
+          a.error
+            ? a.tx
+              ? `unconfirmed (tx ${a.tx}): ${a.error}`
+              : `error: ${a.error}`
+            : `${a.outcome}${a.reason != null ? ` (${a.reasonName})` : ""} ${a.tx}`
+        }`,
       );
     }
 

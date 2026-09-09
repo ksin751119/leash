@@ -53,13 +53,20 @@ export function classifyReceipt(receipt, walletAddress) {
 }
 
 export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount }) {
+  // Declared outside the try so the catch can still see it: a hash obtained before a later
+  // failure (waitForTransactionReceipt timing out is the case that matters - 120s is ten
+  // Sepolia blocks, and congestion makes it ordinary) must reach the caller. "Sent, outcome
+  // unknown" and "never sent" are different states; conflating them by dropping the hash on
+  // any error is what let a timeout re-arm an intent whose transaction might still land, and
+  // pay it twice.
+  let tx;
   try {
     const account = privateKeyToAccount(privKey);
     const transport = http(rpcUrl);
     const walletClient = createWalletClient({ account, chain: sepolia, transport });
     const publicClient = createPublicClient({ chain: sepolia, transport });
 
-    const tx = await walletClient.writeContract({
+    tx = await walletClient.writeContract({
       address: wallet,
       abi: ABI,
       functionName: "spend",
@@ -70,6 +77,6 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
     const msg = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
-    return { error: redactUrls(msg) };
+    return tx ? { tx, error: redactUrls(msg) } : { error: redactUrls(msg) };
   }
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState } from "./loop.mjs";
+import { advance, initialState, sendAndRecord } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -68,4 +68,41 @@ test("the tick counter and the source block land in the state", () => {
   assert.equal(state.source.subgraphBlock, 11667861);
   assert.equal(state.source.chainBlock, 11667863);
   assert.equal(state.source.lagBlocks, 2);
+});
+
+// A timed-out send obtains a transaction hash but never gets a classified outcome (send.mjs's
+// 120s wait on waitForTransactionReceipt threw). That hash reaching state, and the intent NOT
+// being queued again, is the second duplicate-payment path: without it, the next tick would
+// send the same payment a second time on top of one that might still land.
+test("a send that got a hash but no confirmed outcome is not re-sent, and the hash stays visible", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  state.intents.a.lastAction = { kind: "sent", tx: "0xdeadbeef", outcome: null, error: "timeout" };
+  const next = advance(state, okSnap(), intents, NOW);
+  assert.deepEqual(next.toSend, []);
+  assert.equal(next.state.intents.a.verdict, "unconfirmed");
+  assert.match(next.state.intents.a.explain, /0xdeadbeef/);
+  assert.equal(next.state.intents.a.lastAction.tx, "0xdeadbeef");
+});
+
+// The counterpart: a failure with no hash at all means nothing was ever submitted, so the
+// intent must stay eligible - otherwise the fix for the timeout case would over-correct into
+// never retrying a genuine pre-send failure (bad nonce, insufficient gas, RPC down).
+test("a pre-send failure with no hash stays eligible, since nothing was sent", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  state.intents.a.lastAction = { kind: "error", tx: null, outcome: null, error: "insufficient funds for gas" };
+  const next = advance(state, okSnap(), intents, NOW);
+  assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
+});
+
+// sendAndRecord clears `inFlight` in a `finally`, so the guard holds even if `sendImpl`
+// throws instead of returning - which the real sendSpend never does today, but nothing in
+// loop.mjs enforced that until now. Without the finally, a throwing send would leave the
+// intent stuck reporting "in-flight" forever, indistinguishable on stage from index lag.
+test("inFlight is cleared even when the send throws, via a finally", async () => {
+  const rec = { id: "a", inFlight: false, lastAction: null };
+  const throwingSend = async () => {
+    throw new Error("network exploded");
+  };
+  await assert.rejects(() => sendAndRecord(rec, intents[0], { rpcUrl: "", privKey: "", wallet: "" }, throwingSend));
+  assert.equal(rec.inFlight, false);
 });

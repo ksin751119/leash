@@ -1068,13 +1068,20 @@ export function classifyReceipt(receipt, walletAddress) {
 }
 
 export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount }) {
+  // Declared outside the try so the catch can still see it: a hash obtained before a later
+  // failure (waitForTransactionReceipt timing out is the case that matters - 120s is ten
+  // Sepolia blocks, and congestion makes it ordinary) must reach the caller. "Sent, outcome
+  // unknown" and "never sent" are different states; conflating them by dropping the hash on
+  // any error is what let a timeout re-arm an intent whose transaction might still land, and
+  // pay it twice.
+  let tx;
   try {
     const account = privateKeyToAccount(privKey);
     const transport = http(rpcUrl);
     const walletClient = createWalletClient({ account, chain: sepolia, transport });
     const publicClient = createPublicClient({ chain: sepolia, transport });
 
-    const tx = await walletClient.writeContract({
+    tx = await walletClient.writeContract({
       address: wallet,
       abi: ABI,
       functionName: "spend",
@@ -1085,7 +1092,7 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
     const msg = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
-    return { error: redactUrls(msg) };
+    return tx ? { tx, error: redactUrls(msg) } : { error: redactUrls(msg) };
   }
 }
 ```
@@ -1158,7 +1165,7 @@ MSG
 // agent/loop.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState } from "./loop.mjs";
+import { advance, initialState, sendAndRecord } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -1227,6 +1234,43 @@ test("the tick counter and the source block land in the state", () => {
   assert.equal(state.source.chainBlock, 11667863);
   assert.equal(state.source.lagBlocks, 2);
 });
+
+// A timed-out send obtains a transaction hash but never gets a classified outcome (send.mjs's
+// 120s wait on waitForTransactionReceipt threw). That hash reaching state, and the intent NOT
+// being queued again, is the second duplicate-payment path: without it, the next tick would
+// send the same payment a second time on top of one that might still land.
+test("a send that got a hash but no confirmed outcome is not re-sent, and the hash stays visible", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  state.intents.a.lastAction = { kind: "sent", tx: "0xdeadbeef", outcome: null, error: "timeout" };
+  const next = advance(state, okSnap(), intents, NOW);
+  assert.deepEqual(next.toSend, []);
+  assert.equal(next.state.intents.a.verdict, "unconfirmed");
+  assert.match(next.state.intents.a.explain, /0xdeadbeef/);
+  assert.equal(next.state.intents.a.lastAction.tx, "0xdeadbeef");
+});
+
+// The counterpart: a failure with no hash at all means nothing was ever submitted, so the
+// intent must stay eligible - otherwise the fix for the timeout case would over-correct into
+// never retrying a genuine pre-send failure (bad nonce, insufficient gas, RPC down).
+test("a pre-send failure with no hash stays eligible, since nothing was sent", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  state.intents.a.lastAction = { kind: "error", tx: null, outcome: null, error: "insufficient funds for gas" };
+  const next = advance(state, okSnap(), intents, NOW);
+  assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
+});
+
+// sendAndRecord clears `inFlight` in a `finally`, so the guard holds even if `sendImpl`
+// throws instead of returning - which the real sendSpend never does today, but nothing in
+// loop.mjs enforced that until now. Without the finally, a throwing send would leave the
+// intent stuck reporting "in-flight" forever, indistinguishable on stage from index lag.
+test("inFlight is cleared even when the send throws, via a finally", async () => {
+  const rec = { id: "a", inFlight: false, lastAction: null };
+  const throwingSend = async () => {
+    throw new Error("network exploded");
+  };
+  await assert.rejects(() => sendAndRecord(rec, intents[0], { rpcUrl: "", privKey: "", wallet: "" }, throwingSend));
+  assert.equal(rec.inFlight, false);
+});
 ```
 
 - [ ] **Step 3: Run them and watch them fail**
@@ -1283,6 +1327,16 @@ export function advance(state, snapshot, intents, nowSec) {
       rec.reason = null;
       rec.reasonName = null; // cleared with `reason`, or a previous block's name survives
       rec.explain = "already paid; intents are one-shot";
+    } else if (prev.lastAction?.kind === "sent" && prev.lastAction?.tx && prev.lastAction?.outcome == null) {
+      // A transaction hash was obtained but no receipt was ever classified into an outcome -
+      // most likely send.mjs's 120s wait timed out. The payment may still land on chain, so
+      // re-sending risks a second one on top of it. This is the duplicate-payment path a
+      // lost hash used to open: the hash must stay visible (it does, via lastAction, spread
+      // from `prev` below) so an operator can look it up instead of the agent guessing.
+      rec.verdict = "unconfirmed";
+      rec.reason = null;
+      rec.reasonName = null;
+      rec.explain = `sent but never confirmed (tx ${prev.lastAction.tx}); will not retry on its own`;
     } else if (prev.inFlight) {
       rec.verdict = "in-flight";
       rec.reason = null;
@@ -1299,6 +1353,51 @@ export function advance(state, snapshot, intents, nowSec) {
     next.intents[intent.id] = rec;
   }
   return { state: next, toSend };
+}
+
+// Send one intent's spend and record what happened, clearing `inFlight` in a `finally` so
+// that guard holds by construction rather than by every branch of `sendImpl` remembering to
+// return normally. `sendSpend` today always returns an object literal and never throws past
+// itself, so nothing currently exploits this - but that invariant living only in an audit of
+// a different module is exactly the shape of gap this project keeps finding. `sendImpl` is
+// injectable so this is testable without a chain: the real caller (`tick`, below) leaves it
+// at the default.
+export async function sendAndRecord(rec, intent, cfg, sendImpl = sendSpend) {
+  rec.inFlight = true;
+  rec.verdict = "in-flight";
+  try {
+    const res = await sendImpl({
+      rpcUrl: cfg.rpcUrl,
+      privKey: cfg.privKey,
+      wallet: cfg.wallet,
+      token: intent.token,
+      payee: intent.payee,
+      amount: intent.amount,
+    });
+    rec.lastAction = res.error
+      ? {
+          // A hash means the transaction was actually submitted - "sent, outcome unknown"
+          // - and must be told apart from "never sent". Conflating them is what let a
+          // timeout re-arm an intent whose transaction might still land, and pay it twice.
+          kind: res.tx ? "sent" : "error",
+          tx: res.tx ?? null,
+          outcome: null,
+          error: res.error,
+        }
+      : {
+          kind: "sent",
+          tx: res.tx,
+          outcome: res.outcome,
+          reason: res.reason ?? null,
+          reasonName: res.reasonName ?? null,
+          // The agent predicted this would pass. If the chain blocked it anyway, that is
+          // the thesis in miniature: the agent's optimism is bounded by the contract.
+          note: res.outcome === "blocked" ? "blocked-despite-green" : null,
+        };
+  } finally {
+    rec.inFlight = false;
+  }
+  return rec;
 }
 
 // --- IO half ---
@@ -1354,32 +1453,20 @@ async function tick() {
     state = advanced.state;
 
     for (const intent of advanced.toSend) {
-      state.intents[intent.id].inFlight = true;
-      state.intents[intent.id].verdict = "in-flight";
-      const res = await sendSpend({
+      const rec = await sendAndRecord(state.intents[intent.id], intent, {
         rpcUrl: process.env.SEPOLIA_RPC,
         privKey: process.env.AGENT_PK,
         wallet: process.env.WALLET_ADDR,
-        token: intent.token,
-        payee: intent.payee,
-        amount: intent.amount,
       });
-      state.intents[intent.id].inFlight = false;
-      state.intents[intent.id].lastAction = res.error
-        ? { kind: "error", error: res.error }
-        : {
-            kind: "sent",
-            tx: res.tx,
-            outcome: res.outcome,
-            reason: res.reason ?? null,
-            reasonName: res.reasonName ?? null,
-            // The agent predicted this would pass. If the chain blocked it anyway, that is
-            // the thesis in miniature: the agent's optimism is bounded by the contract.
-            note: res.outcome === "blocked" ? "blocked-despite-green" : null,
-          };
-      const a = state.intents[intent.id].lastAction;
+      const a = rec.lastAction;
       console.log(
-        `tick ${state.tick}  ${intent.id}  ${a.kind === "error" ? `error: ${a.error}` : `${a.outcome}${a.reason != null ? ` (${a.reasonName})` : ""} ${a.tx}`}`,
+        `tick ${state.tick}  ${intent.id}  ${
+          a.error
+            ? a.tx
+              ? `unconfirmed (tx ${a.tx}): ${a.error}`
+              : `error: ${a.error}`
+            : `${a.outcome}${a.reason != null ? ` (${a.reasonName})` : ""} ${a.tx}`
+        }`,
       );
     }
 
@@ -1431,16 +1518,17 @@ if (isMain) {
 - [ ] **Step 5: Run the tests and watch them pass**
 
 Run: `cd agent && node --test loop.test.mjs`
-Expected: PASS, 7 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 6: Run every check together**
 
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass and `all 13 codes agree`. The count is **48 tests across five
-files** — reason 4, decide 16, subgraph 12, send 9, loop 7 (reason and subgraph grew in
-their fix rounds). If your total differs, say so
+Expected: all suites pass and `all 13 codes agree`. The count is **51 tests across five
+files** — reason 4, decide 16, subgraph 12, send 9, loop 10 (reason and subgraph grew in
+their fix rounds; loop grew from 7 to 10 fixing the timeout duplicate-payment path). If your
+total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.
 
@@ -1471,7 +1559,7 @@ curl -s -X POST localhost:8788/api/agent/tick   # run one cycle now, do not wait
 Extract single variables as above. **Never source `.env` wholesale** — it also holds
 `WALLET_PK` and `WORLD_RP_SIGNER_PK`, and this process must hold neither.
 
-## Two things that surprise people
+## Three things that surprise people
 
 **A block is not a revert.** `LeashAccount` emits `SpendBlocked` and returns normally so the
 subgraph can index it. A transaction that "succeeded" may have moved no money — the outcome
@@ -1480,6 +1568,13 @@ is in the logs.
 **Restarting re-arms every payment.** Intents are one-shot and that state is in memory, so a
 restart makes every executed intent eligible again. That is the intended reset before a
 rehearsal, and it is also how you accidentally pay twice.
+
+**A timed-out send leaves an intent `unconfirmed`, not retried.** `send.mjs` waits up to 120s
+(ten Sepolia blocks) for a receipt; if that times out, the transaction hash is real but no
+outcome was ever classified. The verdict becomes `unconfirmed`, the hash is in
+`lastAction.tx`, and the agent will not send that intent again on its own — the payment may
+still land, so guessing wrong risks paying it twice. Look the hash up and resolve it by
+hand.
 
 ## What it cannot predict
 
