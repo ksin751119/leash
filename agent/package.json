@@ -1,0 +1,9 @@
+{
+  "name": "leash-agent",
+  "private": true,
+  "type": "module",
+  "description": "The agent decision loop - reads the subgraph, decides, sends",
+  "dependencies": {
+    "viem": "2.56.3"
+  }
+}
