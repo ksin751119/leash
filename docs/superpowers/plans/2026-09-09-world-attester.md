@@ -1123,9 +1123,16 @@ import { signAttestation } from "./attest.mjs";
 
 Before anything is deployed, check the two implementations agree using a locally-deployed attester on anvil.
 
+> ⚠️ Run this from **this branch's own checkout**, which during execution is the worktree, not
+> `~/DEV/leash`. `src/WorldAttester.sol` exists only on the `world-attester` branch, so
+> `forge create` from the main checkout fails with a source-file-not-found error that looks
+> like a Foundry problem and is really a wrong-directory problem. The private key below is
+> anvil's published account #0 test key — it holds nothing on any real network, and no real
+> key belongs in this step.
+
 ```bash
 anvil --port 8545 &
-cd ~/DEV/leash
+cd "$(git rev-parse --show-toplevel)"   # this branch's checkout, NOT ~/DEV/leash
 forge create src/WorldAttester.sol:WorldAttester \
   --constructor-args 0x85b89D21DB13f220601430d48244B2AE06120969 \
   --rpc-url http://127.0.0.1:8545 \
