@@ -285,7 +285,12 @@ v4 endpoint verifies the proof → our backend signs only after that verificatio
 step after the first is ours, and the first is World's.
 
 **`verify` is `view`, so nullifiers cannot be recorded onchain.** "One person may only do
-this once" is therefore a backend property, not a chain property. Replay of an
+this once" is therefore not a chain property. Nor is it a property of our backend: nothing
+in `server.mjs` records a nullifier — it forwards one to World and echoes one back, and that
+is all. The mechanism is **World's own `max_verifications: 1`**, enforced on their side, 1
+per action, and impossible to raise. That is worth stating precisely rather than calling it
+a backend property, because it is a *stronger* guarantee than an unwritten one of ours, and
+because it is the reason a fresh action is needed before every demo. Replay of an
 *attestation* is prevented onchain, by the consumer's `attestationUsed[digest]` plus this
 contract's deadline.
 
