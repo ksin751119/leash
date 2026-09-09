@@ -28,3 +28,7 @@ dist/
 # --- Misc ---
 .DS_Store
 *.log
+
+# --- matchstick build artifacts ---
+subgraph/tests/.bin/
+subgraph/tests/.latest.json

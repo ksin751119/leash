@@ -79,7 +79,11 @@ domainSeparator = keccak256(abi.encode(
 
 structHash = keccak256(abi.encode(ATTESTATION_TYPEHASH, digest, deadline))
 
-signedHash = keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash))
+attestationHash = keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash))
+
+// This value has exactly one name throughout: `attestationHash`. It is what the backend
+// signs and what `WorldAttester.attestationHash(digest, deadline)` returns, and the
+// cross-check compares those two.
 ```
 
 `name = "Leash"` and `version = "1"` match `PolicyApprovals`, `LeashRegistry` and
@@ -161,7 +165,7 @@ over an already-spent digest is worthless — but rejecting it is correct and co
 
 ## `src/LeashAccount.sol` — two missing digest getters
 
-There are **five widening TYPEHASHes and only four public digest getters**:
+There are **six widening TYPEHASHes and only four public digest getters**:
 
 | TYPEHASH | Getter |
 |---|---|
@@ -197,7 +201,7 @@ response  { attestation: "0x…73 bytes", deadline, nullifier }
 2. Verify the proof through the existing v4 path (`protocol_version: "3.0"`,
    `nullifier_hash` → `responses[].nullifier`, no `credential_type`).
 3. On success: `deadline = now + 900` (15 minutes).
-4. Sign `signedHash` with `WORLD_RP_SIGNER_PK`.
+4. Sign `attestationHash` with `WORLD_RP_SIGNER_PK`.
 5. Return the 73-byte blob.
 
 > ⚠️ **`@noble/curves` returns `recovery` as 0 or 1; the blob's `v` must be 27 or 28.**
@@ -222,7 +226,7 @@ direct control; `@noble/hashes` (already installed, same authors) provides kecca
 
 ## The cross-check, which is the most important test here
 
-A mismatch of one byte between the JS-computed `signedHash` and the contract's produces
+A mismatch of one byte between the JS-computed `attestationHash` and the contract's produces
 exactly one symptom: **the signature does not verify.** Nothing says whether the encoding
 was wrong, the key was wrong, the deadline had passed, or `v` was off by 27. That is a
 half-day bug.

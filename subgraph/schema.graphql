@@ -80,6 +80,7 @@ type Payee @entity(immutable: false) {
   "Across all tokens, for the reason above."
   paidCount: Int!
   paidTotal: BigInt!
+  "When PayeeAllowed first fired - or, if the row was created by a spend arriving first, that spend's timestamp. The name is aspirational in that second case."
   firstAllowedAt: BigInt!
   lastPaidAt: BigInt
 }
@@ -98,12 +99,23 @@ type PolicyPointer @entity(immutable: false) {
   id: ID!
   node: Bytes!
 
+  # There is deliberately no `description` here. It was declared once and never written -
+  # a dead field - and the first attempt at a fix populated it by loading `ApprovedPolicy`.
+  # Code review caught that this makes it a copy with no invalidation: approve *after* the
+  # pointer is set and it stays null forever; revoke and re-approve with a different
+  # description and it goes stale. It only appeared to work because `script/Deploy.s.sol`
+  # happens to approve before it calls setPolicy.
+  #
+  # The distinction that settles it: `approved` below is a point-in-time snapshot because
+  # **the event carries it** - `PolicyPointerSet(node, policy, setBy, approved)` - so
+  # recording it is recording what the event said. `description` is not in the event, so
+  # populating it means reaching into another entity: a join disguised as a field.
+  # `ApprovedPolicy.description` is authoritative and is already in the same query.
+
   "0x0 = pointer cleared = this agent is fully halted (reason code 3)"
   policy: Bytes!
   "Was this policy on the approval list at the time (reason code 4)"
   approved: Boolean!
-  "Description recorded at approval time, for the frontend"
-  description: String
   setBy: Bytes!
   updatedAt: BigInt!
 }

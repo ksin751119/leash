@@ -139,7 +139,7 @@ the holder rather than belonging to them.
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.2
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.3
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it
@@ -155,13 +155,21 @@ Blocked attempts are indexable because a policy violation is a **no-op plus an e
 never a revert. The chain discards a reverted transaction's logs, and the agent could
 then never answer *why was I blocked last time?*
 
-Deploying it found a defect that the tests could not: `Payee` was keyed by
+Deploying it found a defect no test existed to catch: `Payee` was keyed by
 (node, token, payee) while `PayeeAllowed` and `PayeeRemoved` — the only authority for
 whether a payee is allowed — carry no token. That produced **two rows for one payee that
 disagreed**, and after a removal the row an agent would naturally read still said
 `allowed: true`. Wrong in the permissive direction. The chain still blocked the spend, so
 nothing was at risk, but the agent's decision was wrong. Now keyed by (node, payee), with
 the residual imprecision stated in the schema rather than papered over.
+
+The honest version of that sentence is that **there were no subgraph tests at all** — code
+review pointed out that one matchstick case over
+`PayeeAllowed → SpendExecuted → PayeeRemoved` would have caught it directly. There are
+six now, and both mutations were run to prove they are not vacuous: restoring the old
+(node, token, payee) key fails four of them with exactly the original symptom
+(`Expected value was '1' but actual value was '2'` — one payee, two rows), and removing
+the one guard in `handleSpendExecuted` fails precisely the one test written for it.
 
 ### World
 
@@ -188,7 +196,8 @@ the product able to say so.
 
 ## Tests
 
-170 unit and fuzz tests, plus 3 fork tests against live Sepolia. The fork tests call
+170 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 6 matchstick tests
+for the subgraph mappings. The fork tests call
 `vm.skip` in `setUp` when `SEPOLIA_RPC` is unset, so `forge test` prints
 `170 passed, 0 failed, 1 skipped (171 total)` — one skip for the suite, not three. They
 are reported as SKIPPED rather than quietly PASSED, which is the point of using
@@ -206,6 +215,19 @@ with every test still green** — including one that was fail-*open*: a policy r
 `256` truncated to `0`, which is `OK`, and the transfer executed. All five are now
 pinned by tests that fail when their guard is removed. "The guard exists" and "the guard
 is guarded" turned out to be different claims.
+
+**Running the subgraph tests takes one workaround.** `graph test` only ships matchstick
+binaries for Ubuntu 22 and 24, so on 25.04 it refuses with
+`Unsupported platform: Linux x64 25`. The `binary-linux-22` release from
+`LimeChain/matchstick` runs fine once `libpq.so.5` is on the library path:
+
+```bash
+curl -sL -o matchstick \
+  https://github.com/LimeChain/matchstick/releases/download/0.6.0/binary-linux-22
+chmod +x matchstick && (cd subgraph && ../matchstick)   # 6 passed
+```
+
+On Ubuntu 22 or 24, `cd subgraph && npm test` is enough.
 
 ## Documentation
 

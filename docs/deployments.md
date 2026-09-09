@@ -291,7 +291,7 @@ does not burn itself out on one run.
 ## The subgraph is live
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.2
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.3
 ```
 
 Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742
@@ -302,7 +302,8 @@ one entity — paste this into the endpoint above:
 {
   agentBudgets  { remaining spent limit periodEnd }        # 1. how much is left
   payees        { payee allowed paidCount paidTotal }      # 2. may I pay this payee
-  policyPointers{ policy approved description }            # 3. which policy, approved?
+  policyPointers{ policy approved }                        # 3a. which policy
+  approvedPolicies{ policy approved description }          # 3b. did a human approve it
   spends(where: { executed: false }, orderBy: blockNumber, orderDirection: desc) {
     reasonName amount payee                                # 4. why was I blocked
   }
@@ -312,6 +313,13 @@ one entity — paste this into the endpoint above:
 Against the run above that returns: 700 USDC remaining of 1000; the payee allowed with 2
 payments totalling 300 USDC; `StandardPolicy` approved with its `describe()` string; and the
 two blocked attempts, `PAYEE_NOT_ALLOWED` and `NO_POLICY`.
+
+Question 3 is deliberately two entities and not one. `PolicyPointer` is where ADMIN points
+the name; `ApprovedPolicy` is what a human approved, and it comes from a different contract.
+An earlier version copied the description onto `PolicyPointer` to save a query — code review
+caught that this makes it a copy with no invalidation, since approving *after* the pointer is
+set leaves it null forever. The field is gone; the join happens at query time, where it is
+correct.
 
 **`LeashedWallet` proves the design reasoning held.** EIP-7702 delegation emits no log, so a
 subgraph has no factory event to trigger a template from. `LeashAccount` emits `Leashed` on

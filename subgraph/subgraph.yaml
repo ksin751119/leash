@@ -67,7 +67,7 @@ dataSources:
       apiVersion: 0.0.9
       language: wasm/assemblyscript
       file: ./src/approvals.ts
-      entities: [PolicyPointer]
+      entities: [ApprovedPolicy]
       abis:
         - name: PolicyApprovals
           file: ./abis/PolicyApprovals.json

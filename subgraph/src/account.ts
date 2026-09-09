@@ -72,8 +72,18 @@ export function handleSpendExecuted(event: SpendExecuted): void {
     p.firstAllowedAt = event.block.timestamp;
   }
   // Deliberately NOT touching `p.allowed` on an existing row: PayeeAllowed and
-  // PayeeRemoved own that field. Setting it here would resurrect a removed payee in the
-  // agent's view every time an older spend was replayed during a reindex.
+  // PayeeRemoved own that field.
+  //
+  // The reason is *not* reindex safety - graph-node replays in ascending
+  // (block, logIndex) order, identical to the first pass, so an older SpendExecuted can
+  // never arrive after a later PayeeRemoved. (That was the reason this comment gave
+  // until code review pointed out it was false.)
+  //
+  // The real reason is that `removePayee` is per-(node, token, payee) onchain while this
+  // entity is per-(node, payee). A payee removed for USDC but still allowed for DAI can
+  // still produce an executed DAI spend, and flipping `allowed` back to true here would
+  // report it as allowed for USDC too. Leaving it false is wrong in the *restrictive*
+  // direction, which is the safe one: the agent asks first and the account decides.
   p.lastToken = token;
   p.paidCount = p.paidCount + 1;
   p.paidTotal = p.paidTotal.plus(event.params.amount);
