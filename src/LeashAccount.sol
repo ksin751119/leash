@@ -541,11 +541,19 @@ contract LeashAccount {
     }
 
     /// @notice The digest `restoreAgent` will consume.
+    /// @dev Mirrors `restoreAgent`'s `node == nodeFor(label)` check. Without it, this would
+    ///      happily hand back a digest for a mismatched pair — one `restoreAgent` can never
+    ///      consume, since it reverts `NodeLabelMismatch` before ever reaching
+    ///      `_consumeAttestation`. Signing and attesting that digest would burn a real
+    ///      face scan (World's `max_verifications: 1` per action) on an attestation that
+    ///      can never be spent, so the mismatch is caught here instead, at the cheap step.
     function restoreDigest(address agent, bytes32 node, string calldata label, uint256 nonce)
         public
         view
         returns (bytes32)
     {
+        bytes32 expected = nodeFor(label);
+        if (node != expected) revert NodeLabelMismatch(expected, node);
         return _digest(
             keccak256(
                 abi.encode(RESTORE_TYPEHASH, SELF, agent, node, keccak256(bytes(label)), nonce)

@@ -1825,4 +1825,23 @@ binding; `restoreAgent` with a valid attestation still restores a revoked agent.
 pre-existing mis-binding remedy (`test_a_mis_binding_is_correctable_for_free` — bind,
 unbind, rebind, no revocation involved) is untouched. `README.md`'s "Restore a revoked
 agent" row is now true as written; a paragraph was added below the widening/reduction
-table explaining the one exception to "unbind is free".
+table explaining the one exception to "unbind is free" — and a follow-up paragraph
+states the claim precisely: only *re-activating that same revoked address* now needs an
+attestation. Binding a **fresh** agent address to the same node is still free by design
+(`bindAgent` grants authority starting from zero; the ENS side and approval list decide
+its content), and the README says so explicitly rather than leaving a reader to
+over-read the fix as "no agent on this node without a face scan."
+
+### Follow-up: `restoreDigest` missing `restoreAgent`'s node/label check
+
+A second, related gap surfaced in review: `restoreDigest` did not mirror `restoreAgent`'s
+`node == nodeFor(label)` check, so it would hand back a digest for a mismatched pair that
+`restoreAgent` can never consume (it reverts `NodeLabelMismatch` before reaching
+`_consumeAttestation`). With World's `max_verifications: 1` per action, signing and
+attesting that digest would burn a real face scan on an attestation that can never be
+spent. `restoreDigest` now performs the same check and reverts `NodeLabelMismatch` up
+front. `ruleDigest` and `payeeDigest` were checked against their consumers (`setRule`,
+`allowPayee`) for an analogous omission — neither consumer performs any pre-attestation
+validation beyond what its digest already encodes, so no equivalent gap exists there.
+New test: `test_restoreDigest_rejects_a_node_label_mismatch` in
+`test/LeashAccountDigests.t.sol`, alongside the other `restoreDigest`/`ruleDigest` tests.

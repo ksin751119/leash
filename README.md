@@ -96,10 +96,20 @@ One exception to "unbind is free": `unbindAgent` refuses a binding that is curre
 revoked (`RevokedNeedsRestore`), rather than deleting it for free. Deleting a revoked
 binding would clear its `node` back to zero, and `bindAgent`'s guard against rebinding
 an existing agent only fires while `node` is non-zero — so a free delete would let
-`revoke → unbind → bind` rebuild full authority with no attestation, sidestepping the
-"Restore a revoked agent" row above entirely. Refusing costs nothing in capability: a
-revoked agent is already powerless, so this only forfeits storage cleanup. The one route
-out of `revoked` stays `restoreAgent`, attested as the table says.
+`revoke → unbind → bind` reactivate **that same agent address** with no attestation,
+sidestepping the "Restore a revoked agent" row above entirely. Refusing costs nothing in
+capability: a revoked agent is already powerless, so this only forfeits storage cleanup.
+The one route back to an active binding for that address is `restoreAgent`, attested as
+the table says.
+
+**What this does and does not claim:** it is re-activating *that revoked address* that
+now needs an attestation — not "getting a working agent on this node needs a face scan."
+The wallet key alone can still bind a **fresh** agent address to the same node for free,
+with no attestation, the moment after a revoke. That is by design, not a gap:
+`bindAgent` grants authority starting from zero, and the *content* of that authority
+comes entirely from the ENS side and the approval list, neither of which the new address
+can touch on its own — see `bindAgent`'s own note on why binding points in the reducing
+direction.
 
 `PolicyApprovals.revoke` goes further and is callable by **anyone**. Revoking only ever
 makes the system stricter; gating the brake is how you help an attacker at the worst

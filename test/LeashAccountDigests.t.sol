@@ -102,6 +102,21 @@ contract LeashAccountDigestsTest is Test {
         assertEq(acct.restoreDigest(agent, node, "vendors", 3), expected);
     }
 
+    /// `restoreDigest` must reject a mismatched (node, label) pair the same way
+    /// `restoreAgent` does. Without this check, a caller could get back a digest for a
+    /// pair `restoreAgent` can never consume (it reverts `NodeLabelMismatch` before ever
+    /// reaching `_consumeAttestation`) — discovering the mismatch only after signing and
+    /// spending a real attestation on it.
+    function test_restoreDigest_rejects_a_node_label_mismatch() public {
+        bytes32 wrongNode = acct.nodeFor("payroll");
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LeashAccount.NodeLabelMismatch.selector, acct.nodeFor("vendors"), wrongNode
+            )
+        );
+        acct.restoreDigest(address(0xA6E7), wrongNode, "vendors", 1);
+    }
+
     /// The nonce has to change the digest, or replay protection is decorative.
     function test_a_different_nonce_gives_a_different_digest() public view {
         bytes32 node = acct.nodeFor("vendors");
