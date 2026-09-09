@@ -492,6 +492,48 @@ contract LeashAccount {
         return _digest(keccak256(abi.encode(PAYEE_TYPEHASH, SELF, node, token, payee, nonce)));
     }
 
+    /// @notice The digest `setRule` will consume. Needed because a caller has to know what
+    ///         to have signed, and with a real attester there is no way to guess it.
+    /// @dev `epoch` is deliberately not in `RULE_TYPEHASH` and so is not here either — see
+    ///      `_isTighterIgnoringEpoch` for why `setRule` never trusts the caller's value.
+    function ruleDigest(
+        bytes32 node,
+        address token,
+        LeashStorage.TokenRule calldata rule,
+        uint256 nonce
+    ) public view returns (bytes32) {
+        return _digest(
+            keccak256(
+                abi.encode(
+                    RULE_TYPEHASH,
+                    SELF,
+                    node,
+                    token,
+                    rule.allowed,
+                    rule.txLimit,
+                    rule.periodLimit,
+                    rule.period,
+                    rule.windowStart,
+                    rule.windowEnd,
+                    nonce
+                )
+            )
+        );
+    }
+
+    /// @notice The digest `restoreAgent` will consume.
+    function restoreDigest(address agent, bytes32 node, string calldata label, uint256 nonce)
+        public
+        view
+        returns (bytes32)
+    {
+        return _digest(
+            keccak256(
+                abi.encode(RESTORE_TYPEHASH, SELF, agent, node, keccak256(bytes(label)), nonce)
+            )
+        );
+    }
+
     function _digest(bytes32 structHash) private view returns (bytes32) {
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
