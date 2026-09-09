@@ -107,7 +107,7 @@ test("the error sentence never contains the url on the non-200 path", async () =
   assert.ok(!s.error.includes("secret-key-abc"));
 });
 
-test("the error sentence never contains the url on the throw path", async () => {
+test("the error sentence never contains the url on the throw path (malformed URL)", async () => {
   const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc123";
   const fetchWithUrlInError = async () => {
     throw new Error(`Failed to fetch from ${secretUrl}`);
@@ -119,13 +119,30 @@ test("the error sentence never contains the url on the throw path", async () => 
   assert.ok(s.error.includes("Failed to fetch"), "other error details must survive redaction");
 });
 
-test("non-url error details like ECONNREFUSED survive redaction", async () => {
-  const fetchWithConnError = async () => {
-    throw new Error("ECONNREFUSED at https://hidden.example.com/query?key=xyz");
+test("real connection failures put the detail in err.cause, not err.message", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-xyz";
+  const fetchWithCauseError = async () => {
+    const err = new Error("fetch failed");
+    err.cause = new Error("ECONNREFUSED");
+    throw err;
   };
-  const s = await fetchSnapshot({ ...CFG, url: "https://hidden.example.com/query?key=xyz" }, fetchWithConnError);
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithCauseError);
   assert.equal(s.ok, false);
-  assert.ok(!s.error.includes("https://hidden.example.com"), "url must be redacted");
-  assert.ok(!s.error.includes("key=xyz"), "api key must be redacted");
-  assert.ok(s.error.includes("ECONNREFUSED"), "the diagnostic message must survive");
+  assert.ok(!s.error.includes("SECRET-KEY-xyz"), "the secret key must not appear");
+  assert.ok(s.error.includes("ECONNREFUSED"), "the real diagnostic from err.cause must be present");
+  assert.ok(s.error.includes("fetch failed"), "the top-level message must also be present");
+});
+
+test("hostname in err.cause does not leak through redaction", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc";
+  const fetchWithHostnameInCause = async () => {
+    const err = new Error("fetch failed");
+    err.cause = new Error("getaddrinfo ENOTFOUND api.example.com");
+    throw err;
+  };
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithHostnameInCause);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("SECRET-KEY-abc"), "the secret key must not appear");
+  assert.ok(!s.error.includes("api.example.com"), "the hostname must not leak");
+  assert.ok(s.error.includes("ENOTFOUND"), "the error reason must be present");
 });

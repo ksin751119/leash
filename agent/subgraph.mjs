@@ -54,9 +54,24 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     body = await res.json();
   } catch (err) {
     // Never put cfg.url in an error: a subgraph url can carry an API key.
-    // The exception path can leak the URL in err.message (Node's fetch does this).
+    // The exception path can leak the URL in err.message (Node's fetch does this for
+    // malformed URLs). Real connection failures (DNS, host unreachable, ECONNREFUSED)
+    // put the detail in err.cause.message instead, which carries only the hostname,
+    // never a path or API key. Include both for proper diagnostics without leaking.
     const raw = String(err?.message ?? err);
-    const safe = cfg.url ? raw.split(cfg.url).join("<redacted>") : raw;
+    const cause = err?.cause?.message ? ` (${err.cause.message})` : "";
+    const full = raw + cause;
+    let safe = full;
+    if (cfg.url) {
+      safe = full.split(cfg.url).join("<redacted>");
+      // Also redact the hostname part, since connection errors report only the hostname
+      try {
+        const u = new URL(cfg.url);
+        safe = safe.split(u.hostname).join("<redacted>");
+      } catch {
+        // If URL parsing fails, the split-redaction above is still active
+      }
+    }
     return { ok: false, error: `subgraph unreachable: ${safe}` };
   }
 

@@ -673,7 +673,7 @@ test("the error sentence never contains the url on the non-200 path", async () =
   assert.ok(!s.error.includes("secret-key-abc"));
 });
 
-test("the error sentence never contains the url on the throw path", async () => {
+test("the error sentence never contains the url on the throw path (malformed URL)", async () => {
   const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc123";
   const fetchWithUrlInError = async () => {
     throw new Error(`Failed to fetch from ${secretUrl}`);
@@ -685,15 +685,32 @@ test("the error sentence never contains the url on the throw path", async () => 
   assert.ok(s.error.includes("Failed to fetch"), "other error details must survive redaction");
 });
 
-test("non-url error details like ECONNREFUSED survive redaction", async () => {
-  const fetchWithConnError = async () => {
-    throw new Error("ECONNREFUSED at https://hidden.example.com/query?key=xyz");
+test("real connection failures put the detail in err.cause, not err.message", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-xyz";
+  const fetchWithCauseError = async () => {
+    const err = new Error("fetch failed");
+    err.cause = new Error("ECONNREFUSED");
+    throw err;
   };
-  const s = await fetchSnapshot({ ...CFG, url: "https://hidden.example.com/query?key=xyz" }, fetchWithConnError);
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithCauseError);
   assert.equal(s.ok, false);
-  assert.ok(!s.error.includes("https://hidden.example.com"), "url must be redacted");
-  assert.ok(!s.error.includes("key=xyz"), "api key must be redacted");
-  assert.ok(s.error.includes("ECONNREFUSED"), "the diagnostic message must survive");
+  assert.ok(!s.error.includes("SECRET-KEY-xyz"), "the secret key must not appear");
+  assert.ok(s.error.includes("ECONNREFUSED"), "the real diagnostic from err.cause must be present");
+  assert.ok(s.error.includes("fetch failed"), "the top-level message must also be present");
+});
+
+test("hostname in err.cause does not leak through redaction", async () => {
+  const secretUrl = "https://api.example.com/query?api-key=SECRET-KEY-abc";
+  const fetchWithHostnameInCause = async () => {
+    const err = new Error("fetch failed");
+    err.cause = new Error("getaddrinfo ENOTFOUND api.example.com");
+    throw err;
+  };
+  const s = await fetchSnapshot({ ...CFG, url: secretUrl }, fetchWithHostnameInCause);
+  assert.equal(s.ok, false);
+  assert.ok(!s.error.includes("SECRET-KEY-abc"), "the secret key must not appear");
+  assert.ok(!s.error.includes("api.example.com"), "the hostname must not leak");
+  assert.ok(s.error.includes("ENOTFOUND"), "the error reason must be present");
 });
 ```
 
@@ -760,10 +777,25 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     if (!res.ok) return { ok: false, error: `subgraph returned HTTP ${res.status}` };
     body = await res.json();
   } catch (err) {
-    // The exception path can leak the URL in err.message (Node's fetch does this).
-    // Redact it, but keep other error details like ECONNREFUSED for debugging.
+    // Never put cfg.url in an error: a subgraph url can carry an API key.
+    // The exception path can leak the URL in err.message (Node's fetch does this for
+    // malformed URLs). Real connection failures (DNS, host unreachable, ECONNREFUSED)
+    // put the detail in err.cause.message instead, which carries only the hostname,
+    // never a path or API key. Include both for proper diagnostics without leaking.
     const raw = String(err?.message ?? err);
-    const safe = cfg.url ? raw.split(cfg.url).join("<redacted>") : raw;
+    const cause = err?.cause?.message ? ` (${err.cause.message})` : "";
+    const full = raw + cause;
+    let safe = full;
+    if (cfg.url) {
+      safe = full.split(cfg.url).join("<redacted>");
+      // Also redact the hostname part, since connection errors report only the hostname
+      try {
+        const u = new URL(cfg.url);
+        safe = safe.split(u.hostname).join("<redacted>");
+      } catch {
+        // If URL parsing fails, the split-redaction above is still active
+      }
+    }
     return { ok: false, error: `subgraph unreachable: ${safe}` };
   }
 
@@ -808,7 +840,7 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `cd agent && node --test subgraph.test.mjs`
-Expected: PASS, 11 tests.
+Expected: PASS, 12 tests.
 
 - [ ] **Step 5: Run it against the live index, once**
 
