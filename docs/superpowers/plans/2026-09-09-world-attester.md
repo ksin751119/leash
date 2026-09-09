@@ -1600,13 +1600,23 @@ nonce itself:
 
 ```bash
 RPC="$(get SEPOLIA_RPC)"; W="$(get WALLET_ADDR)"; TOKEN="$(get MOCK_USDC)"
+NODE=$(cast call "$W" 'nodeFor(string)(bytes32)' vendors --rpc-url "$RPC")
 PAYEE=<vendor address the demo is unblocking>
 NONCE=1
 DIGEST=$(cast call "$W" 'payeeDigest(bytes32,address,address,uint256)(bytes32)' "$NODE" "$TOKEN" "$PAYEE" "$NONCE" --rpc-url "$RPC")
 echo "$DIGEST"
 ```
 
-(`$NODE` is the same `vendors` node computed in Step 5.)
+`NODE` is recomputed here rather than carried over from Step 5, so this step stands alone in
+a fresh shell — do not rely on a variable set minutes ago in another terminal.
+
+> ⏱️ **The attestation expires 15 minutes after it is signed** (`server.mjs` sets
+> `deadline = now + 900`). The whole tail of this step — copy the attestation, run
+> `cast send` — has to finish inside that window, and past it `allowPayee` reverts
+> `NotAttested` with the face scan already spent and the action consumed. So **have the
+> `cast send` line below typed out and ready, with everything but the attestation filled in,
+> before you scan.** Paste, send. Do not go looking for the payee address or the token
+> decimals after the scan.
 
 Open `world/index.html` (`node world/server.mjs`, tunnel or browse to `localhost:8787`),
 paste `$DIGEST` into the **Signal** field — the page detects the `0x…64-hex` shape and
