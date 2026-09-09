@@ -998,6 +998,9 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { attestationHash, signAttestation } from "./attest.mjs";
 
+// attest.mjs keeps its own `strip` private, so this file defines its own.
+const strip = (h) => h.replace(/^0x/, "");
+
 const RPC = process.env.SEPOLIA_RPC;
 const ATTESTER = process.env.WORLD_ATTESTER;
 if (!RPC || !ATTESTER) {
@@ -1049,19 +1052,39 @@ for (const [digest, deadline] of cases) {
   console.log(`${ok ? "ok  " : "FAIL"}  deadline=${deadline}\n      js    ${js}\n      chain ${chain}`);
 }
 
-// And prove a signature made here recovers to the expected signer, which catches the
-// recovery-byte ordering independently of the hash.
-if (process.env.WORLD_RP_SIGNER_PK) {
+// And prove a signature made here is one the CONTRACT accepts. This is the check that
+// catches the recovery-byte ordering, and it has to go through `verify` to do it: a blob
+// with @noble's [recovery ‖ r ‖ s] mistakenly packed as r ‖ s ‖ v is still exactly 73
+// bytes, so a length check cannot see the bug at all. Only ecrecover can.
+if (process.env.SIGNER_PK) {
   const { attestation } = signAttestation({
     digest: cases[3][0],
     deadline: cases[3][1],
     chainId: CHAIN_ID,
     verifyingContract: ATTESTER,
-    privKeyHex: process.env.WORLD_RP_SIGNER_PK,
+    privKeyHex: process.env.SIGNER_PK,
   });
   const len = (attestation.length - 2) / 2;
   console.log(`${len === 73 ? "ok  " : "FAIL"}  blob is ${len} bytes (want 73)`);
   if (len !== 73) bad++;
+
+  // verify(bytes32,bytes) — one static arg, then offset/length/data for the dynamic one.
+  const vsel =
+    "0x" +
+    Buffer.from(keccak_256(Buffer.from("verify(bytes32,bytes)"))).toString("hex").slice(0, 8);
+  const body = strip(attestation);
+  const padded = body + "0".repeat((64 - (body.length % 64)) % 64);
+  const data =
+    vsel +
+    strip(cases[3][0]) +
+    (64).toString(16).padStart(64, "0") +
+    len.toString(16).padStart(64, "0") +
+    padded;
+  const accepted = BigInt(await rpc("eth_call", [{ to: ATTESTER, data }, "latest"])) === 1n;
+  console.log(`${accepted ? "ok  " : "FAIL"}  the contract accepts this signature`);
+  if (!accepted) bad++;
+} else {
+  console.log("skip  signature checks (SIGNER_PK unset)");
 }
 
 console.log(bad === 0 ? "\nall cross-checks agree" : `\n${bad} MISMATCH`);
@@ -1157,8 +1180,10 @@ Before anything is deployed, check the two implementations agree using a locally
 ```bash
 anvil --port 8545 &
 cd "$(git rev-parse --show-toplevel)"   # this branch's checkout, NOT ~/DEV/leash
+# Deployed with anvil account #0 as the SIGNER, so the signature check below needs no
+# real secret. Step 5 must never touch WORLD_RP_SIGNER_PK.
 forge create src/WorldAttester.sol:WorldAttester \
-  --constructor-args 0x85b89D21DB13f220601430d48244B2AE06120969 \
+  --constructor-args 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
   --rpc-url http://127.0.0.1:8545 \
   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
   --broadcast
@@ -1167,10 +1192,13 @@ forge create src/WorldAttester.sol:WorldAttester \
 Take the deployed address, then — note anvil's chain id is 31337, not Sepolia's:
 
 ```bash
-cd world && SEPOLIA_RPC=http://127.0.0.1:8545 WORLD_ATTESTER=<address> node crosscheck.mjs
+cd world && SEPOLIA_RPC=http://127.0.0.1:8545 WORLD_ATTESTER=<address> \
+  SIGNER_PK=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+  node crosscheck.mjs
 ```
 
-Expected: `chain id 31337`, four `ok` lines, and `all cross-checks agree`. The script reads
+Expected: `chain id 31337`, **six** `ok` lines (four hash cases, the 73-byte length, and
+the contract accepting the signature), and `all cross-checks agree`. The script reads
 the chain id from the RPC, so the same script is what runs against Sepolia in Task 5 — no
 separate local variant to drift out of sync.
 
