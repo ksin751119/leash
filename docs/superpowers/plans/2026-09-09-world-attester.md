@@ -21,7 +21,7 @@ Every item is a project-wide requirement; each task's acceptance criteria implic
 - **`ATTESTATION_TYPEHASH = keccak256("LeashAttestation(bytes32 digest,uint64 deadline)")`.**
 - **`verify` must never revert.** `IAttester`'s contract requires it, and `attestation` is attacker-controlled. Use `ECDSA.tryRecover`, never `ECDSA.recover`; validate the length before slicing; pass no externally-supplied bytes to `abi.decode`.
 - **`@noble/curves` 2.x returns `format: "recovered"` as `[recovery(1) ‖ r(32) ‖ s(32)]`** — the recovery byte is **first**, and its value is 0 or 1. Ethereum's `v` is `27 + recovery`, and the blob wants `r ‖ s ‖ v`. Probed 2026-09-09; getting this wrong fails with the same symptom as an encoding error.
-- **Existing tests must stay green:** 170 passed / 1 skipped for `forge test`, 8 passed for the subgraph. `forge fmt` clean.
+- **Existing tests must stay green:** the pre-plan baseline is 170 passed / 1 skipped for `forge test`, 8 passed for the subgraph. Each task's own expected total accumulates the earlier tasks' new tests on top of that — do not read 170 as a per-task target. `forge fmt` clean.
 - **Existing contracts are not modified** except `src/LeashAccount.sol`, which gains two `view` functions and no storage.
 - **`WORLD_RP_SIGNER_PK` never leaves the backend** and never appears in a script, a test, or a commit. Tests use their own throwaway keys.
 
@@ -618,7 +618,7 @@ Expected: 4 passed
 - [ ] **Step 6: Format and run the whole suite**
 
 Run: `forge fmt && forge test`
-Expected: 174 passed, 1 skipped
+Expected: 190 passed, 1 skipped (the pre-plan 170, plus 16 from Task 1, plus 4 here)
 
 - [ ] **Step 7: Commit**
 
@@ -817,7 +817,7 @@ Expected: they fail only if Tasks 1 and 2 are incomplete. If both are done, thes
 - [ ] **Step 3: Run the whole suite**
 
 Run: `forge fmt && forge test`
-Expected: 180 passed, 1 skipped
+Expected: 196 passed, 1 skipped (190 after Task 2, plus 6 here)
 
 - [ ] **Step 4: Commit**
 
