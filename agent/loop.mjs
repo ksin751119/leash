@@ -80,14 +80,20 @@ export function validateIntents(intents) {
 // trailing whitespace) and then checks shape, so a genuinely malformed value (surrounding
 // quotes, wrong length) is refused by name. Returns the trimmed value or an error string;
 // never exits itself, so it is testable without a process to kill.
-export function validateEnvVar(name, rawValue, pattern, label) {
+export function validateEnvVar(
+  name,
+  rawValue,
+  pattern,
+  label,
+  hint = "Check for stray quotes or a trailing CR from .env extraction.",
+) {
   if (!rawValue) {
     return { error: `${name} is not set. Extract single variables; never source .env wholesale.` };
   }
   const trimmed = rawValue.trim();
   if (pattern && !pattern.test(trimmed)) {
     return {
-      error: `${name} is not shaped like ${label} (got ${JSON.stringify(rawValue)}). Check for stray quotes or a trailing CR from .env extraction.`,
+      error: `${name} is not shaped like ${label} (got ${JSON.stringify(rawValue)}). ${hint}`,
     };
   }
   return { value: trimmed };
@@ -331,14 +337,29 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const envChecks = [
     ["AGENT_PK", null, null],
-    ["SEPOLIA_RPC", RPC_RE, "an https:// RPC URL"],
+    // A scheme-less RPC URL is a real key leak, not tidying: redactUrls matches
+    // /https?:\/\/\S+/, so it catches "https://host/KEY" but not "host/KEY" - and
+    // send.mjs's err.cause/details/metaMessages surfacing (T4 Minor 2) means an RPC
+    // failure's error text, which commonly repeats the request URL, can carry the API key
+    // an RPC URL's path commonly holds straight into lastAction.error, the console, and the
+    // JSON response. Requiring the scheme closes the hole at the source, rather than trying
+    // to widen the redaction regex to guess at bare hostnames - that direction ends in
+    // over-redacting ordinary text.
+    [
+      "SEPOLIA_RPC",
+      RPC_RE,
+      "an https:// RPC URL",
+      "A scheme-less URL cannot be safely redacted if it ever reaches an error message or log line, and an RPC URL commonly carries an API key in its path.",
+    ],
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
   ];
   const envValues = {};
-  for (const [name, pattern, label] of envChecks) {
-    const result = validateEnvVar(name, process.env[name], pattern, label);
+  for (const [name, pattern, label, hint] of envChecks) {
+    // hint is undefined for entries with no fourth element, which is exactly when
+    // validateEnvVar's own default parameter should apply.
+    const result = validateEnvVar(name, process.env[name], pattern, label, hint);
     if (result.error) {
       console.error(result.error);
       process.exit(1);
