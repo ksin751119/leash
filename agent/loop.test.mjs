@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar } from "./loop.mjs";
+import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -186,4 +186,51 @@ test("a missing value is rejected by name", () => {
 test("a wrong-length hash is rejected", () => {
   const result = validateEnvVar("LEASH_NODE", "0xdead", /^0x[0-9a-fA-F]{64}$/, "a 32-byte hash");
   assert.ok(result.error, "a value of the wrong length must be rejected");
+});
+
+// A non-string id defeats both C1 guards: validateIntents' `seen` Set and advance()'s
+// `queued` Set key on the raw id (SameValueZero), while the record store keys on its string
+// coercion. [{id: 1}, {id: "1"}] would otherwise pass duplicate-checking here (1 !== "1" to
+// a Set) yet collide in the store, reproducing C1's exact mechanism through a door C1's own
+// fix does not cover.
+test("a non-string intent id is rejected at load", () => {
+  const errors = validateIntents([{ id: 1, token: TOKEN, payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("must be a string")), "a numeric id must be flagged");
+});
+
+// __proto__ is worse than a duplicate: `next.intents["__proto__"] = rec` hits
+// Object.prototype's setter instead of creating an own property, so the record is invisible
+// to Object.keys/Object.values (and so to GET /api/agent/state and the console log) while
+// every guard resets each tick - an unbounded repeat payment nothing shows.
+test('an intent id of "__proto__" is rejected at load', () => {
+  const errors = validateIntents([{ id: "__proto__", token: TOKEN, payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("__proto__")), "__proto__ as an id must be flagged");
+});
+
+// Belt and braces alongside the load-time rejection above: even if a "__proto__"-id intent
+// reached advance() directly (bypassing validateIntents), the null-prototype store must not
+// let it silently vanish into Object.prototype and reappear as an invisible repeat payment.
+test('a "__proto__" id does not pollute the intents store or vanish from state', () => {
+  const protoIntents = [{ id: "__proto__", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" }];
+  const { state } = advance(initialState(), okSnap(), protoIntents, NOW);
+  assert.ok(Object.prototype.hasOwnProperty.call(state.intents, "__proto__"), "the record must be its own visible property");
+  assert.deepEqual(Object.keys(state.intents), ["__proto__"], "the record must be enumerable, not lost");
+  assert.equal({}.verdict, undefined, "Object.prototype itself must not have gained a verdict property");
+});
+
+// I6/GET //: new URL(req.url, "http://x") throws "Invalid URL" for "//" and "/\", and that
+// throw used to sit in an async request handler node:http does not await - an unhandled
+// rejection that kills the whole process. routePath must never throw, for any input.
+test("routePath never throws, including on // and /\\", () => {
+  for (const bad of ["//", "/\\", "", "?", "///", "/\\/\\"]) {
+    assert.doesNotThrow(() => routePath(bad), `routePath(${JSON.stringify(bad)}) must not throw`);
+  }
+});
+
+test("routePath strips a cache-busting query string", () => {
+  assert.equal(routePath("/api/agent/state?t=1699999999"), "/api/agent/state");
+});
+
+test("routePath collapses a leading double slash, so base + \"/path\" joins still resolve", () => {
+  assert.equal(routePath("//api/agent/state"), "/api/agent/state");
 });

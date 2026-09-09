@@ -1177,7 +1177,7 @@ MSG
 // agent/loop.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar } from "./loop.mjs";
+import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -1364,6 +1364,53 @@ test("a wrong-length hash is rejected", () => {
   const result = validateEnvVar("LEASH_NODE", "0xdead", /^0x[0-9a-fA-F]{64}$/, "a 32-byte hash");
   assert.ok(result.error, "a value of the wrong length must be rejected");
 });
+
+// A non-string id defeats both C1 guards: validateIntents' `seen` Set and advance()'s
+// `queued` Set key on the raw id (SameValueZero), while the record store keys on its string
+// coercion. [{id: 1}, {id: "1"}] would otherwise pass duplicate-checking here (1 !== "1" to
+// a Set) yet collide in the store, reproducing C1's exact mechanism through a door C1's own
+// fix does not cover.
+test("a non-string intent id is rejected at load", () => {
+  const errors = validateIntents([{ id: 1, token: TOKEN, payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("must be a string")), "a numeric id must be flagged");
+});
+
+// __proto__ is worse than a duplicate: `next.intents["__proto__"] = rec` hits
+// Object.prototype's setter instead of creating an own property, so the record is invisible
+// to Object.keys/Object.values (and so to GET /api/agent/state and the console log) while
+// every guard resets each tick - an unbounded repeat payment nothing shows.
+test('an intent id of "__proto__" is rejected at load', () => {
+  const errors = validateIntents([{ id: "__proto__", token: TOKEN, payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("__proto__")), "__proto__ as an id must be flagged");
+});
+
+// Belt and braces alongside the load-time rejection above: even if a "__proto__"-id intent
+// reached advance() directly (bypassing validateIntents), the null-prototype store must not
+// let it silently vanish into Object.prototype and reappear as an invisible repeat payment.
+test('a "__proto__" id does not pollute the intents store or vanish from state', () => {
+  const protoIntents = [{ id: "__proto__", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" }];
+  const { state } = advance(initialState(), okSnap(), protoIntents, NOW);
+  assert.ok(Object.prototype.hasOwnProperty.call(state.intents, "__proto__"), "the record must be its own visible property");
+  assert.deepEqual(Object.keys(state.intents), ["__proto__"], "the record must be enumerable, not lost");
+  assert.equal({}.verdict, undefined, "Object.prototype itself must not have gained a verdict property");
+});
+
+// I6/GET //: new URL(req.url, "http://x") throws "Invalid URL" for "//" and "/\", and that
+// throw used to sit in an async request handler node:http does not await - an unhandled
+// rejection that kills the whole process. routePath must never throw, for any input.
+test("routePath never throws, including on // and /\\", () => {
+  for (const bad of ["//", "/\\", "", "?", "///", "/\\/\\"]) {
+    assert.doesNotThrow(() => routePath(bad), `routePath(${JSON.stringify(bad)}) must not throw`);
+  }
+});
+
+test("routePath strips a cache-busting query string", () => {
+  assert.equal(routePath("/api/agent/state?t=1699999999"), "/api/agent/state");
+});
+
+test("routePath collapses a leading double slash, so base + \"/path\" joins still resolve", () => {
+  assert.equal(routePath("//api/agent/state"), "/api/agent/state");
+});
 ```
 
 - [ ] **Step 3: Run them and watch them fail**
@@ -1397,8 +1444,14 @@ const SUBGRAPH_URL =
 const AMOUNT_RE = /^[0-9]+$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const NODE_RE = /^0x[0-9a-fA-F]{64}$/;
+const RPC_RE = /^https:\/\//;
 
-export const initialState = () => ({ tick: 0, at: null, source: null, snapshot: null, intents: {} });
+// A null-prototype store, belt and braces alongside validateIntents' "__proto__" rejection:
+// `next.intents["__proto__"] = rec` on an ordinary object hits Object.prototype's setter
+// instead of creating an own property, silently discarding the write. Any caller of
+// `advance` that skips validateIntents (a future refactor, a different loader) still gets
+// this protection for free.
+export const initialState = () => ({ tick: 0, at: null, source: null, snapshot: null, intents: Object.create(null) });
 
 // Refuse to start on a malformed or duplicate-id intents.json rather than fail live (C1). A
 // duplicate id is the most ordinary edit imaginable - copy an intent block for the demo,
@@ -1411,8 +1464,22 @@ export function validateIntents(intents) {
   const seen = new Set();
   for (const intent of intents ?? []) {
     const id = intent?.id;
-    if (seen.has(id)) errors.push(`duplicate intent id: ${JSON.stringify(id)}`);
-    seen.add(id);
+    // A non-string id defeats both C1 guards: this Set and advance()'s `queued` Set key on
+    // the raw id (SameValueZero), while the record store keys on its string coercion - so
+    // [{id: 1}, {id: "1"}] passes duplicate-checking here yet collides in the store, and
+    // sendAndRecord runs twice on the same record object. "__proto__" is worse: it hits
+    // Object.prototype's setter instead of creating an own property, so the record is
+    // invisible to Object.keys/Object.values and every guard resets each tick - an
+    // unbounded repeat payment that never appears at GET /api/agent/state.
+    if (typeof id !== "string") {
+      errors.push(`intent id must be a string, got ${JSON.stringify(id)} (${typeof id})`);
+    } else if (id === "__proto__") {
+      errors.push(`intent id "__proto__" is not allowed`);
+    } else if (seen.has(id)) {
+      errors.push(`duplicate intent id: ${JSON.stringify(id)}`);
+    } else {
+      seen.add(id);
+    }
     if (!AMOUNT_RE.test(String(intent?.amount))) {
       errors.push(
         `intent ${JSON.stringify(id)}: amount must be a base-unit integer string, got ${JSON.stringify(intent?.amount)}`,
@@ -1449,6 +1516,19 @@ export function validateEnvVar(name, rawValue, pattern, label) {
   return { value: trimmed };
 }
 
+// I6: route on the pathname, not the raw req.url - a cache-busting query string
+// (`?t=169...`) otherwise 404s on an exact string match. Plain string splitting, not
+// `new URL(req.url, ...)`: the URL constructor throws on `//` or `/\` (an ordinary typo, or
+// - since this endpoint sends Access-Control-Allow-Origin: * - a page in the operator's own
+// browser doing `fetch("http://localhost:8788//")`), and the request handler is an async
+// callback node:http does not await, so an uncaught throw there is an unhandled rejection
+// that kills the whole process mid-run. Collapsing a leading run of slashes also makes the
+// ordinary `base + "/path"` join (`//api/agent/state`) resolve, instead of 404ing on what
+// looks like a working URL. Pure and exported so the no-throw property is testable directly.
+export function routePath(url) {
+  return String(url ?? "").split("?")[0].replace(/^\/+/, "/");
+}
+
 // The pure half: given the state, a snapshot and the intents, work out each verdict and
 // which intents to send. Kept separate from the IO so duplicate-payment prevention is
 // testable without a chain.
@@ -1459,7 +1539,10 @@ export function advance(state, snapshot, intents, nowSec) {
     : { subgraphBlock: null, chainBlock: null, lagBlocks: null };
   next.snapshot = snapshot?.ok ? snapshot : null;
   next.readError = snapshot?.ok ? null : (snapshot?.error ?? "no snapshot");
-  next.intents = { ...state.intents };
+  // Object spread (`{ ...state.intents }`) always builds an ordinary object with
+  // Object.prototype, which would undo the null-prototype store from initialState the
+  // moment the second tick runs. Object.assign onto a fresh Object.create(null) preserves it.
+  next.intents = Object.assign(Object.create(null), state.intents);
 
   const toSend = [];
   // C1, belt and braces: a duplicate id must never reach toSend twice even if one slipped
@@ -1671,7 +1754,7 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const envChecks = [
     ["AGENT_PK", null, null],
-    ["SEPOLIA_RPC", null, null],
+    ["SEPOLIA_RPC", RPC_RE, "an https:// RPC URL"],
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
@@ -1712,19 +1795,23 @@ if (isMain) {
       res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(body, null, 2));
     };
-    // I6: route on the pathname, not the raw req.url - a cache-busting query string
-    // (`?t=169...`) otherwise 404s on an exact string match.
-    const pathname = new URL(req.url, "http://x").pathname;
-    if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
-    if (req.method === "POST" && pathname === "/api/agent/tick") {
-      try {
-        await tick();
-      } catch (err) {
-        // tick() already catches internally and records tickError (I2); this is a backstop
-        // so the request cannot hang or 500 with no body if something still escapes.
-        return json(500, { error: String(err?.message ?? err) });
+    try {
+      const pathname = routePath(req.url);
+      if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
+      if (req.method === "POST" && pathname === "/api/agent/tick") {
+        try {
+          await tick();
+        } catch (err) {
+          // tick() already catches internally and records tickError (I2); this is a backstop
+          // so the request cannot hang or 500 with no body if something still escapes.
+          return json(500, { error: String(err?.message ?? err) });
+        }
+        return json(200, publicState());
       }
-      return json(200, publicState());
+    } catch (err) {
+      // Backstop for anything else unexpected in this handler - see the comment above on
+      // why an uncaught throw here would otherwise kill the process, not just this request.
+      return json(500, { error: String(err?.message ?? err) });
     }
     json(404, { error: "not found" });
   }).listen(PORT, () => {
@@ -1739,18 +1826,19 @@ if (isMain) {
 - [ ] **Step 5: Run the tests and watch them pass**
 
 Run: `cd agent && node --test loop.test.mjs`
-Expected: PASS, 20 tests.
+Expected: PASS, 26 tests.
 
 - [ ] **Step 6: Run every check together**
 
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass and `all 13 codes agree`. The count is **64 tests across five
-files** — reason 4, decide 17, subgraph 14, send 9, loop 20 (reason and subgraph grew in
-their fix rounds; loop grew 7→10→20 fixing the timeout duplicate-payment path and then the
-final review's C1/I2/I7 wave; decide grew 16→17 for I5's `will-pass` explain; subgraph grew
-12→14 for I3's `remaining`/`node`). If your
+Expected: all suites pass and `all 13 codes agree`. The count is **70 tests across five
+files** — reason 4, decide 17, subgraph 14, send 9, loop 26 (reason and subgraph grew in
+their fix rounds; loop grew 7→10→20→26 fixing the timeout duplicate-payment path, then the
+final review's C1/I2/I7 wave, then the re-review's non-string/`__proto__` id and `routePath`
+tests; decide grew 16→17 for I5's `will-pass` explain; subgraph grew 12→14 for I3's
+`remaining`/`node`). If your
 total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.

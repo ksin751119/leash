@@ -21,8 +21,14 @@ const SUBGRAPH_URL =
 const AMOUNT_RE = /^[0-9]+$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const NODE_RE = /^0x[0-9a-fA-F]{64}$/;
+const RPC_RE = /^https:\/\//;
 
-export const initialState = () => ({ tick: 0, at: null, source: null, snapshot: null, intents: {} });
+// A null-prototype store, belt and braces alongside validateIntents' "__proto__" rejection:
+// `next.intents["__proto__"] = rec` on an ordinary object hits Object.prototype's setter
+// instead of creating an own property, silently discarding the write. Any caller of
+// `advance` that skips validateIntents (a future refactor, a different loader) still gets
+// this protection for free.
+export const initialState = () => ({ tick: 0, at: null, source: null, snapshot: null, intents: Object.create(null) });
 
 // Refuse to start on a malformed or duplicate-id intents.json rather than fail live (C1). A
 // duplicate id is the most ordinary edit imaginable - copy an intent block for the demo,
@@ -35,8 +41,22 @@ export function validateIntents(intents) {
   const seen = new Set();
   for (const intent of intents ?? []) {
     const id = intent?.id;
-    if (seen.has(id)) errors.push(`duplicate intent id: ${JSON.stringify(id)}`);
-    seen.add(id);
+    // A non-string id defeats both C1 guards: this Set and advance()'s `queued` Set key on
+    // the raw id (SameValueZero), while the record store keys on its string coercion - so
+    // [{id: 1}, {id: "1"}] passes duplicate-checking here yet collides in the store, and
+    // sendAndRecord runs twice on the same record object. "__proto__" is worse: it hits
+    // Object.prototype's setter instead of creating an own property, so the record is
+    // invisible to Object.keys/Object.values and every guard resets each tick - an
+    // unbounded repeat payment that never appears at GET /api/agent/state.
+    if (typeof id !== "string") {
+      errors.push(`intent id must be a string, got ${JSON.stringify(id)} (${typeof id})`);
+    } else if (id === "__proto__") {
+      errors.push(`intent id "__proto__" is not allowed`);
+    } else if (seen.has(id)) {
+      errors.push(`duplicate intent id: ${JSON.stringify(id)}`);
+    } else {
+      seen.add(id);
+    }
     if (!AMOUNT_RE.test(String(intent?.amount))) {
       errors.push(
         `intent ${JSON.stringify(id)}: amount must be a base-unit integer string, got ${JSON.stringify(intent?.amount)}`,
@@ -73,6 +93,19 @@ export function validateEnvVar(name, rawValue, pattern, label) {
   return { value: trimmed };
 }
 
+// I6: route on the pathname, not the raw req.url - a cache-busting query string
+// (`?t=169...`) otherwise 404s on an exact string match. Plain string splitting, not
+// `new URL(req.url, ...)`: the URL constructor throws on `//` or `/\` (an ordinary typo, or
+// - since this endpoint sends Access-Control-Allow-Origin: * - a page in the operator's own
+// browser doing `fetch("http://localhost:8788//")`), and the request handler is an async
+// callback node:http does not await, so an uncaught throw there is an unhandled rejection
+// that kills the whole process mid-run. Collapsing a leading run of slashes also makes the
+// ordinary `base + "/path"` join (`//api/agent/state`) resolve, instead of 404ing on what
+// looks like a working URL. Pure and exported so the no-throw property is testable directly.
+export function routePath(url) {
+  return String(url ?? "").split("?")[0].replace(/^\/+/, "/");
+}
+
 // The pure half: given the state, a snapshot and the intents, work out each verdict and
 // which intents to send. Kept separate from the IO so duplicate-payment prevention is
 // testable without a chain.
@@ -83,7 +116,10 @@ export function advance(state, snapshot, intents, nowSec) {
     : { subgraphBlock: null, chainBlock: null, lagBlocks: null };
   next.snapshot = snapshot?.ok ? snapshot : null;
   next.readError = snapshot?.ok ? null : (snapshot?.error ?? "no snapshot");
-  next.intents = { ...state.intents };
+  // Object spread (`{ ...state.intents }`) always builds an ordinary object with
+  // Object.prototype, which would undo the null-prototype store from initialState the
+  // moment the second tick runs. Object.assign onto a fresh Object.create(null) preserves it.
+  next.intents = Object.assign(Object.create(null), state.intents);
 
   const toSend = [];
   // C1, belt and braces: a duplicate id must never reach toSend twice even if one slipped
@@ -295,7 +331,7 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const envChecks = [
     ["AGENT_PK", null, null],
-    ["SEPOLIA_RPC", null, null],
+    ["SEPOLIA_RPC", RPC_RE, "an https:// RPC URL"],
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
@@ -336,19 +372,23 @@ if (isMain) {
       res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(body, null, 2));
     };
-    // I6: route on the pathname, not the raw req.url - a cache-busting query string
-    // (`?t=169...`) otherwise 404s on an exact string match.
-    const pathname = new URL(req.url, "http://x").pathname;
-    if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
-    if (req.method === "POST" && pathname === "/api/agent/tick") {
-      try {
-        await tick();
-      } catch (err) {
-        // tick() already catches internally and records tickError (I2); this is a backstop
-        // so the request cannot hang or 500 with no body if something still escapes.
-        return json(500, { error: String(err?.message ?? err) });
+    try {
+      const pathname = routePath(req.url);
+      if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
+      if (req.method === "POST" && pathname === "/api/agent/tick") {
+        try {
+          await tick();
+        } catch (err) {
+          // tick() already catches internally and records tickError (I2); this is a backstop
+          // so the request cannot hang or 500 with no body if something still escapes.
+          return json(500, { error: String(err?.message ?? err) });
+        }
+        return json(200, publicState());
       }
-      return json(200, publicState());
+    } catch (err) {
+      // Backstop for anything else unexpected in this handler - see the comment above on
+      // why an uncaught throw here would otherwise kill the process, not just this request.
+      return json(500, { error: String(err?.message ?? err) });
     }
     json(404, { error: "not found" });
   }).listen(PORT, () => {
