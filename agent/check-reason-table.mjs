@@ -17,12 +17,20 @@ const re = /uint8\s+internal\s+constant\s+([A-Z_]+)\s*=\s*(\d+)\s*;/g;
 const fromSol = {};
 for (const m of sol.matchAll(re)) fromSol[m[1]] = Number(m[2]);
 
+// Guard against regex falling behind Solidity formatting: count all `internal constant`
+// declarations and fail if the number parsed does not match.
+const constantCount = (sol.match(/internal\s+constant/g) || []).length;
 const solNames = Object.keys(fromSol).sort();
 const jsNames = Object.keys(REASON).sort();
 let bad = 0;
 
 if (solNames.length === 0) {
   console.log("FAIL  parsed 0 constants out of src/Reason.sol - the regex no longer matches");
+  process.exit(1);
+}
+
+if (solNames.length !== constantCount) {
+  console.log(`FAIL  parsed ${solNames.length} constants but found ${constantCount} internal constant declarations - the regex has fallen behind the Solidity formatting`);
   process.exit(1);
 }
 

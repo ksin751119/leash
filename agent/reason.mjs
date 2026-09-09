@@ -21,11 +21,13 @@ export const REASON = Object.freeze({
   POLICY_FAILED: 12,
 });
 
-export const REASON_NAMES = Object.freeze(
-  Object.entries(REASON)
-    .sort((a, b) => a[1] - b[1])
-    .map(([name]) => name),
-);
+export function buildNames(map) {
+  const names = [];
+  for (const [name, code] of Object.entries(map)) names[code] = name;
+  return Object.freeze(names);
+}
+
+export const REASON_NAMES = buildNames(REASON);
 
 export function reasonName(code) {
   return REASON_NAMES[code] ?? "UNKNOWN";

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { REASON, reasonName } from "./reason.mjs";
+import { REASON, reasonName, buildNames } from "./reason.mjs";
 
 test("the codes match src/Reason.sol exactly", () => {
   assert.equal(REASON.OK, 0);
@@ -27,4 +27,12 @@ test("reasonName round-trips every code", () => {
 test("an unknown code does not throw", () => {
   assert.equal(reasonName(99), "UNKNOWN");
   assert.equal(reasonName(-1), "UNKNOWN");
+});
+
+test("buildNames preserves gaps in the code sequence", () => {
+  const gapped = buildNames({ A: 0, B: 1, D: 3 });
+  assert.equal(gapped[0], "A");
+  assert.equal(gapped[1], "B");
+  assert.equal(gapped[2], undefined, "gap at index 2");
+  assert.equal(gapped[3], "D");
 });
