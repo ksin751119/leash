@@ -1189,10 +1189,12 @@ export function advance(state, snapshot, intents, nowSec) {
       // eligible after succeeding would be paid twelve times a minute.
       rec.verdict = "done";
       rec.reason = null;
+      rec.reasonName = null; // cleared with `reason`, or a previous block's name survives
       rec.explain = "already paid; intents are one-shot";
     } else if (prev.inFlight) {
       rec.verdict = "in-flight";
       rec.reason = null;
+      rec.reasonName = null; // same reason as above
       rec.explain = "waiting for the receipt of the transaction just sent";
     } else {
       const d = decide(snapshot, intent, nowSec);
@@ -1336,7 +1338,10 @@ Expected: PASS, 7 tests.
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass (39 tests across four files) and `all 13 codes agree`.
+Expected: all suites pass and `all 13 codes agree`. The count is **42 tests across five
+files** — reason 3, decide 16, subgraph 9, send 7, loop 7. If your total differs, say so
+rather than assuming the plan is right: this number is the plan author's arithmetic, not a
+measurement.
 
 - [ ] **Step 7: Prove the duplicate-payment guard is load-bearing**
 
