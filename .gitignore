@@ -1,4 +1,4 @@
-# --- 機密:絕對不能進 public repo ---
+# --- Secrets: must never enter a public repo ---
 .env
 .env.*
 !.env.example
@@ -12,7 +12,7 @@ cache/
 broadcast/
 !broadcast/*/*/run-latest.json
 
-# --- Node / subgraph / 前端 ---
+# --- Node / subgraph / frontend ---
 node_modules/
 generated/
 build/
@@ -20,11 +20,11 @@ dist/
 .next/
 .pnpm-store/
 
-# --- 隔離工作區(git worktree)---
-# 未忽略的話會把整棵 worktree 提交進 repo
+# --- Isolated workspaces (git worktree) ---
+# Without this, an entire worktree gets committed into the repo
 .worktrees/
 .superpowers/
 
-# --- 雜項 ---
+# --- Misc ---
 .DS_Store
 *.log

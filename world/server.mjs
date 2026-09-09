@@ -1,11 +1,13 @@
-// Leash · Selfie Check 驗證測試伺服器
+// Leash · Selfie Check verification harness
 //
-// 只有兩個路由:靜態頁面,和把 proof 轉給 World 驗證的後端。
-// 沒有相依套件 —— node 內建的 http 和 fetch 就夠了,這支跑完就丟。
+// Two routes only: a static page, and a backend that forwards the proof to World for
+// verification. No dependencies to speak of — node's built-in http and fetch are enough,
+// and this is throwaway code.
 //
-// 為什麼驗證一定要在後端:proof 在前端「看起來成功」不代表任何事,
-// 前端可以被改。真正算數的是 World 的伺服器說 yes,而那個回應
-// 之後會變成 AttesterGate 要簽的 EIP-712 內容。
+// Why verification has to happen on the backend: a proof "looking successful" in the
+// frontend means nothing, because the frontend can be modified. What counts is World's
+// server saying yes, and that response is what will later become the EIP-712 content
+// AttesterGate signs.
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -17,32 +19,37 @@ const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00
 const ACTION = process.env.WORLD_ACTION || "expand-policy";
 const RP_ID = process.env.WORLD_RP_ID || "rp_ef35d4e2d4f1a031";
 
-// Selfie Check 產出的是 World ID **3.0** 格式的 proof(官方原文:「Currently uses
-// World ID 3.0 technology, with World ID 4.0 support not yet available」),
-// 但驗證要送去 **v4** 端點 —— 這是 2026-09-07 拿真 proof 實測出來的,不是文件寫的。
+// Selfie Check produces a World ID **3.0**-format proof (their words: "Currently uses
+// World ID 3.0 technology, with World ID 4.0 support not yet available"), but
+// verification has to go to the **v4** endpoint. That was established on 2026-09-07 with
+// a real proof; it is not what the documentation says.
 //
-// v2 (`/api/v2/verify/{app_id}`) 對這個 app **永遠**回
-// `invalid_action: Action not found.` —— 真 action、假 action、空字串全都一樣,
-// 拿真 proof 打也一樣。它看不到我們的 action,因為這個 app 是照 4.0 RP 開的。
+// v2 (`/api/v2/verify/{app_id}`) **always** answers this app with
+// `invalid_action: Action not found.` — a real action, a fake action and an empty string
+// all behave identically, and so does sending a real proof. It cannot see our action,
+// because this app was created as a 4.0 RP.
 //
-// v4 的文件說它「Verifies World ID 4.0 proofs **and legacy 3.0 proofs**」,
-// 並吃 `rp_id`。3.0 的 proof 要包成 `VerifyV4LegacyProofRequest` 送。
+// v4's documentation says it "Verifies World ID 4.0 proofs **and legacy 3.0 proofs**" and
+// takes an `rp_id`. A 3.0 proof has to be wrapped as a `VerifyV4LegacyProofRequest`.
 const VERIFY_URL = `https://developer.worldcoin.org/api/v4/verify/${RP_ID}`;
 
 /**
- * World ID 的 signal hash:keccak256(signal) 右移 8 bits。
- * 右移是因為 proof 在 SNARK 體系裡要落在 field 之內,keccak 的 256 bits 會溢出。
+ * World ID's signal hash: keccak256(signal) shifted right by 8 bits.
+ * The shift is because a proof has to land inside the field in the SNARK system, and
+ * keccak's 256 bits would overflow it.
  *
- * @dev **實測(2026-09-07):IDKit 回傳的 proof 裡沒有 `signal_hash`。**
- *      所以這不是備援路徑,是必經之路 —— 後端一定要自己算。第一次跑就是倒在這裡:
- *      `@noble/hashes` 沒裝 → 500 → World App 顯示「Verification Declined」,
- *      看起來像 World 拒絕了我們,其實是我們自己的後端掛掉。
+ * @dev **Measured on 2026-09-07: the proof IDKit returns contains no `signal_hash`.**
+ *      So this is not a fallback path, it is the only path — the backend has to compute
+ *      it. That is exactly where the first run fell over: `@noble/hashes` was not
+ *      installed → 500 → World App displayed "Verification Declined", which looks like
+ *      World rejecting you when in fact your own backend has crashed.
  *
- *      注意不能用 node 內建的 `crypto.createHash("sha3-256")` —— SHA3 和 keccak256
- *      的 padding 不同,算出來的值不一樣,World 會拒絕。
+ *      Note you cannot use node's built-in `crypto.createHash("sha3-256")` — SHA3 and
+ *      keccak256 pad differently, produce different values, and World will refuse it.
  *
- *      之後接 AttesterGate 時,signal 要換成那筆擴權的 EIP-712 payload hash ——
- *      這樣一次刷臉只能放寬那一條規則,proof 被攔截也重放不到別的地方。
+ *      When this is wired to AttesterGate, the signal becomes the EIP-712 payload hash of
+ *      the widening in question — so one face scan can only loosen that one rule, and an
+ *      intercepted proof cannot be replayed anywhere else.
  */
 function hashSignal(signal) {
   const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
@@ -82,7 +89,8 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { app_id: APP_ID, action: ACTION });
     }
 
-    // Portal 沒有任何介面顯示 credential 開通狀態,precheck 是唯一問得到的地方。
+    // The Portal has no surface anywhere that shows credential enablement status;
+    // precheck is the only place it can be asked.
     if (req.method === "GET" && req.url === "/api/precheck") {
       const r = await fetch(`https://developer.worldcoin.org/api/v1/precheck/${APP_ID}`, {
         method: "POST",
@@ -96,14 +104,14 @@ const server = createServer(async (req, res) => {
       const { proof, action, signal } = await readBody(req);
       if (!proof) return json(res, 400, { error: "missing proof" });
 
-      // 3.0 的 proof 包成 v4 的 legacy 請求。**欄位名字要改**:
+      // A 3.0 proof wrapped as a v4 legacy request. **Field names have to change**:
       //   nullifier_hash → responses[].nullifier
-      // 而 credential_type / verification_level **不能送** —— v4 不收這兩個。
+      // and credential_type / verification_level **must not be sent** — v4 rejects both.
       const payload = {
         protocol_version: "3.0",
         nonce: "0x" + randomBytes(16).toString("hex"),
         action: action ?? ACTION,
-        environment: "production", // app 是 is_staging: false
+        environment: "production", // the app is is_staging: false
         responses: [
           {
             identifier: proof.credential_type ?? proof.verification_level,
@@ -115,7 +123,7 @@ const server = createServer(async (req, res) => {
         ],
       };
 
-      console.log("\n← IDKit 回傳的完整 proof:");
+      console.log("\n← the complete proof IDKit returned:");
       console.log(JSON.stringify(proof, null, 2));
       console.log("\n→ POST", VERIFY_URL);
       console.log(JSON.stringify(payload, null, 2));
@@ -128,8 +136,8 @@ const server = createServer(async (req, res) => {
       const body = await r.json().catch(() => ({ error: "non-JSON response" }));
       console.log("← HTTP", r.status, JSON.stringify(body));
 
-      // nullifier_hash 就是「這個人」的匿名身分。之後 AttesterGate 要記住它,
-      // 才知道同一個人有沒有重複用同一次刷臉。
+      // nullifier_hash is the anonymous identity of "this person". AttesterGate will need
+      // to remember it, so it can tell whether the same person is reusing one face scan.
       return json(res, r.status, { http_status: r.status, ...body });
     }
 
@@ -140,15 +148,16 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// 只綁 loopback。這台有公網 IP,綁 *:8787 等於開一個公開代理 ——
-// 沒有秘密會外洩(precheck 本來就公開,verify 只是轉發),但沒必要。
-// SSH tunnel 打到的就是 localhost,所以完全不影響使用。
+// Bound to loopback only. This machine has a public IP, so binding *:8787 would stand up
+// an open proxy — no secret would leak (precheck is public anyway and verify only
+// forwards), but there is no reason to. An SSH tunnel lands on localhost, so this costs
+// nothing in practice.
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`\n  Leash · Selfie Check 驗證測試`);
+  console.log(`\n  Leash · Selfie Check verification harness`);
   console.log(`  http://localhost:${PORT}\n`);
   console.log(`  app_id  ${APP_ID}`);
   console.log(`  action  ${ACTION}`);
   console.log(`  rp_id   ${RP_ID}`);
   console.log(`  verify  ${VERIFY_URL}\n`);
-  console.log(`  設定檢查:curl -s localhost:${PORT}/api/precheck\n`);
+  console.log(`  config check: curl -s localhost:${PORT}/api/precheck\n`);
 });

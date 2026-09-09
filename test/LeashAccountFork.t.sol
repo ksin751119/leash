@@ -6,19 +6,20 @@ import { LeashAccount } from "../src/LeashAccount.sol";
 import { IPolicyApprovals } from "../src/IPolicyApprovals.sol";
 import { IAttester } from "../src/IAttester.sol";
 
-/// @title LeashAccountFork —— 打真的 Sepolia,不是 mock
-/// @notice 前面所有測試(`LeashAccountBinding`、`LeashAccountRules`、
-///         `LeashAccountSpend`……)的 ENS registry 全部是 mock。**這一份是唯一
-///         一份打真的 ENSv2 合約的測試** —— 只有它能證明我們對「三跳、每跳的
-///         returndata 長度、最後解出的位址真的在批准清單裡」這些假設,
-///         在真的鏈上也成立。
+/// @title LeashAccountFork — against real Sepolia, not mocks
+/// @notice Every test before this one (`LeashAccountBinding`, `LeashAccountRules`,
+///         `LeashAccountSpend`, …) uses a mock ENS registry. **This is the only suite that
+///         runs against the real ENSv2 contracts** — it alone can show that our
+///         assumptions about the three hops, each hop's returndata length, and the
+///         resolved address really being on the approval list also hold on the real chain.
 ///
-/// @dev 需要 `SEPOLIA_RPC`。沒設就用 `vm.skip` 整份跳過(CI 上不一定有網路),
-///      **skip 跟 pass 在 forge 的輸出裡是兩種不同的狀態** —— 用 skip 而不是
-///      單純 `return`,是為了不讓「沒有 RPC、什麼都沒驗證」的執行結果
-///      看起來跟「三跳真的解出來了」一樣是綠的。
+/// @dev Requires `SEPOLIA_RPC`. Without it the whole suite is skipped with `vm.skip` (CI
+///      may have no network). **In forge's output, skip and pass are two different
+///      states** — using skip rather than a bare `return` is what keeps a run that had no
+///      RPC and verified nothing from looking as green as one where the three hops really
+///      resolved.
 contract LeashAccountForkTest is Test {
-    // 09-08 16:34 UTC 那組位址,見 docs/deployments.md。
+    // The address set from 09-08 16:34 UTC; see docs/deployments.md.
     address constant ETH_REGISTRY = 0xBDC85dD5b15D7ecb354cd7cb6f2c50b4f2c4F0E2;
     address constant APPROVALS = 0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4;
     address constant ATTESTER = 0x268990a91B0727E80d38d5ED4Ab10d8889754124;
@@ -30,11 +31,12 @@ contract LeashAccountForkTest is Test {
     function setUp() public {
         string memory rpc = vm.envOr("SEPOLIA_RPC", string(""));
         if (bytes(rpc).length == 0) {
-            // `vm.skip` 而非 bare `return`:每個測試各自的
-            // `if (address(impl) == address(0)) return;` 只防得住「這個測試
-            // 自己沒做事卻回報 PASS」,防不住「整份 fork 測試沒打到鏈上,
-            // 卻在 CI 報表裡跟真的驗證過一樣是綠的」——那才是真正的風險。
-            // `vm.skip` 讓 forge 把這些測試標成 SKIPPED,跟 PASSED 分開列。
+            // `vm.skip` rather than a bare `return`: the per-test
+            // `if (address(impl) == address(0)) return;` only guards against "this test
+            // did nothing yet reported PASS". It does not guard against "the entire fork
+            // suite never touched the chain, yet looks as green in the CI report as a run
+            // that really verified" — and that is the real risk.
+            // `vm.skip` makes forge mark these SKIPPED, listed separately from PASSED.
             vm.skip(true, "SEPOLIA_RPC not set - skipping live Sepolia fork test");
             return;
         }
@@ -42,10 +44,11 @@ contract LeashAccountForkTest is Test {
         impl = new LeashAccount(ETH_REGISTRY, IPolicyApprovals(APPROVALS), IAttester(ATTESTER));
     }
 
-    /// **這條測試是整個 ENS 主張的證明。**
-    /// 三跳打真的 ENSv2,解出真的 policy 位址 —— 不是 mock registry 回傳的
-    /// 假值,是 2026-09-08 16:34 UTC 那次真的部署、真的 `setSubregistry`/
-    /// `register`/`setPolicy` 接線之後,鏈上真正存在的狀態。
+    /// **This test is the proof of the entire ENS claim.**
+    /// Three hops against the real ENSv2, resolving a real policy address — not a value
+    /// invented by a mock registry, but the state that genuinely exists on chain after the
+    /// real deployment of 2026-09-08 16:34 UTC and the real `setSubregistry` / `register` /
+    /// `setPolicy` wiring.
     function test_resolves_the_real_policy_on_sepolia() public {
         if (address(impl) == address(0)) return;
         uint256 pk = 0x8A11E7;
@@ -54,16 +57,18 @@ contract LeashAccountForkTest is Test {
         assertEq(acct.resolvePolicy(NODE, "vendors"), STANDARD_POLICY);
     }
 
-    /// 那份 policy 真的在批准清單裡 —— 不是「resolvePolicy 剛好回傳了一個
-    /// 非零位址」,是那個位址真的通過了 `PolicyApprovals.approve`。
+    /// That policy really is on the approval list — not merely "resolvePolicy happened to
+    /// return a nonzero address", but that address having genuinely passed through
+    /// `PolicyApprovals.approve`.
     function test_the_real_policy_is_approved() public view {
         if (address(impl) == address(0)) return;
         assertTrue(IPolicyApprovals(APPROVALS).isApproved(STANDARD_POLICY));
     }
 
-    /// **拿掉 ENS 就過不了。** 用 `vm.mockCall` 讓第一跳回 0 ——
-    /// 等同 `ETHRegistry.setSubregistry(leash.eth, 0x0)`(全滅拉桿,見
-    /// `docs/deployments.md`「三層撤銷」表的最重那一層)。
+    /// **Remove ENS and nothing passes.** `vm.mockCall` makes hop one return 0 —
+    /// equivalent to `ETHRegistry.setSubregistry(leash.eth, 0x0)`, the kill-everything
+    /// lever (the heaviest row of the three-revocation-layers table in
+    /// `docs/deployments.md`).
     function test_removing_the_ens_subtree_stops_resolution() public {
         if (address(impl) == address(0)) return;
         uint256 pk = 0x8A11E7;

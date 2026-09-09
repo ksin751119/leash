@@ -1,84 +1,115 @@
-# Selfie Check 驗證測試
+# Selfie Check verification harness
 
-一頁 IDKit + 一支無相依的 node 伺服器。**唯一目的是證明 Selfie Check 真的跑得完一次。**
-不是 demo 前端,demo 前端是 sprint 項目 12。
+One IDKit page plus a dependency-light node server. **Its only purpose is to prove Selfie
+Check really completes a verification end to end.** This is not the demo frontend; that is
+sprint item 12.
 
 ```bash
 node server.mjs          # → http://localhost:8787
-curl -s localhost:8787/api/precheck | jq   # 設定檢查,不消耗驗證次數
+curl -s localhost:8787/api/precheck | jq   # config check; consumes no verification
 ```
 
-`app_id` / `action` 有寫死的預設值(app_id 本來就會出現在前端,不是秘密),
-要覆寫就設 `WORLD_APP_ID` / `WORLD_ACTION`。
+`app_id` and `action` have hardcoded defaults (the app_id appears in the frontend anyway
+and is not a secret). Override them with `WORLD_APP_ID` / `WORLD_ACTION`.
 
 ---
 
-## 🔴 跑之前一定要先做的事
+## 🔴 Read this before running it
 
-Portal → `expand-policy` → **max verifications 改成 0(unlimited)**。
+**Every action has `max_verifications: 1`, and there is no way to change it.**
 
-預設是 `1` —— 每個人一輩子只能驗一次。**第一次會成功,所以當下看不出問題**;
-等你錄影片刷一次、live demo 再刷一次,第二次直接失敗,nullifier 已經燒掉,不能重置。
+The default is `1` — each person can verify once, ever. **The first attempt succeeds, so
+nothing looks wrong at the time.** Scan once to record a video and again for a live demo,
+and the second one simply fails: the nullifier is burned and cannot be reset.
 
-現在只要跑一次這個測試,那唯一的一次就沒了。
+Running this harness once uses up that single verification.
+
+The Portal has **no setting for this** — an earlier version of this file told you to change
+it to 0 (unlimited), and that instruction was wrong; no such control exists anywhere in the
+product. What does work is that `max_verifications` binds to the **action**, not to the
+person, so **creating a fresh action resets it**. Do that before recording a video or
+running a live demo.
+
+`precheck`'s `can_user_verify` cannot answer "has this person already used theirs?" — it is
+an unauthenticated endpoint and does not know who is asking.
 
 ---
 
-## ✅ 實測走通了(2026-09-07)
+## ✅ Verified end to end (2026-09-07)
 
 ```
-刷臉 → World App 產出 proof → 後端 POST v4 → HTTP 200 "Proof verified successfully"
+face scan → World App produces a proof → backend POSTs v4 → HTTP 200
+"Proof verified successfully"
 ```
 
-**四個官方來源對同一個 app 講四種話,只有實測分得出誰對:**
+**Four official sources say four different things about the same app, and only measurement
+can tell which is right:**
 
-| 來源 | 說什麼 | 對嗎 |
+| Source | What it says | Correct? |
 |---|---|---|
-| 官方文件 | Selfie Check 只跑 3.0,「4.0 support not yet available」 | 半對 —— **proof 是 3.0 格式,但驗證要送 v4** |
-| `precheck` (v1) | `enable_face_check: true` | ✅ 對 |
-| v2 verify | `invalid_action: Action not found.` | ❌ **拿真 proof 打也一樣**。這個 app 是 4.0 RP,v2 看不到它的 action |
-| v4 verify | 「Verifies World ID 4.0 proofs **and legacy 3.0 proofs**」 | ✅ **這條才對** |
+| The documentation | Selfie Check runs 3.0 only, "4.0 support not yet available" | Half right — **the proof is 3.0-format, but verification goes to v4** |
+| `precheck` (v1) | `enable_face_check: true` | ✅ correct |
+| v2 verify | `invalid_action: Action not found.` | ❌ **a real proof gets the same answer**. This app is a 4.0 RP, and v2 cannot see its actions |
+| v4 verify | "Verifies World ID 4.0 proofs **and legacy 3.0 proofs**" | ✅ this is the one that holds |
 
-### 正確的做法
+### What actually works
 
-`POST https://developer.worldcoin.org/api/v4/verify/{rp_id}`,包成 `VerifyV4LegacyProofRequest`。
-**IDKit 回傳的欄位不能照原樣送**,三處要動:
+`POST https://developer.worldcoin.org/api/v4/verify/{rp_id}`, wrapped as a
+`VerifyV4LegacyProofRequest`. **The fields IDKit returns cannot be forwarded as they are**
+— three changes are required:
 
-| 動作 | 欄位 |
+| Do this | To these fields |
 |---|---|
-| 改名 | `nullifier_hash` → `responses[].nullifier` |
-| **拿掉** | `credential_type`、`verification_level`(v4 不收) |
-| 補上 | `protocol_version: "3.0"`、`nonce`、`environment` |
+| Rename | `nullifier_hash` → `responses[].nullifier` |
+| **Remove** | `credential_type`, `verification_level` (v4 rejects both) |
+| Add | `protocol_version: "3.0"`, `nonce`, `environment` |
 
-> 諷刺的是 v4 文件寫「Forward the complete IDKit result **without remapping response
-> identifiers**」—— 但實際上非改名不可,`nullifier_hash` 直接送會被拒。
+> The irony is that v4's own documentation says "Forward the complete IDKit result
+> **without remapping response identifiers**" — while in practice the rename is mandatory:
+> send `nullifier_hash` through untouched and it is refused.
 
-### 另外兩個實測結論
+The signposting only points one way, too: v4 tells you when you should have used v2, while
+v2 never tells you to try v4.
 
-**IDKit 不會送 `signal_hash`,後端一定要自己算。** `keccak256(signal) >> 8`
-(右移是為了讓值落在 SNARK 的 field 內)。
-**不能用 node 內建的 `crypto.createHash("sha3-256")`** —— SHA3 和 keccak256 的
-padding 不同,算出來的值不一樣,World 會拒絕。驗算基準:
-`signal_hash("")` 必須等於 `0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`。
+### Two more measured conclusions
 
-**nullifier 是決定性的。** 同一個人 + 同一個 action = 同一個 `nullifier_hash`,
-跨次數完全相同(實測兩次都是 `0x04a2cce3…`)。這就是 `AttesterGate` 要記的匿名身分。
+**IDKit does not send `signal_hash`; the backend has to compute it.**
+`keccak256(signal) >> 8` (the shift keeps the value inside the SNARK's field).
+**Do not use node's built-in `crypto.createHash("sha3-256")`** — SHA3 and keccak256 pad
+differently, produce different values, and World refuses the result. A baseline to check
+against: `signal_hash("")` must equal
+`0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`.
 
-### ⚠️ proof 裡看不出這是 Selfie Check
+**The nullifier is deterministic.** The same person plus the same action gives the same
+`nullifier_hash`, identical across attempts (measured twice, `0x04a2cce3…` both times).
+That is the anonymous identity `AttesterGate` records.
 
-`credential_type` 和 `verification_level` 都是 `"device"` —— **沒有 `selfie`,沒有 `face`。**
+**A 500 from this backend surfaces in World App as "Verification Declined."** It looks like
+World rejecting you; it is your own server crashing. The phone can show success while the
+browser shows failure. Read your own stack trace first.
 
-也就是說:「這是一張真人的臉做的」這個保證**不在 proof 裡**,而在 app 設定的
-`enable_face_check: true` 上。後端拿到 proof **分不出**「剛做完臉部檢查」和
-「舊的、已被 deprecate 的裝置憑證」。
+### ⚠️ The proof does not reveal that this was Selfie Check
 
-對 Leash 來說這一點必須誠實講:我們的論點是「擴權綁在真人身上」,
-而那個綁定的強度來自 app 設定,不是密碼學上的憑證型別。
+Both `credential_type` and `verification_level` come back as `"device"` — **there is no
+`selfie` and no `face`.**
+
+Which means the guarantee "a real human's face produced this" is **not in the proof**. It
+lives in the app's `enable_face_check: true` setting. Handed a proof, the backend **cannot
+distinguish** "a face check just completed" from "an old, deprecated device credential".
+
+For Leash this has to be said plainly: our claim is that privilege expansion is bound to a
+real human, and the strength of that binding comes from an app setting, not from a
+cryptographic credential type.
 
 ---
 
-## 之後接 `AttesterGate` 時要改的一件事
+## The one thing to change when wiring `AttesterGate`
 
-現在 `signal` 是一個測試字串。正式接的時候要換成**那筆擴權的 EIP-712 payload hash** ——
-這樣一次刷臉只能放寬那一條規則,proof 被攔截也重放不到別的地方。
-回應裡的 `nullifier_hash` 是那個人的匿名身分,`AttesterGate` 要記住它才擋得掉重複使用。
+Right now `signal` is a test string. In production it becomes **the EIP-712 payload hash of
+the widening in question** — so one face scan can only loosen that one rule, and an
+intercepted proof cannot be replayed anywhere else. The `nullifier_hash` in the response is
+that person's anonymous identity, and `AttesterGate` has to remember it to block reuse.
+
+The full account, with every suggested fix, is in
+[`../docs/world-feedback.md`](../docs/world-feedback.md) — the feedback document the prize
+asks for, and 25% of the World track's score.

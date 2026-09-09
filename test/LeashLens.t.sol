@@ -20,14 +20,14 @@ contract LeashLensTest is Test {
         impl = new Dummy();
     }
 
-    /// 沒委派的 EOA:code 是空的。
+    /// An undelegated EOA: its code is empty.
     function test_plain_eoa_is_not_leashed() public view {
         (bool leashed, address to) = lens.delegateOf(alice);
         assertFalse(leashed);
         assertEq(to, address(0));
     }
 
-    /// 委派之後 code 是 23 bytes 的 `0xef0100 || address`。
+    /// After delegation the code is the 23 bytes `0xef0100 || address`.
     function test_delegated_eoa_reports_its_impl() public {
         vm.signAndAttachDelegation(address(impl), pk);
         (bool leashed, address to) = lens.delegateOf(alice);
@@ -35,22 +35,23 @@ contract LeashLensTest is Test {
         assertEq(to, address(impl));
     }
 
-    /// 一般合約不是 7702 委派 —— code 長度不是 23。
+    /// An ordinary contract is not a 7702 delegation — its code length is not 23.
     function test_a_normal_contract_is_not_a_delegation() public view {
         (bool leashed, address to) = lens.delegateOf(address(impl));
         assertFalse(leashed, "a contract is not a delegation");
         assertEq(to, address(0));
     }
 
-    /// **EIP-7702 的委派變更不發任何 log**,所以 subgraph 索引不到「拆掉韁繩」——
-    /// 這個 lens 就是那件事唯一的觀測手段(前端進頁面查一次,監控腳本定期查)。
-    /// 這條測試證明它偵測得到委派被移除。
+    /// **An EIP-7702 delegation change emits no log**, so a subgraph cannot index
+    /// "the leash came off" — this lens is the only way to observe it (the frontend
+    /// checks once on load, a monitoring script polls). This test proves it detects a
+    /// delegation being removed.
     function test_detects_removal_of_the_delegation() public {
         vm.signAndAttachDelegation(address(impl), pk);
         (bool leashed,) = lens.delegateOf(alice);
         assertTrue(leashed);
 
-        vm.signAndAttachDelegation(address(0), pk); // 撤銷委派
+        vm.signAndAttachDelegation(address(0), pk); // revoke the delegation
         (bool after_, address to) = lens.delegateOf(alice);
         assertFalse(after_, "leash is gone");
         assertEq(to, address(0));

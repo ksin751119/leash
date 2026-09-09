@@ -35,8 +35,9 @@ contract YesApprovals is IPolicyApprovals {
     }
 }
 
-/// @dev 跟 `LeashAccountRules.t.sol` 的 `NoApprovals` 撞名 —— Foundry 把整個
-///      test/ 目錄當同一個編譯單元,頂層合約名字要全域唯一,所以加個 2。
+/// @dev Name-clashes with `NoApprovals` in `LeashAccountRules.t.sol` — Foundry treats the
+///      whole test/ directory as one compilation unit, so top-level contract names must be
+///      globally unique; hence the 2.
 contract NoApprovals2 is IPolicyApprovals {
     function isApproved(address) external pure returns (bool) {
         return false;
@@ -71,11 +72,12 @@ contract LeashAccountSpendTest is Test {
         leashRegistry.set(address(0), address(resolver));
         resolver.set(POLICY);
 
-        // POLICY(0xB01C) 是任務 5 湊出來、從沒被真的呼叫過的死地址 —— `spend()`
-        // 真的會 `call` 它,codeless 位址的呼叫會「成功」但回傳空 returndata,
-        // 每一條快樂路徑都會被誤判成 12 POLICY_FAILED。用 `vm.etch` 把
-        // `StandardPolicy` 的 runtime bytecode 貼到這個固定位址上 ——
-        // resolver 完全不用改,任務 5 那 10 條「只比較位址」的測試也不受影響。
+        // POLICY (0xB01C) was invented in task 5 as a dead address that was never actually
+        // called. `spend()` really does `call` it, and a call to a codeless address
+        // "succeeds" while returning empty returndata, so every happy path would be
+        // misread as 12 POLICY_FAILED. `vm.etch` pastes `StandardPolicy`'s runtime bytecode
+        // onto that fixed address — the resolver needs no change at all, and task 5's ten
+        // address-comparison-only tests are unaffected.
         vm.etch(POLICY, address(new StandardPolicy()).code);
 
         impl = new LeashAccount(address(ethRegistry), new YesApprovals(), new MockAttester());
@@ -87,7 +89,7 @@ contract LeashAccountSpendTest is Test {
         token.mint(wallet, 1_000_000);
     }
 
-    /// 一份完全開放的規則:允許、三個上限都是 0(=不限)、全天時段。
+    /// A fully open rule: allowed, all three caps 0 (= unlimited), window open all day.
     function _openRule() internal pure returns (LeashStorage.TokenRule memory) {
         return LeashStorage.TokenRule({
             allowed: true,
@@ -100,8 +102,9 @@ contract LeashAccountSpendTest is Test {
         });
     }
 
-    /// 把 AGENT 綁到 NODE、對 `token` 開一條全開的規則、把 PAYEE 加進白名單。
-    /// 大多數 `spend()` 測試都只是想要一條「一定會過」的快樂路徑當起點。
+    /// Binds AGENT to NODE, opens a fully permissive rule for `token`, and allow-lists
+    /// PAYEE. Most `spend()` tests just want a happy path that is certain to pass as their
+    /// starting point.
     function _bindAndAllow() internal {
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -111,34 +114,36 @@ contract LeashAccountSpendTest is Test {
     }
 
     // ============================================================
-    // 任務 5 遺留:ENS 三跳解析(不動)
+    // Carried over from task 5: the three-hop ENS resolution (unchanged)
     // ============================================================
 
-    /// 快樂路徑:三跳都通,解出 policy 位址。
+    /// The happy path: all three hops connect and a policy address comes out.
     function test_resolves_the_policy_through_three_hops() public view {
         assertEq(acct.resolvePolicy(NODE, LABEL), POLICY);
     }
 
-    /// 第一跳回 0 = `leash.eth` 的子樹被收回 = **全部 agent 同時停機**。
+    /// Hop one returning 0 = the `leash.eth` subtree was taken back = **every agent halts
+    /// at once**.
     function test_hop1_zero_is_the_kill_switch() public {
         ethRegistry.set(address(0), address(0));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// 第二跳回 0 = 子名被撤銷或過期 = **這一個 agent 死**。
+    /// Hop two returning 0 = the subname was revoked or expired = **that one agent dies**.
     function test_hop2_zero_kills_only_this_agent() public {
         leashRegistry.set(address(0), address(0));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// 第三跳回 0 = policy 指標被清空 = 換規則那一層。
+    /// Hop three returning 0 = the policy pointer was cleared = the swap-the-rules layer.
     function test_hop3_zero_means_no_policy() public {
         resolver.set(address(0));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// 任何一跳 revert 都必須 **fail-closed**,而不是讓整筆交易掛掉。
-    /// ENS 的合約還在審計期 —— 我們不能因為別人的合約 revert 就讓帳戶卡死。
+    /// A revert on any hop must **fail closed** rather than take the whole transaction
+    /// down. ENS's contracts are still in their audit window — another contract reverting
+    /// must not wedge the account.
     function test_a_reverting_hop_fails_closed() public {
         ethRegistry.setRevert(true);
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
@@ -152,59 +157,63 @@ contract LeashAccountSpendTest is Test {
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// 🔴 **回傳長度不對也要 fail-closed。**
+    /// 🔴 **A wrong return length must fail closed too.**
     ///
-    /// 而且要注意每一跳的預期長度**不一樣**:hop1/hop2 是 32(address),
-    /// hop3 是 **96**(`bytes` = offset 32 + length 32 + 內層 32)。
-    /// 對 hop3 檢查 `== 32` 的話快樂路徑永遠不成立,而回報的理由碼會是
-    /// 「ENS 讀不到 policy」——完全誤導除錯方向。
+    /// And note that each hop's expected length is **different**: hop1/hop2 are 32 (an
+    /// address), hop3 is **96** (`bytes` = offset 32 + length 32 + inner 32).
+    /// Check hop3 for `== 32` and the happy path never succeeds, while the reported reason
+    /// says "ENS has no policy pointer" — sending you to debug entirely the wrong thing.
     function test_a_malformed_return_length_fails_closed() public {
         leashRegistry.setPad(1);
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// `_dnsEncode` 用寫死的 `leash.eth` 尾段。這條測試確認組出來的值
-    /// 與實測值一致 —— 錯了 resolver 收到的名字就是壞的。
+    /// `_dnsEncode` uses a hardcoded `leash.eth` suffix. This test confirms what it
+    /// assembles matches the measured value — get it wrong and the resolver receives a
+    /// broken name.
     function test_dns_encoding_matches_the_measured_value() public {
-        // 透過 resolvePolicy 間接驗證:MockResolver 不看 name,所以改用
-        // 一個會檢查 name 的 resolver
+        // Verified indirectly through resolvePolicy: MockResolver ignores `name`, so this
+        // swaps in a resolver that does check it
         NameCheckingResolver nc =
             new NameCheckingResolver(hex"0776656e646f7273056c656173680365746800", POLICY);
         leashRegistry.set(address(0), address(nc));
         assertEq(acct.resolvePolicy(NODE, LABEL), POLICY, "dns name matched exactly");
     }
 
-    /// resolve() 回傳長度剛好是 96,但 header 的 offset 是假的(0x40,不是
-    /// 合法的 0x20)。**只檢查總長度不夠** —— 長度對但結構是假的資料一樣要
-    /// fail-closed,不能讓 `abi.decode` 在這種輸入上 revert、壞了
-    /// `resolvePolicy` 絕不 revert 的保證。
+    /// resolve() returns exactly 96 bytes with a forged offset in the header (0x40 rather
+    /// than the legal 0x20). **Checking the total length is not enough** — data with the
+    /// right length and a forged structure must fail closed too, and must not let
+    /// `abi.decode` revert on such input and break `resolvePolicy`'s never-reverts
+    /// guarantee.
     function test_a_malformed_header_fails_closed() public {
         MalformedHeaderResolver bad = new MalformedHeaderResolver(POLICY);
         leashRegistry.set(address(0), address(bad));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// header 合法(offset/length 都是 0x20),但 payload 的高 12 bytes 不是
-    /// 0。`abi.decode(bytes, (address))` 會擋住這個並 revert,但直接用
-    /// assembly 截斷成 uint160 的話會安靜地放行一個看起來合法的地址 ——
-    /// 兩者都不安全,必須自己驗證 padding 乾不乾淨。
+    /// A legal header (both offset and length 0x20) whose payload has nonzero high 12
+    /// bytes. `abi.decode(bytes, (address))` catches this and reverts, while truncating to
+    /// uint160 in assembly silently lets through an address that looks legitimate — neither
+    /// is safe, so the padding must be validated here.
     function test_dirty_address_padding_on_hop3_fails_closed() public {
         DirtyPaddingResolver dirty = new DirtyPaddingResolver(POLICY);
         leashRegistry.set(address(0), address(dirty));
         assertEq(acct.resolvePolicy(NODE, LABEL), address(0));
     }
 
-    /// hop1/hop2 共用 `_staticAddress`,跟 hop3 一樣不能對外部回傳資料呼叫
-    /// `abi.decode`——同一個漏洞類型,同一份函式,補上對應的測試:回傳長度
-    /// 合法(32 bytes),但高 12 bytes 是髒的。
+    /// Hops 1 and 2 share `_staticAddress`, which like hop 3 must never pass externally
+    /// returned data to `abi.decode` — the same class of hole in the same function, so it
+    /// gets the matching test: a legal return length (32 bytes) with dirty high 12 bytes.
     ///
-    /// **低 160 bits 刻意填一個真的能用的 resolver(`resolver`,已經設定好會
-    /// 回傳 `POLICY`)**,而不是隨便一個死地址 —— 如果只填死地址,少了 padding
-    /// 檢查時 hop3 一樣會因為打到沒有程式碼的位址而自然回傳 `address(0)`,
-    /// 測試就測不出 hop2 的 padding 檢查有沒有被拿掉(這個坑已經實測踩過一次:
-    /// 用 0xDEAD 當低位時,移除檢查後測試依然通過,因為錯誤湊巧被 hop3 擋住)。
-    /// 換成真正可用的 resolver,拿掉檢查就會讓整條路徑「成功」解出 `POLICY`,
-    /// 才是這條測試真正要抓的錯。
+    /// **The low 160 bits deliberately hold a genuinely usable resolver (`resolver`,
+    /// already configured to return `POLICY`)** rather than an arbitrary dead address. With
+    /// a dead address, removing the padding check would still make hop 3 return
+    /// `address(0)` naturally — because it would be calling an address with no code — and
+    /// the test could not detect hop 2's padding check being removed. (This trap was walked
+    /// into once already: with 0xDEAD in the low bits, the test still passed after removing
+    /// the check, because the error happened to be caught by hop 3.) With a working
+    /// resolver there, removing the check makes the whole path "succeed" and resolve
+    /// `POLICY` — which is the failure this test actually needs to catch.
     function test_dirty_address_padding_on_hop2_fails_closed() public {
         DirtyAddressRegistry dirty = new DirtyAddressRegistry(address(resolver));
         ethRegistry.set(address(dirty), address(0));
@@ -212,20 +221,21 @@ contract LeashAccountSpendTest is Test {
     }
 
     // ============================================================
-    // 任務 6:spend() —— 把四道關卡串起來
+    // Task 6: spend() — stringing the four gates together
     // ============================================================
 
-    // --- 🔴 C3 迴歸:假成功 ---
+    // --- 🔴 C3 regression: fake success ---
 
-    /// **`token` 和 `payee` 由 agent 指定,可以是 `address(this)`。**
+    /// **`token` and `payee` are chosen by the agent, and could be `address(this)`.**
     ///
-    /// 第 11 步 `token.transfer(...)` 送出去時 `msg.sender == address(this)` ——
-    /// 那正是 `bindAgent` / `tightenRule` / `removePayee` 接受的憑證。
-    /// 而如果用 SafeERC20 那種寬鬆的回傳檢查:
-    ///   - `token == address(this)` → 打到自己的 fallback
-    ///   - `token == address(0)` → 對空位址的呼叫永遠成功、回傳空 returndata
-    /// 兩種情況都是 **`spent` 增加、`SpendExecuted` 發出,而錢一分都沒動。**
-    /// subgraph 會記下一筆不存在的付款。
+    /// When step 11's `token.transfer(...)` goes out, `msg.sender == address(this)` — which
+    /// is exactly the authority `bindAgent` / `tightenRule` / `removePayee` accept.
+    /// And with SafeERC20's permissive return check:
+    ///   - `token == address(this)` → hits our own fallback
+    ///   - `token == address(0)` → a call to an empty address always succeeds, returning
+    ///     empty returndata
+    /// Both cases mean **`spent` increases and `SpendExecuted` is emitted while not a cent
+    /// moved.** The subgraph would record a payment that never happened.
     function test_rejects_targets_that_point_back_at_the_account() public {
         _bindAndAllow();
         vm.startPrank(AGENT);
@@ -245,7 +255,7 @@ contract LeashAccountSpendTest is Test {
         vm.stopPrank();
     }
 
-    /// 沒有 code 的位址不可能是代幣。
+    /// An address with no code cannot be a token.
     function test_rejects_a_token_with_no_code() public {
         _bindAndAllow();
         vm.expectRevert(LeashAccount.BadTarget.selector);
@@ -253,9 +263,10 @@ contract LeashAccountSpendTest is Test {
         acct.spend(address(0xC0DE1E55), PAYEE, 1);
     }
 
-    /// **回傳值檢查要嚴格:恰好 32 bytes 且解出來是 `true`。**
-    /// 不用 SafeERC20 的寬鬆版 —— 我們只需要支援自己 demo 用的代幣,
-    /// 而寬鬆換來的相容性,在這裡的代價是一個假的成功。
+    /// **The return check is strict: exactly 32 bytes that decode to `true`.**
+    /// Not SafeERC20's permissive variant — we only need to support the tokens our own demo
+    /// uses, and the compatibility permissiveness buys is paid for here with a fake
+    /// success.
     function test_rejects_tokens_that_do_not_return_true() public {
         _bindAndAllow();
         FalseReturnToken f = new FalseReturnToken();
@@ -277,11 +288,11 @@ contract LeashAccountSpendTest is Test {
         acct.spend(address(n), PAYEE, 1);
     }
 
-    /// review 找到的 Minor:回傳長度剛好 32 bytes,但不是 0/1(例如 `2`)
-    /// 的代幣,原本會讓 `abi.decode(ret, (bool))` 直接炸出裸的 `Panic`,
-    /// 蓋掉真正的失敗理由。**這裡斷言的是 `TransferFailed()`,不是任何
-    /// panic** —— `vm.expectRevert` 指定精確的 selector,如果實際 revert
-    /// 是 `Panic(uint256)` 而不是這個自訂錯誤,這條測試會失敗。
+    /// A Minor found in review: a token returning exactly 32 bytes that are not 0/1 (say
+    /// `2`) used to make `abi.decode(ret, (bool))` throw a bare `Panic`, burying the real
+    /// reason for the failure. **What is asserted here is `TransferFailed()`, not any
+    /// panic** — `vm.expectRevert` names the exact selector, so if the actual revert were
+    /// `Panic(uint256)` rather than this custom error, the test would fail.
     function test_a_garbage_but_32_byte_return_fails_cleanly_not_a_panic() public {
         _bindAndAllow();
         GarbageReturnToken g = new GarbageReturnToken();
@@ -303,44 +314,51 @@ contract LeashAccountSpendTest is Test {
         acct.spend(address(token), PAYEE, 0);
     }
 
-    // --- 🔴 重入 ---
+    // --- 🔴 reentrancy ---
 
-    /// 重入鎖是第一道防線,**先記帳是第二道** —— 兩道都失效才會出事。
+    /// The reentrancy lock is the first line of defence and **writing the ledger first is
+    /// the second** — it takes both failing to cause harm.
     ///
-    /// **重入呼叫走的是一條除了重入鎖之外完全合法的路徑**:`address(rt)`
-    /// 自己也被綁成 agent,`payee` 用真正被允許的 `PAYEE`(不是 `msg.sender`)。
-    /// 這樣安排是刻意的 —— 如果重入那筆會被 `NotBoundAgent` 或 `BadTarget`
-    /// 這些跟重入無關的護欄擋下來,測試就算重入鎖被整個拿掉也一樣會綠燈,
-    /// mutation check 抓不到(這個坑已經實測踩過一次)。
+    /// **The reentrant call takes a path that is entirely legitimate apart from the lock
+    /// itself**: `address(rt)` is bound as an agent too, and `payee` is the genuinely
+    /// allowed `PAYEE` (not `msg.sender`). That arrangement is deliberate — if the
+    /// reentrant call were blocked by `NotBoundAgent` or `BadTarget`, guards that have
+    /// nothing to do with reentrancy, the test would stay green even with the lock removed
+    /// entirely and a mutation check could not catch it. (This trap was walked into once
+    /// already.)
     function test_reentrancy_is_blocked_and_the_ledger_is_already_updated() public {
         ReenteringToken rt = new ReenteringToken();
         vm.startPrank(wallet);
         acct.setRule(NODE, address(rt), _openRule(), ++nonce, ATT);
         acct.allowPayee(NODE, address(rt), PAYEE, ++nonce, ATT);
         acct.bindAgent(AGENT, NODE, LABEL);
-        acct.bindAgent(address(rt), NODE, LABEL); // 重入呼叫的 msg.sender 就是 rt 自己
+        acct.bindAgent(address(rt), NODE, LABEL); // the reentrant call's msg.sender is rt itself
         vm.stopPrank();
 
         rt.arm(wallet, PAYEE, NODE);
         vm.prank(AGENT);
         acct.spend(address(rt), PAYEE, 100);
 
-        // 只記了一次 —— 內層的 spend 被鎖擋掉了。少了鎖的話,重入那筆會
-        // 完整跑完(它自己合法),把這裡變成 101。
+        // Booked once only — the inner spend was blocked by the lock. Without the lock the
+        // reentrant call would run to completion (it is legitimate on its own) and make
+        // this 101.
         assertEq(acct.spentInCurrentPeriod(NODE, address(rt)), 100);
 
-        // 第二道防線:「先記帳、後轉帳」。重入鎖擋得住內層呼叫,不代表順序
-        // 對——如果帳戶把 `$.spent` 的寫入搬到轉帳之後,鎖依然生效、上面
-        // 那個斷言依然是 100(外層呼叫結束後兩種順序看起來一樣),唯一能
-        // 分辨的時間點是轉帳「當下」。`observedSpent` 就是 `rt.transfer`
-        // 被呼叫的那一刻反查到的值:順序對的話是 100(已入帳),順序被換掉
-        // 的話是 0。
+        // The second line of defence: ledger before transfer. The lock stopping the inner
+        // call does not prove the ordering is right — move the `$.spent` write after the
+        // transfer and the lock still works and the assertion above is still 100 (once the
+        // outer call returns, both orderings look the same). The only moment that can tell
+        // them apart is *during* the transfer. `observedSpent` is the value read back at
+        // the instant `rt.transfer` was called: 100 with the right ordering (already
+        // booked), 0 with the ordering swapped.
         assertEq(rt.observedSpent(), 100, "spend must be recorded before the external transfer");
     }
 
-    // --- 🔴 快樂路徑:前面全部測的是「被擋」或「壞代幣」,補一條「真的成功」 ---
+    // --- 🔴 the happy path: everything above tests blocks or broken tokens, so here is
+    //     one that really succeeds ---
 
-    /// OK 路徑釘住:錢真的動、`SpendExecuted` 帶對的欄位。
+    /// Pins the OK path: the money really moves and `SpendExecuted` carries the right
+    /// fields.
     function test_happy_path_executes_and_emits_spend_executed() public {
         _bindAndAllow();
         uint256 beforeWallet = token.balanceOf(wallet);
@@ -359,7 +377,7 @@ contract LeashAccountSpendTest is Test {
         assertEq(acct.spentInCurrentPeriod(NODE, address(token)), 1);
     }
 
-    // --- 🔴 理由碼全覆蓋:每一個都要「有事件」且「餘額沒變」 ---
+    // --- 🔴 full reason-code coverage: each one needs an event AND an unchanged balance ---
 
     function test_blocked_paths_emit_and_do_not_move_money() public {
         _bindAndAllow();
@@ -389,7 +407,7 @@ contract LeashAccountSpendTest is Test {
         assertEq(token.balanceOf(wallet), before, "no policy: no movement");
         resolver.set(POLICY);
 
-        // 2 AGENT_REVOKED —— **不 revert**,要留可索引的紀錄
+        // 2 AGENT_REVOKED — **does not revert**; it must leave an indexable record
         vm.prank(wallet);
         acct.revokeAgent(AGENT);
         vm.expectEmit(true, true, true, true);
@@ -401,10 +419,11 @@ contract LeashAccountSpendTest is Test {
         assertEq(token.balanceOf(wallet), before, "revoked: no movement");
     }
 
-    /// **2a 沒綁定 → revert;2b 已撤銷 → 不 revert。**
-    /// 凍結文件把 revert 的例外限定在「caller **根本不是**被綁定的 agent」,
-    /// 而被撤銷的 agent 是「已綁定」的 —— 撤銷是行政動作,那個 agent
-    /// 應該查得到自己為什麼不能動了(revert 的 log 會被丟棄)。
+    /// **2a not bound → revert; 2b revoked → no revert.**
+    /// The frozen document confines the revert exception to "the caller is **not** a bound
+    /// agent at all", and a revoked agent *is* bound — revocation is an administrative act,
+    /// and that agent should be able to look up why it is stuck (logs from a reverted call
+    /// are discarded).
     function test_unbound_reverts_but_revoked_does_not() public {
         _bindAndAllow();
 
@@ -415,13 +434,14 @@ contract LeashAccountSpendTest is Test {
         vm.prank(wallet);
         acct.revokeAgent(AGENT);
         vm.prank(AGENT);
-        acct.spend(address(token), PAYEE, 1); // 不 revert
+        acct.spend(address(token), PAYEE, 1); // does not revert
     }
 
-    /// 🔴 M8 迴歸:`PolicyResolved.approved` 要送**真值**。
-    /// 初版把事件排在批准檢查之後,那時它只可能是 `true` —— 凍結 schema 裡
-    /// 那個欄位就永遠是死的。而「指標指到一份沒被批准的 policy」正是
-    /// ADMIN 金鑰被偷時唯一的鏈上訊號。
+    /// 🔴 M8 regression: `PolicyResolved.approved` must carry the **real value**.
+    /// The first version emitted the event after the approval check, where it could only
+    /// ever be `true` — leaving that field in the frozen schema permanently dead. And "the
+    /// pointer aims at an unapproved policy" is exactly the one onchain signal that the
+    /// ADMIN key has been stolen.
     function test_policy_resolved_carries_the_real_approval_flag() public {
         _bindAndAllow();
         LeashAccount implNo =
@@ -431,9 +451,10 @@ contract LeashAccountSpendTest is Test {
 
         vm.expectEmit(true, true, false, true);
         emit LeashAccount.PolicyResolved(NODE, POLICY, false);
-        // 跟其他理由碼測試一樣:不只看 PolicyResolved,連 SpendBlocked
-        // 本身有沒有發、理由碼對不對都要斷言 —— 光看 PolicyResolved.approved
-        // 是 false,不代表帳戶真的把這筆擋下來記成 POLICY_NOT_APPROVED。
+        // As with the other reason-code tests: not just PolicyResolved, but whether
+        // SpendBlocked itself fired and with the right reason. `PolicyResolved.approved`
+        // being false does not by itself mean the account really blocked this and recorded
+        // it as POLICY_NOT_APPROVED.
         vm.expectEmit(true, true, true, true);
         emit LeashAccount.SpendBlocked(
             NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_NOT_APPROVED, POLICY, 0, 0
@@ -444,7 +465,7 @@ contract LeashAccountSpendTest is Test {
         assertEq(token.balanceOf(wallet), before, "not approved: no movement");
     }
 
-    /// 12 POLICY_FAILED 的三種觸發方式。
+    /// The three ways to trigger 12 POLICY_FAILED.
     function test_policy_failure_modes_all_fail_closed() public {
         _bindAndAllow();
         uint256 before = token.balanceOf(wallet);
@@ -469,7 +490,7 @@ contract LeashAccountSpendTest is Test {
         acct.spend(address(token), PAYEE, 1);
         assertEq(token.balanceOf(wallet), before, "short return: no movement");
 
-        resolver.set(address(0xDEAD)); // 沒有 code
+        resolver.set(address(0xDEAD)); // no code
         vm.expectEmit(true, true, true, true);
         emit LeashAccount.SpendBlocked(
             NODE, AGENT, PAYEE, address(token), 1, Reason.POLICY_FAILED, address(0xDEAD), 0, 0
@@ -479,10 +500,11 @@ contract LeashAccountSpendTest is Test {
         assertEq(token.balanceOf(wallet), before, "no code: no movement");
     }
 
-    /// 🔴 `_askPolicy` 的 `uint8` clamp:policy 回傳 256,低位元組截斷後
-    /// 剛好等於 `Reason.OK`(0)。少了 `if (raw > type(uint8).max) return
-    /// POLICY_FAILED` 這一行,這筆會被誤判成放行,錢真的會轉出去——
-    /// 整條分支唯一的 fail-open 路徑。
+    /// 🔴 The `uint8` clamp in `_askPolicy`: a policy returns 256, whose low byte is
+    /// exactly `Reason.OK` (0). Without the
+    /// `if (raw > type(uint8).max) return POLICY_FAILED` line this would be read as an
+    /// allow and the money really would move — the one fail-*open* path in the whole
+    /// branch.
     function test_policy_return_over_uint8_max_is_clamped_to_policy_failed() public {
         _bindAndAllow();
         OverflowingPolicy overflowing = new OverflowingPolicy();
@@ -502,15 +524,16 @@ contract LeashAccountSpendTest is Test {
         );
     }
 
-    // --- 🔴 兩個 gas 上限:光「有沒有被呼叫到」測不出上限有沒有生效 ---
+    // --- 🔴 the two gas caps: "was it reached at all" cannot show whether a cap took
+    //     effect ---
     //
-    //     EIP-150 的 63/64 規則會留給帳戶足夠的 gas 去發 SpendBlocked,
-    //     不管呼叫有沒有真的被 `{gas: ...}` 限住 —— 所以斷言必須量實際
-    //     燒掉的 gas,不能只看「有沒有被擋」。
+    //     EIP-150's 63/64 rule leaves the account enough gas to emit SpendBlocked whether
+    //     or not the call was really constrained by `{gas: ...}` — so the assertion has to
+    //     measure the gas actually burned, not merely that it was blocked.
 
-    /// `POLICY_GAS` 上限:`GasBurningPolicy` 會一路燒到上限,帳戶消耗的 gas
-    /// 必須被夾在一個遠低於「無上限燒到底」、又舒服地高於誠實路徑實際花費
-    /// 的區間裡。
+    /// The `POLICY_GAS` cap: `GasBurningPolicy` burns right up to it, so the gas the
+    /// account consumes must land in a band far below "burn to the end with no cap" and
+    /// comfortably above what the honest path actually costs.
     function test_policy_gas_is_capped() public {
         _bindAndAllow();
         GasBurningPolicy gasBurner = new GasBurningPolicy();
@@ -520,19 +543,20 @@ contract LeashAccountSpendTest is Test {
         uint256 g = gasleft();
         acct.spend(address(token), PAYEE, 1);
         uint256 consumed = g - gasleft();
-        // 實測:誠實路徑(StandardPolicy,見 test_happy_path)約 94,789 gas;
-        // 這裡(POLICY_GAS 上限生效)約 243,458 gas;拿掉 `{gas: POLICY_GAS}`
-        // 之後會燒到約 1,040,101,586 gas(整個 block gas limit)。500_000
-        // 舒服地夾在「有上限」跟「無上限」兩個量級之間。
+        // Measured: the honest path (StandardPolicy, see test_happy_path) is about 94,789
+        // gas; this one (with the POLICY_GAS cap in effect) about 243,458 gas; and with
+        // `{gas: POLICY_GAS}` removed it burns about 1,040,101,586 gas (the entire block
+        // gas limit). 500_000 sits comfortably between the capped and uncapped magnitudes.
         assertLt(consumed, 500_000, "POLICY_GAS must cap the policy call");
     }
 
-    /// `HOP_GAS` 上限:把 hop1 解出的 registry 換成一個 `getResolver` 會
-    /// 燒光 gas 的 mock,量測同樣的道理套用在 ENS 三跳上。
+    /// The `HOP_GAS` cap: swap the registry hop 1 resolves to for a mock whose
+    /// `getResolver` burns all the gas, applying the same measurement reasoning to the three
+    /// ENS hops.
     function test_hop_gas_is_capped() public {
         _bindAndAllow();
         GasBurningRegistry gbr = new GasBurningRegistry();
-        ethRegistry.set(address(gbr), address(0)); // hop1 解出 gbr 當 reg
+        ethRegistry.set(address(gbr), address(0)); // hop 1 resolves gbr as `reg`
         uint256 before = token.balanceOf(wallet);
 
         vm.expectEmit(true, true, true, true);
@@ -543,31 +567,32 @@ contract LeashAccountSpendTest is Test {
         uint256 g = gasleft();
         acct.spend(address(token), PAYEE, 1);
         uint256 consumed = g - gasleft();
-        // 實測:這裡(HOP_GAS 上限生效)約 114,976 gas;拿掉
-        // `{gas: HOP_GAS}` 之後會燒到約 1,040,090,224 gas。同一個 500_000
-        // 邊界,理由同 `test_policy_gas_is_capped`。
+        // Measured: this one (with the HOP_GAS cap in effect) is about 114,976 gas; with
+        // `{gas: HOP_GAS}` removed it burns about 1,040,090,224 gas. The same 500_000
+        // boundary, for the same reason as `test_policy_gas_is_capped`.
         assertLt(consumed, 500_000, "HOP_GAS must cap each ENS hop");
         assertEq(token.balanceOf(wallet), before, "hop gas exhaustion: no movement");
     }
 
-    // --- 🔴 C4 迴歸:WALLET 私鑰不受約束,而那是逃生口 ---
+    // --- 🔴 C4 regression: the WALLET key is unconstrained, and that is the escape hatch ---
 
-    /// **這條測試把邊界釘成規格。**
-    /// EIP-7702 只約束打到那個 EOA 的呼叫;WALLET 私鑰照樣能直簽
-    /// `USDC.transfer`,policy 那條路徑根本不會執行。
-    /// 說「唯一的花費路徑」會被評審一問就破 —— 正確的說法是
-    /// 「**agent 的**唯一花費路徑」,而 WALLET 不受約束既是邊界也是逃生口:
-    /// 錢包持有者永遠拿得回自己的錢,不會被自己設的 policy 鎖死。
+    /// **This test pins the boundary as a specification.**
+    /// EIP-7702 constrains only calls *to* that EOA; the WALLET key can still sign
+    /// `USDC.transfer` directly, and the policy path never executes.
+    /// Saying "the only spending path" collapses under the first question a judge asks —
+    /// the accurate claim is "**the agent's** only spending path", and the wallet being
+    /// unconstrained is both the boundary and the escape hatch: the owner can always
+    /// retrieve their own funds and can never be locked out by a policy they installed.
     function test_the_wallet_key_can_always_transfer_directly() public {
         _bindAndAllow();
         uint256 before = token.balanceOf(PAYEE);
 
         vm.recordLogs();
         vm.prank(wallet);
-        token.transfer(PAYEE, 500); // 沒有經過 spend()
+        token.transfer(PAYEE, 500); // never went through spend()
 
         assertEq(token.balanceOf(PAYEE) - before, 500, "the money moved");
-        // 而且沒有發出 SpendExecuted
+        // and no SpendExecuted was emitted
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; ++i) {
             assertTrue(

@@ -1,7 +1,7 @@
 <!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Leash · Selfie Check 驗證測試</title>
+<title>Leash · Selfie Check harness</title>
 <style>
   :root { color-scheme: light dark; --fg:#111; --bg:#fff; --mut:#666; --line:#ddd; --ok:#0a7; --bad:#c33; }
   @media (prefers-color-scheme: dark) {
@@ -26,27 +26,27 @@
   section[hidden] { display: none; }
 </style>
 
-<h1>Leash · Selfie Check 驗證測試</h1>
+<h1>Leash · Selfie Check harness</h1>
 <p class="sub">
-  唯一的目的:證明 <code>enable_face_check: true</code> 真的能跑完一次驗證。
-  這不是 demo 前端。
+  Its only purpose: to prove <code>enable_face_check: true</code> really completes a
+  verification. This is not the demo frontend.
 </p>
 
-<label for="signal">Signal —— 這次刷臉批准的是哪一件事</label>
+<label for="signal">Signal — which single action this face scan approves</label>
 <input id="signal" value="widen:vendors.acme.eth:5000" />
 
 <label for="level">verification_level</label>
 <select id="level">
-  <option value="device" selected>device —— Selfie Check 走這個</option>
-  <option value="orb">orb —— 需要 Orb,我們沒有</option>
+  <option value="device" selected>device — what Selfie Check uses</option>
+  <option value="orb">orb — needs an Orb, which we do not have</option>
 </select>
 
-<button id="go">開始驗證</button>
+<button id="go">Verify</button>
 
 <section id="out" hidden>
-  <h2 style="font-size:15px;margin:0 0 8px">World App 回傳的 proof</h2>
+  <h2 style="font-size:15px;margin:0 0 8px">The proof World App returned</h2>
   <pre id="proof"></pre>
-  <h2 style="font-size:15px;margin:16px 0 8px">後端驗證結果</h2>
+  <h2 style="font-size:15px;margin:16px 0 8px">Backend verification result</h2>
   <pre id="result"></pre>
 </section>
 
@@ -64,11 +64,12 @@
     $("go").disabled = false;
   }
 
-  // IDKit 拿到 proof 之後呼叫這裡。丟出例外 = 驗證失敗,World App 會顯示錯誤。
+  // IDKit calls this once it has a proof. Throwing = verification failed, and World App
+  // shows an error.
   async function handleVerify(proof) {
     $("out").hidden = false;
     show($("proof"), JSON.stringify(proof, null, 2));
-    show($("result"), "驗證中…");
+    show($("result"), "verifying…");
 
     const res = await fetch("/api/verify", {
       method: "POST",
@@ -87,7 +88,7 @@
       signal: $("signal").value,
       verification_level: $("level").value,
       handleVerify,
-      onSuccess: () => show($("result"), $("result").textContent + "\n\n✅ World App 端也認了。"),
+      onSuccess: () => show($("result"), $("result").textContent + "\n\n✅ World App accepted it too."),
     });
     IDKit.open();
   });

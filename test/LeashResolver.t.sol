@@ -18,9 +18,10 @@ contract MockApprovals is IPolicyApprovals {
     }
 }
 
-/// @dev 沒有 describe() 的合約 —— text("description") 必須回空字串而不是爆炸。
+/// @dev A contract with no describe() — text("description") must return an empty string
+///      rather than blow up.
 contract NotAPolicy {
-    // 故意留空
+    // deliberately empty
 }
 
 contract LeashResolverTest is Test {
@@ -31,11 +32,12 @@ contract LeashResolverTest is Test {
     address constant ADMIN = address(0xAD31);
     address constant STRANGER = address(0x5721);
 
-    /// namehash("vendors.acme.eth") 的替身 —— resolver 不重算 node,值是什麼不影響行為。
+    /// A stand-in for namehash("vendors.acme.eth") — the resolver never recomputes the
+    /// node, so the actual value does not affect behaviour.
     bytes32 constant NODE = keccak256("vendors.acme.eth");
     bytes32 constant OTHER_NODE = keccak256("payroll.acme.eth");
 
-    /// ENSIP-10 的 `name` 參數我們不使用,但要傳一個像樣的值進去。
+    /// We do not use ENSIP-10's `name` parameter, but a plausible value still goes in.
     /// 0x07 "vendors" 0x04 "acme" 0x03 "eth" 0x00
     bytes constant DNS_NAME = hex"0776656e646f72730461636d650365746800";
 
@@ -57,7 +59,7 @@ contract LeashResolverTest is Test {
         return abi.decode(resolver.resolve(DNS_NAME, inner), (string));
     }
 
-    // --- 核心:解析 policy 位址 ---
+    // --- core: resolving the policy address ---
 
     function test_resolves_the_policy_address_via_ensip10() public {
         vm.prank(ADMIN);
@@ -65,12 +67,14 @@ contract LeashResolverTest is Test {
         assertEq(_resolveAddr(NODE), address(policy));
     }
 
-    /// 沒設過的名字回 0 位址 —— 帳戶層看到 0 就是理由碼 3(NO_POLICY),錢不動。
+    /// A name that was never set returns the zero address — the account layer reads 0 as
+    /// reason code 3 (NO_POLICY) and no money moves.
     function test_unset_node_resolves_to_zero() public view {
         assertEq(_resolveAddr(NODE), address(0));
     }
 
-    /// 清空指標是縮權,永遠不需要刷臉。這是「全面停機」那顆按鈕。
+    /// Clearing the pointer is a reduction and never needs a face scan. This is the
+    /// "halt everything" button.
     function test_clearing_the_pointer_is_always_allowed() public {
         vm.startPrank(ADMIN);
         resolver.setPolicy(NODE, address(policy));
@@ -85,9 +89,10 @@ contract LeashResolverTest is Test {
         assertEq(_resolveAddr(OTHER_NODE), address(0));
     }
 
-    // --- 指標與批准是分開的兩層 ---
+    // --- the pointer and the approval are two separate layers ---
 
-    /// ADMIN 金鑰被偷也只能改指標。「批准過嗎」是另一把鎖,而且答案會被記進事件。
+    /// A stolen ADMIN key can only move the pointer. "Has it been approved?" is a second
+    /// lock, and the answer is recorded in the event.
     function test_pointer_can_be_set_to_an_unapproved_policy_but_is_reported_as_such() public {
         vm.prank(ADMIN);
         resolver.setPolicy(NODE, address(policy));
@@ -101,24 +106,27 @@ contract LeashResolverTest is Test {
         assertTrue(approved);
     }
 
-    /// 🔴 C1 迴歸:批准清單的指標是 **immutable,沒有 setter**。
+    /// 🔴 C1 regression: the pointer to the approval list is **immutable, with no setter**.
     ///
-    /// 初版有 `setApprovalsSource(onlyOwner)`。就算把 `PolicyApprovals.setAttester`
-    /// 鎖死,只要這個指標可改,被偷的 ADMIN 金鑰就能部署自己的清單 + 自己的 attester
-    /// 再指過去 —— 兩道鎖仍然是同一把鑰匙開的。
+    /// The first version had `setApprovalsSource(onlyOwner)`. Even with
+    /// `PolicyApprovals.setAttester` locked shut, as long as this pointer is mutable a
+    /// stolen ADMIN key can deploy its own list with its own attester and point at it —
+    /// and both locks still open with the same key.
     function test_approvals_source_is_immutable_with_no_setter() public view {
         assertEq(address(resolver.approvals()), address(approvals));
-        // 介面上不存在 setApprovalsSource —— 有人把可變性加回來時這裡會編譯失敗
+        // setApprovalsSource does not exist on the interface — this fails to compile the
+        // moment anyone adds the mutability back
     }
 
-    /// 建構時不接受 `address(0)`:沒有 setter 可以補救,寧可部署時就失敗。
+    /// The constructor rejects `address(0)`: there is no setter to recover with, so
+    /// failing at deploy time is the better outcome.
     function test_cannot_deploy_without_an_approvals_source() public {
         vm.expectRevert(LeashResolver.ZeroApprovals.selector);
         new LeashResolver(ADMIN, IPolicyApprovals(address(0)));
     }
 
     function test_zero_policy_is_never_approved() public {
-        approvals.set(address(0), true); // 就算清單荒謬地批准了 0 位址
+        approvals.set(address(0), true); // even if the list absurdly approves the zero address
         (, bool approved) = resolver.policyAndApproval(NODE);
         assertFalse(approved);
     }
@@ -131,7 +139,7 @@ contract LeashResolverTest is Test {
         resolver.setPolicy(NODE, address(policy));
     }
 
-    // --- 存取控制 ---
+    // --- access control ---
 
     function test_only_owner_can_set_the_pointer() public {
         vm.expectRevert(LeashResolver.NotOwner.selector);
@@ -155,7 +163,7 @@ contract LeashResolverTest is Test {
         resolver.transferOwnership(address(0));
     }
 
-    // --- ENSIP-10 的其餘表面 ---
+    // --- the rest of the ENSIP-10 surface ---
 
     function test_addr_with_coin_type_60_matches_plain_addr() public {
         vm.prank(ADMIN);
@@ -190,7 +198,8 @@ contract LeashResolverTest is Test {
         assertEq(_resolveText(NODE, "description"), policy.describe());
     }
 
-    /// 指標指到一個沒有 describe() 的合約時,顯示路徑必須降級而不是爆炸。
+    /// When the pointer aims at a contract with no describe(), the display path must
+    /// degrade rather than blow up.
     function test_text_description_degrades_to_empty_for_a_non_policy() public {
         address junk = address(new NotAPolicy());
         vm.prank(ADMIN);
@@ -202,18 +211,19 @@ contract LeashResolverTest is Test {
         assertEq(_resolveText(NODE, "leash"), "leash-v1");
     }
 
-    /// 未知的 text key 回**空字串**,不 revert。
+    /// An unknown text key returns the **empty string**; it does not revert.
     ///
-    /// ENS 的 UI 常常一次批次查 `avatar` / `com.twitter` / `description` ——
-    /// 其中一個 revert 會讓整批查詢掛掉,這個名字在 ENS 前端就變成壞的。
-    /// (`resolve` 的**未知 selector** 仍然 revert:那在強制路徑上,fail-closed 有意義。)
+    /// ENS UIs routinely batch-query `avatar` / `com.twitter` / `description` — one revert
+    /// takes the whole batch down and the name looks broken in the ENS frontend.
+    /// (An **unknown selector** in `resolve` still reverts: that is on the enforcement
+    /// path, where failing closed means something.)
     function test_unknown_text_key_returns_empty_not_revert() public view {
         assertEq(_resolveText(NODE, "avatar"), "");
         assertEq(_resolveText(NODE, "com.twitter"), "");
     }
 
-    /// 不認識的內層呼叫要 revert,不能回空值 —— 呼叫端得分得出
-    /// 「沒設定」和「不支援」,fail-closed 才做得到。
+    /// An unrecognised inner call must revert rather than return empty — the caller has to
+    /// be able to tell "unset" from "unsupported" for failing closed to be possible.
     function test_unsupported_inner_call_reverts() public {
         bytes memory inner = abi.encodeWithSignature("contenthash(bytes32)", NODE);
         vm.expectRevert(
@@ -230,12 +240,14 @@ contract LeashResolverTest is Test {
     function test_advertises_ensip10_and_erc165_only() public view {
         assertTrue(resolver.supportsInterface(0x9061b923), "ENSIP-10 resolve()");
         assertTrue(resolver.supportsInterface(0x01ffc9a7), "ERC-165");
-        // legacy 介面刻意不宣告 —— 我們沒有這兩個外部函式
+        // The legacy interfaces are deliberately not advertised — we have neither of those
+        // external functions
         assertFalse(resolver.supportsInterface(0x3b3b57de), "legacy addr()");
         assertFalse(resolver.supportsInterface(0x59d1d43c), "legacy text()");
     }
 
-    /// ENSv2 實測抄下來的 selector 必須跟編譯器算出來的一致 —— 抄錯就整條解析走不通。
+    /// The selectors transcribed from the live ENSv2 measurements must agree with what the
+    /// compiler computes — transcribe one wrong and the entire resolution path fails.
     function test_selectors_match_the_measured_values() public pure {
         assertEq(bytes4(keccak256("resolve(bytes,bytes)")), bytes4(0x9061b923));
         assertEq(bytes4(keccak256("addr(bytes32)")), bytes4(0x3b3b57de));

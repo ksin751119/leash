@@ -17,7 +17,8 @@ contract StandardPolicyTest is Test {
         policy = new StandardPolicy();
     }
 
-    /// 一切都對的基準脈絡:額度 5000,已花 4200,這筆 200,全天開放。
+    /// The baseline context where everything is fine: cap 5000, 4200 already spent,
+    /// 200 for this request, open all day.
     function _ok() internal pure returns (SpendContext memory c) {
         c = SpendContext({
             agent: AGENT,
@@ -35,7 +36,7 @@ contract StandardPolicyTest is Test {
         });
     }
 
-    // --- 放行 ---
+    // --- allowed ---
 
     function test_allows_a_normal_payment() public view {
         assertEq(policy.check(_ok()), Reason.OK);
@@ -61,7 +62,7 @@ contract StandardPolicyTest is Test {
         assertEq(policy.check(c), Reason.OK);
     }
 
-    // --- 攔截 ---
+    // --- blocked ---
 
     function test_blocks_unlisted_token() public view {
         SpendContext memory c = _ok();
@@ -78,7 +79,7 @@ contract StandardPolicyTest is Test {
     function test_blocks_over_per_tx_cap() public view {
         SpendContext memory c = _ok();
         c.amount = 1000e6 + 1;
-        c.periodLimit = 0; // 隔離:只測單筆上限
+        c.periodLimit = 0; // isolate: exercise the per-tx cap alone
         assertEq(policy.check(c), Reason.OVER_TX_LIMIT);
     }
 
@@ -88,7 +89,8 @@ contract StandardPolicyTest is Test {
         assertEq(policy.check(c), Reason.OVER_PERIOD_LIMIT);
     }
 
-    /// 已經超支的情況不可以 underflow —— `periodLimit - spentSoFar` 那行的護欄。
+    /// Being already over budget must not underflow — the guard on the
+    /// `periodLimit - spentSoFar` line.
     function test_blocks_when_already_over_budget_without_underflow() public view {
         SpendContext memory c = _ok();
         c.spentSoFar = 6000e6;
@@ -96,7 +98,7 @@ contract StandardPolicyTest is Test {
         assertEq(policy.check(c), Reason.OVER_PERIOD_LIMIT);
     }
 
-    // --- 時段 ---
+    // --- time window ---
 
     function test_blocks_outside_daytime_window() public view {
         SpendContext memory c = _ok();
@@ -117,7 +119,7 @@ contract StandardPolicyTest is Test {
     function test_window_wrapping_past_midnight() public view {
         SpendContext memory c = _ok();
         c.windowStart = 1320; // 22:00
-        c.windowEnd = 360; // 06:00 隔天
+        c.windowEnd = 360; // 06:00 the next day
 
         c.nowTs = uint64(3 days + 23 hours);
         assertEq(policy.check(c), Reason.OK, "23:00 should be inside");
@@ -129,10 +131,11 @@ contract StandardPolicyTest is Test {
         assertEq(policy.check(c), Reason.OUTSIDE_TIME_WINDOW, "12:00 should be outside");
     }
 
-    // --- 優先序 ---
+    // --- precedence ---
 
-    /// Demo 第 2 幕:付一個沒見過的地址 5000,同時違反白名單與週期預算。
-    /// 回報的必須是**最外層**的 PAYEE_NOT_ALLOWED,agent 才會逐步收斂。
+    /// Act two of the demo: pay 5000 to an address never seen before, violating both the
+    /// allow-list and the period budget at once. What is reported must be the
+    /// **outermost** violation, PAYEE_NOT_ALLOWED, so that a retrying agent converges.
     function test_reports_outermost_violation_first() public view {
         SpendContext memory c = _ok();
         c.payeeAllowed = false;
@@ -147,10 +150,11 @@ contract StandardPolicyTest is Test {
         assertEq(policy.check(c), Reason.TOKEN_NOT_ALLOWED);
     }
 
-    // --- 不變式 ---
+    // --- invariants ---
 
-    /// 這一份 policy 是 pure 的:同樣的輸入永遠得到同樣的輸出,
-    /// 不受 block number、timestamp、caller 影響 —— 鏈下預演才能保證跟鏈上一致。
+    /// This policy is pure: the same inputs always give the same output, unaffected by
+    /// block number, timestamp or caller — which is what lets an offchain dry run be
+    /// guaranteed to agree with the chain.
     function testFuzz_is_deterministic(uint256 amount, uint256 limit, uint256 spent, uint64 ts)
         public
     {
@@ -170,7 +174,8 @@ contract StandardPolicyTest is Test {
         assertEq(first, second);
     }
 
-    /// 放行時,累計花費永遠不會超過週期上限。這是整個系統的核心保證。
+    /// When a spend is allowed, the running total never exceeds the period cap. This is
+    /// the core guarantee of the whole system.
     function testFuzz_never_allows_budget_overrun(uint128 amount, uint128 limit, uint128 spent)
         public
         view

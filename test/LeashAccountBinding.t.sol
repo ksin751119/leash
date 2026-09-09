@@ -20,8 +20,9 @@ contract MockApprovals is IPolicyApprovals {
     }
 }
 
-/// @dev 永遠拒絕 —— 用來證明「沒有效背書就恢復不了」。定義在這個測試檔裡
-///      而不是從 LeashRegistry.t.sol 匯入,兩邊各自獨立。
+/// @dev Always refuses — used to prove nothing can be restored without a valid
+///      attestation. Defined in this test file rather than imported from
+///      LeashRegistry.t.sol, so the two stay independent.
 contract RejectingAttester is IAttester {
     function verify(bytes32, bytes calldata) external pure returns (bool) {
         return false;
@@ -47,7 +48,7 @@ contract LeashAccountBindingTest is Test {
     string constant LABEL = "vendors";
     bytes32 constant NODE = 0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121;
 
-    /// 委派過的 EOA,用 LeashAccount 的介面來呼叫它。
+    /// The delegated EOA, addressed through LeashAccount's interface.
     LeashAccount acct;
 
     function setUp() public {
@@ -59,9 +60,9 @@ contract LeashAccountBindingTest is Test {
         acct = LeashAccount(payable(wallet));
     }
 
-    // --- 7702 語意 ---
+    // --- 7702 semantics ---
 
-    /// 委派後 EOA 的 code 是 23 bytes 的 `0xef0100 || impl`。
+    /// After delegation the EOA's code is the 23 bytes `0xef0100 || impl`.
     function test_delegation_layout() public view {
         assertEq(wallet.code.length, 23);
         assertEq(uint8(wallet.code[0]), 0xef);
@@ -69,11 +70,12 @@ contract LeashAccountBindingTest is Test {
         assertEq(uint8(wallet.code[2]), 0x00);
     }
 
-    /// 🔴 **C2 迴歸:委派之後那個錢包必須收得到 ETH。**
+    /// 🔴 **C2 regression: a delegated wallet must still be able to receive ETH.**
     ///
-    /// 純轉 ETH = 用**空 calldata** 呼叫 delegate。沒有 `receive()` 的話
-    /// Solidity 的 dispatcher 會 revert,而那意味著 faucet、交易所、
-    /// `cast send --value` 全部失效 —— 委派之後就加不了 gas。
+    /// A plain ETH transfer is a call to the delegate with **empty calldata**. Without a
+    /// `receive()`, Solidity's dispatcher reverts — which means faucets, exchanges and
+    /// `cast send --value` all stop working, and the wallet can never be topped up with
+    /// gas again after delegating.
     function test_delegated_wallet_can_still_receive_eth() public {
         deal(address(this), 1 ether);
         uint256 before = wallet.balance;
@@ -82,20 +84,20 @@ contract LeashAccountBindingTest is Test {
         assertEq(wallet.balance - before, 1 ether);
     }
 
-    /// 打錯 selector 要明確 revert,不要靜默吞掉 ——
-    /// 靜默接受會讓「打錯 selector」看起來像成功。
+    /// An unknown selector must revert explicitly rather than be swallowed — accepting it
+    /// silently would make a mistyped selector look like success.
     function test_unknown_selector_reverts() public {
         vm.expectRevert(LeashAccount.UnknownSelector.selector);
         (bool ok,) = wallet.call(abi.encodeWithSignature("notAFunction()"));
-        ok; // 由 expectRevert 判定
+        ok; // judged by expectRevert
     }
 
-    /// `address(this)` 在 delegate 裡是 **EOA**,而 `SELF` 是 impl 自己的位址。
-    /// 這兩個是不同的值,而 attestation 的 digest 需要**兩個都有**:
-    /// `address(this)` 綁住「哪個錢包」,`SELF` 綁住「哪一版 impl」。
+    /// Inside a delegate, `address(this)` is the **EOA**, while `SELF` is the impl's own
+    /// address. They are different values, and an attestation digest needs **both**:
+    /// `address(this)` binds which wallet, `SELF` binds which impl version.
     function test_address_this_is_the_eoa_but_self_is_the_impl() public view {
         assertEq(acct.SELF(), address(impl), "SELF is baked in at deploy time");
-        // domainSeparator 用 address(this) —— 在 delegate 裡就是 wallet
+        // domainSeparator uses address(this) — inside a delegate, that is the wallet
         bytes32 expected = keccak256(
             abi.encode(
                 keccak256(
@@ -110,7 +112,7 @@ contract LeashAccountBindingTest is Test {
         assertEq(acct.domainSeparator(), expected, "verifyingContract is the EOA");
     }
 
-    /// 兩個 EOA 委派到同一份 impl,storage 完全獨立。
+    /// Two EOAs delegating to the same impl have entirely independent storage.
     function test_two_wallets_sharing_one_impl_are_independent() public {
         uint256 pk2 = 0xB0B;
         address w2 = vm.addr(pk2);
@@ -125,16 +127,17 @@ contract LeashAccountBindingTest is Test {
         assertEq(n2, bytes32(0), "the other wallet knows nothing about this agent");
     }
 
-    // --- 🔴 決定 2 迴歸:沒有 initialize,沒有搶跑面 ---
+    // --- 🔴 decision 2 regression: no initialize, so nothing to front-run ---
 
-    /// **委派後 storage 是空的,而這是攻擊者唯一的窗口。**
+    /// **Storage is empty right after delegation, and that is the attacker's only window.**
     ///
-    /// spike 證明過:如果有 `initialize()`,任何人都能搶先呼叫並把自己設成 admin。
-    /// 我們的做法是**根本沒有初始化動作** —— 全域設定是 immutable,
-    /// per-EOA 的權限一律是 `msg.sender == address(this)`,而只有錢包的私鑰
-    /// 能讓那個 EOA 送出交易。
+    /// A spike demonstrated it: with an `initialize()`, anyone can call it first and set
+    /// themselves as admin. Our approach is to have **no initialisation step at all** —
+    /// the global configuration is immutable, per-EOA authority is always
+    /// `msg.sender == address(this)`, and only the wallet's private key can make that EOA
+    /// send a transaction.
     ///
-    /// 這條測試逐一證明攻擊者在那個窗口裡什麼都做不到。
+    /// This test walks through and shows an attacker can do nothing in that window.
     function test_attacker_cannot_seize_a_freshly_delegated_wallet() public {
         vm.startPrank(ATTACKER);
 
@@ -153,10 +156,10 @@ contract LeashAccountBindingTest is Test {
         assertEq(n, bytes32(0), "nothing was seized");
     }
 
-    /// 對 **impl 本身**呼叫必須是惰性的 —— impl 沒有被任何人委派,
-    /// 它的 `address(this)` 是自己,所以理論上它能對自己下指令。
-    /// 那不會傷害任何錢包(狀態在 impl 自己的 storage,沒有 EOA 讀它),
-    /// 但我們仍然要確認**外部人**動不了它。
+    /// Calls to the **impl itself** must be inert. Nobody delegates to the impl, and its
+    /// `address(this)` is itself, so in principle it could give itself orders. That harms
+    /// no wallet (the state lives in the impl's own storage and no EOA reads it), but we
+    /// still confirm an **outsider** cannot move it.
     function test_calling_the_impl_directly_does_nothing_for_an_outsider() public {
         vm.expectRevert(LeashAccount.NotSelf.selector);
         vm.prank(ATTACKER);
@@ -165,7 +168,8 @@ contract LeashAccountBindingTest is Test {
 
     // --- attestation ---
 
-    /// digest 必須含 `SELF`,否則重新委派到新版 impl 之後可以跨版本重放。
+    /// The digest must include `SELF`, otherwise an attestation can be replayed across
+    /// versions after redelegating to a new impl.
     function test_attestation_digest_is_bound_to_the_impl_version() public {
         LeashAccount impl2 = new LeashAccount(ETH_REGISTRY, approvals, attester);
         bytes32 d1 = acct.payeeDigest(NODE, address(0xDEAD), AGENT, 1);
@@ -176,16 +180,18 @@ contract LeashAccountBindingTest is Test {
         assertTrue(d1 != d2, "same wallet, different impl version, different digest");
     }
 
-    // --- 🔴 M2 迴歸:node 與 label 必須一致 ---
+    // --- 🔴 M2 regression: node and label must agree ---
 
-    /// **`node` 不只是 resolver 的 key —— 它也是 `rules` / `payees` / `spent` 的 key。**
+    /// **`node` is not only the resolver's key — it is also the key for `rules` / `payees`
+    /// / `spent`.**
     ///
-    /// 所以 `bindAgent(agentB, node=vendors, label="payroll")` 會讓 agentB 花
-    /// **vendors 那份真人核准過的額度與預算**,卻由 **payroll 的 policy** 判斷。
-    /// 而 `AgentBound(agent, node)` 事件不帶 label,鏈下**完全看不出來**。
+    /// So `bindAgent(agentB, node=vendors, label="payroll")` would let agentB spend
+    /// **vendors' human-approved limits and budget** while being judged by **payroll's
+    /// policy**. And since the `AgentBound(agent, node)` event carries no label, that would
+    /// be **completely invisible** offchain.
     ///
-    /// 固定父層之下算 namehash 只要**兩次 keccak**(約 200 gas),
-    /// 把一個看不見的錯誤設定換成一個 revert。
+    /// Under a fixed parent, computing the namehash costs **two keccaks** (around 200 gas),
+    /// which trades an invisible misconfiguration for a revert.
     function test_bind_rejects_a_node_label_mismatch() public {
         bytes32 payrollNode = 0x2686785985b68816fe9d6dde5bf58d194ff9991d3d9dc89c14daf6f8224ba9a8;
         vm.expectRevert(
@@ -205,10 +211,11 @@ contract LeashAccountBindingTest is Test {
         );
     }
 
-    // --- 🔴 M4 迴歸:撤銷後不能免費重綁 ---
+    // --- 🔴 M4 regression: no free rebind after a revocation ---
 
-    /// 凍結文件對理由碼 2 的規定是「縮權免刷臉,**恢復要刷臉**」。
-    /// 如果 `bindAgent` 能覆蓋既有綁定,那撤銷之後免費重綁就繞過了那條規定。
+    /// What the frozen document says about reason code 2 is "reductions need no face scan,
+    /// **restoring does**". If `bindAgent` could overwrite an existing binding, a free
+    /// rebind after a revocation would sidestep that rule.
     function test_bind_rejects_an_existing_binding() public {
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -217,14 +224,16 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    /// 恢復一個被撤銷的 agent 要背書 —— **缺一不可**。
+    /// Restoring a revoked agent requires an attestation — **both halves are needed**.
     ///
-    /// 原本這條測試只走「有效背書 → 成功」,如果把 `restoreAgent` 裡的
-    /// `_consumeAttestation` 整段拿掉,它一樣會過。這裡先用一個永遠拒絕的
-    /// attester 證明「沒有效背書就恢復不了」,再走一次成功路徑,
-    /// 證明「有效背書確實能恢復」——兩段都能各自因為刪掉檢查而失敗。
+    /// This test originally only walked "valid attestation → success", which would still
+    /// pass with the whole `_consumeAttestation` block deleted from `restoreAgent`. It now
+    /// first uses an always-refusing attester to show nothing can be restored without a
+    /// valid attestation, then walks the success path to show a valid one does restore —
+    /// and each half can fail on its own if the check is removed.
     function test_restore_requires_an_attestation() public {
-        // 沒有效背書:即使呼叫者是錢包自己,restoreAgent 也要 revert。
+        // No valid attestation: restoreAgent must revert even when the caller is the
+        // wallet itself.
         RejectingAttester rejecting = new RejectingAttester();
         LeashAccount strictImpl = new LeashAccount(ETH_REGISTRY, approvals, rejecting);
         uint256 strictPk = 0xBAD5EED;
@@ -240,7 +249,8 @@ contract LeashAccountBindingTest is Test {
         strictAcct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
         vm.stopPrank();
 
-        // 有效背書:恢復照常成功(既有的成功路徑斷言,保留不刪)。
+        // With a valid attestation: the restore succeeds as before (the pre-existing
+        // success-path assertion, kept).
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
         acct.revokeAgent(AGENT);
@@ -253,9 +263,9 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    /// 恢復一個被撤銷的 agent 要 `msg.sender == address(this)` —— 這是
-    /// 「兩個都要」的另一半。agent 自己能免費 `revokeAgent` 自己,但不能
-    /// 跳過真人背書把自己恢復回來。
+    /// Restoring a revoked agent requires `msg.sender == address(this)` — the other half
+    /// of "both conditions". An agent can `revokeAgent` itself for free, but cannot restore
+    /// itself while skipping the human attestation.
     function test_restore_requires_self() public {
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -267,9 +277,9 @@ contract LeashAccountBindingTest is Test {
         acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
     }
 
-    /// 同一份背書用過一次就作廢 —— 不能拿同一個 nonce 重放去恢復。
-    /// 換一個新的 nonce 才能再次恢復,證明消費的是「這一份背書」而不是
-    /// 「這個 agent 曾經被恢復過」這種較弱的狀態。
+    /// One attestation is void after a single use — the same nonce cannot be replayed to
+    /// restore again. A fresh nonce is required, which shows what is consumed is *this
+    /// attestation* rather than the weaker state of "this agent has been restored before".
     function test_restore_attestation_cannot_be_replayed() public {
         bytes32 d = _restoreDigest(AGENT, NODE, LABEL, 1);
 
@@ -278,7 +288,7 @@ contract LeashAccountBindingTest is Test {
         acct.revokeAgent(AGENT);
         acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
 
-        // 縮權不需要背書,可以再撤一次。
+        // A reduction needs no attestation, so it can be revoked again.
         acct.revokeAgent(AGENT);
 
         vm.expectRevert(abi.encodeWithSelector(LeashAccount.AttestationReused.selector, d));
@@ -290,10 +300,10 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    /// `LeashAccount` 沒有對外公開 `restoreDigest()`,所以照 `_consumeAttestation`
-    /// 的公式在測試裡重算一次 —— 跟 `LeashRegistry.t.sol` 那些重放測試用
-    /// `reg.renewDigest(...)` 拿到現成 digest 是同一種目的,只是這裡沒有
-    /// 現成的 getter 可以借。
+    /// `LeashAccount` exposes no public `restoreDigest()`, so the test recomputes it from
+    /// `_consumeAttestation`'s formula — the same purpose as the replay tests in
+    /// `LeashRegistry.t.sol` taking a ready-made digest from `reg.renewDigest(...)`, except
+    /// there is no getter to borrow here.
     function _restoreDigest(address agent, bytes32 node, string memory label, uint256 nonce)
         private
         view
@@ -308,8 +318,10 @@ contract LeashAccountBindingTest is Test {
         return keccak256(abi.encodePacked(hex"1901", acct.domainSeparator(), structHash));
     }
 
-    /// **但綁錯名字不能變成永久的。** `unbindAgent` 完全免費(解綁是縮權),
-    /// 之後就能重新綁到正確的名字 —— 兩步都是縮權,中間沒有任何一刻權限比原本大。
+    /// **But binding to the wrong name must not be permanent.** `unbindAgent` is entirely
+    /// free (unbinding is a reduction), after which it can be bound to the correct name —
+    /// both steps are reductions, and at no point in between does it hold more authority
+    /// than before.
     function test_a_mis_binding_is_correctable_for_free() public {
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -325,9 +337,9 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    // --- 縮權任何時候都能做 ---
+    // --- reductions are always available ---
 
-    /// agent 可以撤銷自己 —— 縮權不該有門檻。
+    /// An agent can revoke itself — a reduction should have no gate.
     function test_an_agent_can_revoke_itself() public {
         vm.prank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -347,9 +359,10 @@ contract LeashAccountBindingTest is Test {
         acct.revokeAgent(AGENT);
     }
 
-    // --- 🔴 M6 迴歸:pause 免費,unpause 也必須免費 ---
+    // --- 🔴 M6 regression: pause is free, so unpause must be free too ---
 
-    /// 任何未被撤銷的被綁定 agent 都能踩煞車 —— 踩煞車只會讓系統更嚴。
+    /// Any bound agent that has not been revoked can hit the brake — hitting the brake can
+    /// only make the system stricter.
     function test_any_bound_agent_can_pause() public {
         vm.prank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
@@ -370,9 +383,10 @@ contract LeashAccountBindingTest is Test {
         acct.pause();
     }
 
-    /// **`unpause` 不能要背書。** 否則被入侵的 agent 可以免費 `pause`、
-    /// 反覆逼持有者刷臉 —— 那是一個 DoS。免費的煞車必須配免費的放開。
-    /// 凍結文件也把理由碼 10 列為「ADMIN 的日常操作」,不需刷臉。
+    /// **`unpause` must not require an attestation.** Otherwise a compromised agent can
+    /// `pause` for free and force the holder to scan their face over and over — a DoS. A
+    /// free brake demands a free release. The frozen document also lists reason code 10 as
+    /// "an ADMIN's routine operation", needing no scan.
     function test_unpause_is_free_and_only_the_wallet_can_do_it() public {
         vm.prank(wallet);
         acct.pause();

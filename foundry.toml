@@ -5,7 +5,7 @@ libs           = ["lib"]
 test           = "test"
 script         = "script"
 solc           = "0.8.28"
-# Sepolia 已過 Pectra;EIP-7702 需要 prague
+# Sepolia is past Pectra; EIP-7702 requires prague
 evm_version    = "prague"
 optimizer      = true
 optimizer_runs = 200

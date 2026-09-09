@@ -2,7 +2,7 @@
   "name": "leash-world-test",
   "private": true,
   "type": "module",
-  "description": "Selfie Check 驗證測試 —— 跑完就丟,不是 demo 前端",
+  "description": "Selfie Check verification harness - throwaway, not the demo frontend",
   "dependencies": {
     "@noble/hashes": "^1.5.0"
   }
