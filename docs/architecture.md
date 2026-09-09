@@ -4,7 +4,7 @@ An onchain policy engine for AI agent wallets. Written for a reader who has ten
 minutes and wants to know what is actually enforced, by what, and what is not.
 
 This is the English summary of the design. The full working document, including
-every decision that was later overturned, is [`PLAN.md`](PLAN.md) *(Chinese)*.
+every decision that was later overturned, is [`PLAN.md`](PLAN.md).
 Live addresses and a verification recipe you can paste are in
 [`deployments.md`](deployments.md).
 
@@ -92,7 +92,7 @@ Then the approval list is checked, then the policy is called.
 payments stop with it.
 
 Two measured facts make this possible at all, and both were verified against live
-ENSv2 on Sepolia (see [`ensv2-sepolia.md`](ensv2-sepolia.md) *(Chinese)*):
+ENSv2 on Sepolia (see [`ensv2-sepolia.md`](ensv2-sepolia.md)):
 
 - ENSv2's minimal resolvers implement **only** ENSIP-10 `resolve(bytes,bytes)`.
   `addr()` and `text()` do not exist as external functions; calling them reverts.
@@ -167,7 +167,7 @@ is ever carved into the account.
 | 1-4, 10, 12 | `LeashAccount` | Not bound, revoked, no policy, policy unapproved, paused, policy broken |
 | 5-9, 11 | the policy | Token, payee, per-tx cap, period budget, time window, shared budget |
 
-The numbers are frozen in [`events.md`](events.md) *(Chinese)* and must never be
+The numbers are frozen in [`events.md`](events.md) and must never be
 renumbered; the subgraph, the frontend and the agent all depend on them.
 
 The payoff of putting judgement in a separate contract: **"several agents share one

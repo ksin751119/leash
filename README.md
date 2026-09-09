@@ -196,11 +196,11 @@ is guarded" turned out to be different claims.
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | **Start here.** What is enforced, by what, and what is not claimed |
 | [`docs/deployments.md`](docs/deployments.md) | Addresses, transactions, and a verification recipe you can paste |
-| [`docs/PLAN.md`](docs/PLAN.md) | The full working document, including every overturned decision *(Chinese)* |
-| [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** *(Chinese)* |
+| [`docs/PLAN.md`](docs/PLAN.md) | The full working document, including every overturned decision |
+| [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** |
 | [`docs/world-feedback.md`](docs/world-feedback.md) | Developer feedback for the World track |
-| [`docs/ensv2-sepolia.md`](docs/ensv2-sepolia.md) | Onchain measurements of live ENSv2 *(Chinese)* |
-| [`docs/superpowers/specs/`](docs/superpowers/specs) | `LeashAccount` design, with every overturned decision recorded *(Chinese)* |
+| [`docs/ensv2-sepolia.md`](docs/ensv2-sepolia.md) | Onchain measurements of live ENSv2 |
+| [`docs/superpowers/specs/`](docs/superpowers/specs) | `LeashAccount` design, with every overturned decision recorded |
 
 ## Start from Scratch
 
