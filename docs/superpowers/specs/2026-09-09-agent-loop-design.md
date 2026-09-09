@@ -107,6 +107,39 @@ Each tick:
 3. **Send** the intents predicted to pass, and read each result from its receipt.
 4. **Publish** the whole snapshot, verdicts and outcomes at `GET /api/agent/state`.
 
+### Intents are one-shot
+
+**An intent that has executed is done and is never re-sent.** This is not a refinement, it is
+load-bearing: the loop ticks every 5 seconds, so an intent that stayed eligible would be paid
+twelve times a minute and would drain the period budget — 700 USDC of remaining allowance at
+100 USDC a payment is gone in under a minute, before anyone reaches the demo. An intent is
+attempted until it succeeds; then its verdict is `done` and it is skipped.
+
+The loop's state is in memory, so restarting the process makes executed intents eligible
+again. That is the intended reset for a rehearsal, and it must be said out loud rather than
+discovered: **restarting the agent re-arms every payment in `intents.json`.**
+
+### Reading a rolled-over budget period
+
+`AgentBudget.periodEnd` is, per the schema, when the period resets. The index only updates
+`spent` when a spend is indexed, so once `periodEnd` has passed, the onchain budget has reset
+while the index still reports the old `spent` and `remaining`.
+
+Measured 2026-09-09: the live budget has `limit` 1000000000, `spent` 300000000, `remaining`
+700000000 and `periodEnd` **1788998400 — 2026-09-10T00:00:00Z**. That is before the demo. So
+by the time this runs, the index will be understating the available budget, and an agent
+taking `remaining` literally would refuse a payment the chain would have allowed.
+
+So pre-flight treats `periodEnd > 0 && periodEnd <= now` as "the period rolled over": `spent`
+is 0 and the whole `limit` is available. This is not re-deriving policy logic — it is reading
+the field the schema defines, with the meaning the schema gives it. The distinction that
+matters is that the index states this as a fact about itself; nothing about `StandardPolicy`
+is being recomputed.
+
+---
+
+## Intents
+
 Intents come from `agent/intents.json` — a plain list, no queue and no scheduling. Amounts
 are **base units as decimal strings, never numbers**: MockUSDC has 6 decimals (verified
 onchain 2026-09-09), so `"100000000"` is 100 USDC. Strings because a `uint256` does not
