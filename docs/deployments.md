@@ -196,3 +196,52 @@ hop3  resolve(dns, addr(node))              = 0x…88f2bff031bb4cf2beaa28d47ada5
 所以「發一個永不過期的名字」這件事做不到。
 
 **四種手段全程都沒有碰 agent 的帳戶。**
+
+---
+
+## 端對端實測(2026-09-09 01:20–01:35 UTC)
+
+**一份正式部署的 impl、一個真的錢包、真的錢在動。** 不是測試、不是 fork。
+
+| # | 動作 | 送出者 | 交易 | 結果 |
+|---|---|---|---|---|
+| 1 | **委派** WALLET → impl | WALLET 自己 | [`0xd5a7f1c3…`](https://sepolia.etherscan.io/tx/0xd5a7f1c3bce760b9f04b83d8078131426f4bf0a87eacf636efa7d0bf19caff1f) | 36,844 gas。code 變成 23 bytes 的 `0xef0100 \|\| impl` |
+| 2 | `bindAgent(AGENT, vendors, "vendors")` | WALLET | [`0xa65d10de…`](https://sepolia.etherscan.io/tx/0xa65d10de0916127571857e3af472a621c7a3827008526e70bdf090572cc6036a) | 94,036 gas。發 `AgentBound` **與 `Leashed`** |
+| 3 | `setRule`(單筆 500 / 日 1000 USDC) | WALLET + attestation | [`0x53f2bd28…`](https://sepolia.etherscan.io/tx/0x53f2bd28c633385e12057a9b4233926d5609c6bad058f6784e7ce155225060ce) | 148,349 gas。發 `TokenAllowed` + `LimitRaised` |
+| 4 | `allowPayee` | WALLET + attestation | [`0xbbfad4aa…`](https://sepolia.etherscan.io/tx/0xbbfad4aa9dbcfafabb65739f24f734ce4bd02cc5a04e206d518c8c62a94c1595) | 74,632 gas |
+| 5 | **🎬 幕一** `spend(USDC, payee, 200)` | **AGENT** | [`0x64e40eeb…`](https://sepolia.etherscan.io/tx/0x64e40eebad9bc31dd9e9c929aad85acf72ec04180c1330e42dd8464b8b60711a) | 144,129 gas。`PolicyResolved` → `Transfer` → `SpendExecuted`。**錢動了** |
+| 6 | **🎬 幕二** `spend` 給全新地址 600 | **AGENT** | [`0x66333f4a…`](https://sepolia.etherscan.io/tx/0x66333f4af0943cd5558c73328ea468bf5de87c17b8ab9c367a05d2691347aaf0) | 91,921 gas。**status = 1(不 revert)**、`SpendBlocked(reason=6)`、**沒有 `Transfer`** |
+| 7 | **🎬 幕四** `LeashRegistry.revoke("vendors")` | ADMIN | [`0x60188de3…`](https://sepolia.etherscan.io/tx/0x60188de308c44320146d7ade93f62b300c75f9cb43b4a1c4635ba2856164ef17) | 39,083 gas。**一筆交易讓 agent 停機** |
+| 8 | AGENT 再試合法付款 | AGENT | — | status = 1,但 `resolvePolicy` 回 `0x0` → 理由碼 3,**錢沒動** |
+| 9 | 重新發子名 → agent 恢復 | ADMIN → AGENT | — | 付款成功,累計 300 USDC |
+
+### 三件這次才第一次有鏈上證據的事
+
+**「擋下來」的證據是錢沒有動,不是交易紅字。** 第 6 步的交易**成功**(`status = 1`),
+但 USDC 沒有 `Transfer` 事件、`WALLET` 餘額不變、`spentInCurrentPeriod` 也沒有被加上去。
+`SpendBlocked` 的 data 解出來:
+
+```
+amount     0x23c34600 = 600 USDC
+reason     0x06       = PAYEE_NOT_ALLOWED
+spentSoFar 0x0bebc200 = 200 USDC
+limit      0x3b9aca00 = 1000 USDC
+```
+
+理由碼是 **6(收款人不在白名單)** 而不是 7(超單筆上限),因為 `StandardPolicy`
+由外而內回報最外層的違規 —— 正是 `test_reports_outermost_violation_first` 釘住的行為。
+
+**`Leashed` 真的在第一次 `bindAgent` 時發出來了。** EIP-7702 的委派不發任何 log,
+所以 subgraph 沒有 factory 事件可以觸發 address template。第 2 步的第二個事件
+(`data` = impl 位址)就是那個觸發點。設計時的推理在鏈上成立。
+
+**中間那一層撤銷:一筆交易、39,083 gas、全程沒碰 agent 的帳戶。**
+撤銷後 `getResolver` 與 `resolvePolicy` 都回 `0x0`,agent 的合法付款雖然交易成功
+卻一分錢都動不了。而重新發子名之後它立刻恢復 —— 這個迴圈可重跑,demo 不會一次用完。
+
+### ⚠️ 目前接的是 `MockAttester`
+
+第 3、4 步的 attestation 傳的是 `0x00`,而 `MockAttester` 對任何輸入都回 `true`。
+所以「擴權要刷臉」這件事**兩個條件裡只有一個真的守著**:
+`msg.sender == address(this)` 是真的(第 3、4 步都必須由 WALLET 自己送),
+attestation 那一半還是 mock。換成 `WorldAttester` 是 sprint 項目 8 的後半。
