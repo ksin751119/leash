@@ -19,6 +19,43 @@
 | `StandardPolicy` | `0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b` | [`0xff667665…`](https://sepolia.etherscan.io/tx/0xff6676659802654ca4ca35d0fa17b78a310df23fb95d1543cb2d729e14640ac7) |
 | `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
 
+### EIP-7702 執行層(2026-09-09 01:18 UTC 部署)
+
+| 合約 | 位址 | 部署交易 |
+|---|---|---|
+| `LeashAccount`(impl) | `0x136b33c68439C1ee8649048bb86E3a98ACd9B83C` | [`0x1aab21e0…`](https://sepolia.etherscan.io/tx/0x1aab21e0658c060431b94a198cba6cde9c5f27bf98bab668b1b4b4c365d51538) |
+| `LeashLens` | `0xB6eB4C26AF866057920f7AB6fAFf69A914067B83` | [`0x4e615801…`](https://sepolia.etherscan.io/tx/0x4e615801b448399e13611a6490ddd59ed01771189e22325a13c76cd60a0c5004) |
+
+`LeashAccount` 是 **impl,不是實例** —— 錢包用 EIP-7702 委派到它,程式碼在錢包自己的
+storage 上執行。所以「部署」和「有錢包在用它」是兩件事。
+
+部署後立刻在鏈上驗證的四件事:
+
+```
+impl code size                              12,858 bytes
+ETH_REGISTRY()                              0xBDC85dD5…F0E2   ← 與上表一致
+APPROVALS()                                 0x7CB9d4Ac…25B4
+ATTESTER()                                  0x268990a9…4124
+SELF()                                      0x136b33c6…B83C   ← 等於自己的部署位址
+resolvePolicy(vendors node, "vendors")      0x88F2bfF0…75cc   ← StandardPolicy
+```
+
+**最後一行是這個專案核心主張的第一次鏈上證據:** 一份正式部署的合約(不是測試)
+從真的 ENSv2 走完三跳,解出了真的 policy 位址。
+
+`SELF()` 等於部署位址這件事也值得記:它證明那個 `immutable` 抓到的是 **impl 自己**,
+不是執行時的 `address(this)`(在 delegate 裡那會是被委派的 EOA)。
+attestation 的 digest 靠這個區分「哪個錢包」和「哪一版 impl」。
+
+> ⚠️ **目前沒有任何錢包委派到它。** 委派要錢包自己簽 authorization:
+> ```bash
+> cast send $WALLET_ADDR --auth 0x136b33c68439C1ee8649048bb86E3a98ACd9B83C \
+>   --private-key $WALLET_PK --rpc-url $R
+> ```
+> 部署腳本刻意不含 `WALLET_PK` —— 那把鑰匙不該出現在部署流程裡。
+> 委派後可用 `LeashLens.delegateOf(wallet)` 確認,撤銷則是再送一筆 `--auth` 指向
+> `address(0)`(約 36,800 gas)。**那是錢包持有者手上的逃生口。**
+
 > ⚠️ **`MockAttester` 不做任何驗證,對任何輸入都回 `true`。**
 > 它的 `describe()` 誠實回傳 `"MockAttester (NO verification - testing only)"`,前端會顯示。
 > 而且 `attester` 在 `PolicyApprovals` 和 `LeashRegistry` 裡都是 **`immutable`** ——
