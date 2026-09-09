@@ -868,7 +868,12 @@ MSG
 - Produces:
   - `classifyReceipt(receipt, walletAddress)` → `{ outcome, reason, reasonName }` where `outcome` is `"executed"`, `"blocked"`, or `"no-event"`.
   - `async sendSpend({ rpcUrl, privKey, wallet, token, payee, amount })` → `{ tx, outcome, reason, reasonName }` or `{ error }`.
-- `classifyReceipt` is pure and is where the tests live; `sendSpend` owns viem and is exercised in Task 5.
+  - `redactUrls(text)` → the same text with any `http(s)://…` run replaced by `<rpc>`.
+- `classifyReceipt` and `redactUrls` are pure and are where the tests live. `sendSpend` owns
+  viem and is not unit-tested here — it is exercised for real in Task 5 Step 9. That is why
+  its error path's redaction is extracted into `redactUrls`: an untested redaction on a
+  secret-bearing string is exactly the defect found in Task 3, where the pinned test drove
+  the one path that was already safe.
 
 **Event topics** (computed with `cast keccak`, 2026-09-09):
 - `SpendExecuted(bytes32,address,address,address,uint256,address,uint256,uint256,uint64)` → `0xf0b4af7bfd5a13b5eff4d2de508be60041b405cee18bf6f135c692be137d1381`
@@ -880,7 +885,7 @@ MSG
 // agent/send.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyReceipt, TOPIC_EXECUTED, TOPIC_BLOCKED } from "./send.mjs";
+import { classifyReceipt, redactUrls, TOPIC_EXECUTED, TOPIC_BLOCKED } from "./send.mjs";
 
 const WALLET = "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6";
 const OTHER = "0x1111111111111111111111111111111111111111";
@@ -943,6 +948,21 @@ test("SpendBlocked wins if both appear, because a block is the safer reading", (
   assert.equal(r.outcome, "blocked");
 });
 
+test("redactUrls removes an rpc url carrying an api key", () => {
+  const msg = 'HTTP request failed. URL: https://eth-sepolia.g.alchemy.com/v2/SECRET-KEY-abc123';
+  const out = redactUrls(msg);
+  assert.ok(!out.includes("SECRET-KEY-abc123"), "the key must not survive");
+  assert.ok(!out.includes("alchemy.com"), "the host must not survive either");
+  assert.match(out, /<rpc>/);
+});
+
+test("redactUrls keeps the non-url detail, so it cannot regress to a generic message", () => {
+  const out = redactUrls("connect ECONNREFUSED https://eth-sepolia.example/KEY-xyz 443");
+  assert.match(out, /ECONNREFUSED/, "the diagnostic must survive");
+  assert.ok(!out.includes("KEY-xyz"));
+  assert.match(out, /443/, "detail after the url must survive too");
+});
+
 test("a truncated SpendBlocked data field does not throw", () => {
   const r = classifyReceipt(
     { logs: [{ address: WALLET, topics: [TOPIC_BLOCKED], data: "0x1234" }] },
@@ -982,6 +1002,16 @@ export const TOPIC_BLOCKED =
 
 const ABI = parseAbi(["function spend(address token, address payee, uint256 amount)"]);
 const lower = (a) => String(a ?? "").toLowerCase();
+
+// SEPOLIA_RPC carries an API key, so no error string may contain it. Extracted and exported
+// rather than inlined in the catch because sendSpend itself is not unit-tested - it needs a
+// chain - and an untested redaction on a secret-bearing string is the defect Task 3 shipped:
+// there the pinned test exercised the one path that was already safe, so the hole survived
+// review. Keep the non-url detail: an error that says only "something went wrong" costs real
+// debugging time on a path that fires when configuration is already broken.
+export function redactUrls(text) {
+  return String(text ?? "").replace(/https?:\/\/\S+/g, "<rpc>");
+}
 
 export function classifyReceipt(receipt, walletAddress) {
   const w = lower(walletAddress);
@@ -1023,7 +1053,7 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
     const msg = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
-    return { error: msg.replace(/https?:\/\/\S+/g, "<rpc>") };
+    return { error: redactUrls(msg) };
   }
 }
 ```
@@ -1031,7 +1061,7 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `cd agent && node --test send.test.mjs`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Prove the reason decode is not accidentally right**
 
@@ -1366,7 +1396,8 @@ Expected: PASS, 7 tests.
 cd agent && node --test && node check-reason-table.mjs
 ```
 Expected: all suites pass and `all 13 codes agree`. The count is **42 tests across five
-files** — reason 3, decide 16, subgraph 9, send 7, loop 7. If your total differs, say so
+files** — reason 4, decide 16, subgraph 11, send 9, loop 7 (reason and subgraph grew in
+their fix rounds). If your total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.
 
