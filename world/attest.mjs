@@ -111,7 +111,17 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
  *
  *      The regex below is deliberately *stricter* than IDKit's `Hex.validate`, which
  *      (non-strict by default) would also accept malformed hex like `0xnothex`. For every
- *      real digest the two agree; being stricter here only ever fails safe.
+ *      real digest the two agree.
+ *
+ *      It is NOT true, though, that being stricter only ever fails safe, and the one case
+ *      where it does not is worth naming: on odd-length hex the regex still matches and
+ *      `buf()` silently drops the trailing nibble, where IDKit's `ox` throws instead.
+ *      Measured: `hashSignal("0xabc")` returns `keccak(<0xab>) >> 8`, not an error. Nothing
+ *      reaches it that way today — `/api/attest` anchors the digest at exactly `{64}` hex
+ *      before this is called, and on `/api/verify` IDKit throws before our code runs — so
+ *      this is a divergence with no live path to it, not a bug. Do not widen the regex to
+ *      match `Hex.validate` on the strength of that: the anchor upstream is what makes it
+ *      moot, and it is the anchor that must stay.
  *
  *      The string branch must not move: `world/README.md` documents
  *      `hashSignal("") == 0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`,

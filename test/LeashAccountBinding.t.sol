@@ -321,10 +321,13 @@ contract LeashAccountBindingTest is Test {
         return keccak256(abi.encodePacked(hex"1901", acct.domainSeparator(), structHash));
     }
 
-    /// **But binding to the wrong name must not be permanent.** `unbindAgent` is entirely
-    /// free (unbinding is a reduction), after which it can be bound to the correct name —
-    /// both steps are reductions, and at no point in between does it hold more authority
-    /// than before.
+    /// **But binding to the wrong name must not be permanent.** `unbindAgent` is free for a
+    /// binding that has not been revoked (unbinding is a reduction), after which it can be
+    /// bound to the correct name — both steps are reductions, and at no point in between
+    /// does it hold more authority than before. A *revoked* binding is the one exception:
+    /// `unbindAgent` reverts `RevokedNeedsRestore` there, because deleting it would erase
+    /// the `revoked` flag that keeps `bindAgent` from restoring an agent for free. This
+    /// test's agent is never revoked, so it exercises the free path.
     function test_a_mis_binding_is_correctable_for_free() public {
         vm.startPrank(wallet);
         acct.bindAgent(AGENT, NODE, LABEL);
