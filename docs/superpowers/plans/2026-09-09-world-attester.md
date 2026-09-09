@@ -657,8 +657,15 @@ from RULE_TYPEHASH."
 
 - [ ] **Step 1: Write the failing tests**
 
+> ⚠️ **`vm.prank` and `vm.expectRevert` are single-shot, and `_sign` spends them.** `_sign`
+> makes a real staticcall to `att.attestationHash`, so writing `_sign(...)` inline as a call
+> argument fires it AFTER the cheatcode and consumes the cheatcode on the wrong call — the
+> widening then arrives from the test contract instead of `wallet` and the test fails with
+> `NotSelf()`, which looks like an access-control bug in `src/` and is not one. Precompute
+> `bytes memory blob = _sign(d, dl);` BEFORE every cheatcode. The reduction test can get away
+> with inline calls only because `startPrank` is not single-shot.
+
 ```solidity
-// test/WorldAttesterIntegration.t.sol
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
@@ -709,9 +716,10 @@ contract WorldAttesterIntegrationTest is Test {
     function test_allowPayee_with_a_real_signature_succeeds() public {
         uint64 dl = uint64(block.timestamp + 900);
         bytes32 d = acct.payeeDigest(node, TOKEN, PAYEE, 1);
+        bytes memory blob = _sign(d, dl);
 
         vm.prank(wallet);
-        acct.allowPayee(node, TOKEN, PAYEE, 1, _sign(d, dl));
+        acct.allowPayee(node, TOKEN, PAYEE, 1, blob);
 
         assertTrue(acct.isPayeeAllowed(node, TOKEN, PAYEE));
     }
@@ -747,10 +755,11 @@ contract WorldAttesterIntegrationTest is Test {
     function test_a_real_signature_does_not_help_an_outsider() public {
         uint64 dl = uint64(block.timestamp + 900);
         bytes32 d = acct.payeeDigest(node, TOKEN, PAYEE, 1);
+        bytes memory blob = _sign(d, dl);
 
         vm.prank(address(0xDEAD));
         vm.expectRevert(LeashAccount.NotSelf.selector);
-        acct.allowPayee(node, TOKEN, PAYEE, 1, _sign(d, dl));
+        acct.allowPayee(node, TOKEN, PAYEE, 1, blob);
     }
 
     /// `setRule` is the other widening act three could show, and it is the one that had no
@@ -766,9 +775,10 @@ contract WorldAttesterIntegrationTest is Test {
             epoch: 0
         });
         uint64 dl = uint64(block.timestamp + 900);
+        bytes memory blob = _sign(acct.ruleDigest(node, TOKEN, r, 1), dl);
 
         vm.prank(wallet);
-        acct.setRule(node, TOKEN, r, 1, _sign(acct.ruleDigest(node, TOKEN, r, 1), dl));
+        acct.setRule(node, TOKEN, r, 1, blob);
 
         assertEq(acct.ruleOf(node, TOKEN).periodLimit, 1000e6);
     }
