@@ -1039,6 +1039,35 @@ export function buildVerifyPayload({ digest, proof, action }) {
     ],
   };
 }
+
+/// The environment /api/attest needs before it can do anything, checked as a pure
+/// function of an env-like object so it can be tested without starting the server or
+/// touching the network.
+///
+/// `WORLD_ACTION` gets its own named failure rather than folding into a generic
+/// "misconfigured" error, because its failure mode is worse than the other two: `ACTION`
+/// in server.mjs falls back to `"expand-policy"` for the verification harness's other
+/// routes (`/api/config`, `/api/precheck`, `/api/verify`), which is fine for those — but
+/// that default was already consumed on 2026-09-07, and `max_verifications` cannot be
+/// raised for a consumed action. If `/api/attest` reused that fallback, an unset
+/// `WORLD_ACTION` would make it silently send a dead action to World on every call — a
+/// failure that looks like "World is being weird" during a live demo, when it is really
+/// a missing environment variable. Returning `null` here is what lets the caller use the
+/// fallback-free `process.env.WORLD_ACTION` (never the module-level `ACTION` constant)
+/// once this passes.
+export function checkAttestEnv(env) {
+  if (!env.WORLD_RP_SIGNER_PK) return "WORLD_RP_SIGNER_PK not set";
+  if (!env.WORLD_ATTESTER) return "WORLD_ATTESTER not set";
+  if (!env.WORLD_ACTION) {
+    return (
+      'WORLD_ACTION not set: the built-in default ("expand-policy") was already consumed ' +
+      "on 2026-09-07 and max_verifications cannot be raised for a consumed action. " +
+      "Create a fresh action in the Portal and set WORLD_ACTION to it before running " +
+      "/api/attest."
+    );
+  }
+  return null;
+}
 ```
 
 Add `import { randomBytes } from "node:crypto";` alongside the other imports at the top of `attest.mjs` for `buildVerifyPayload`'s nonce.
@@ -1165,28 +1194,32 @@ Insert immediately after the `/api/verify` block closes (currently line 142), be
     //
     // `/api/attest` is raw JSON with no trusted caller, so `proof` (and the rest of the
     // body) is attacker-controlled. `signal_hash` and `action` are therefore pinned inside
-    // buildVerifyPayload — from `digest` and the server's own `ACTION`, never from the
+    // buildVerifyPayload — from `digest` and `process.env.WORLD_ACTION`, never from the
     // request body — rather than trusted from the caller. See buildVerifyPayload's
     // docstring in attest.mjs for the two attacks that closes: a captured proof's own
     // signal_hash moving the same face scan to a different digest, and a proof from an
     // already-retired action (this app mints a fresh one per demo, since
     // max_verifications is 1 and cannot be raised) still buying a widening today. Note the
     // deliberate absence of `action` in the destructure below — the request body's
-    // `action` field, if a caller sends one, is never read.
+    // `action` field, if a caller sends one, is never read. And see checkAttestEnv's
+    // docstring for why WORLD_ACTION has no fallback here even though the module-level
+    // ACTION (used by the other routes) does.
     if (req.method === "POST" && req.url === "/api/attest") {
       const { digest, proof } = await readBody(req);
       if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
         return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
       }
       if (!proof) return json(res, 400, { error: "missing proof" });
-      if (!process.env.WORLD_RP_SIGNER_PK) {
-        return json(res, 500, { error: "WORLD_RP_SIGNER_PK not set" });
-      }
-      if (!process.env.WORLD_ATTESTER) {
-        return json(res, 500, { error: "WORLD_ATTESTER not set" });
-      }
 
-      const payload = buildVerifyPayload({ digest, proof, action: ACTION });
+      // checkAttestEnv also refuses to run without WORLD_ACTION set — the module-level
+      // ACTION above falls back to "expand-policy" for the other routes, but that
+      // default was consumed on 2026-09-07 and must never reach World from here. Use
+      // process.env.WORLD_ACTION directly below, not ACTION, so the fallback stays
+      // unreachable even if this guard is ever loosened.
+      const attestEnvErr = checkAttestEnv(process.env);
+      if (attestEnvErr) return json(res, 500, { error: attestEnvErr });
+
+      const payload = buildVerifyPayload({ digest, proof, action: process.env.WORLD_ACTION });
 
       const r = await fetch(VERIFY_URL, {
         method: "POST",
@@ -1221,7 +1254,7 @@ Add the import at the top, beside the existing `@noble/hashes` import (and drop 
 `hashSignal` definition — it now lives in `attest.mjs`, shared with `buildVerifyPayload`):
 
 ```js
-import { signAttestation, buildVerifyPayload, hashSignal } from "./attest.mjs";
+import { signAttestation, buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
 ```
 
 - [ ] **Step 4b: Add `world/check-payload-binding.mjs` and mutation-check it**
@@ -1267,6 +1300,46 @@ Mutation-check it: temporarily change `buildVerifyPayload` back to
 `action: proof.action ?? action`, run `node check-payload-binding.mjs`, confirm both lines
 print `FAIL` and the exit code is 1, then revert. If the mutated version still prints
 `all checks agree`, the check is vacuous — fix the check, not the code.
+
+- [ ] **Step 4c: Extend the same check for `checkAttestEnv` (review round 2)**
+
+A small guard round 2 added: `/api/attest` must refuse to run without `WORLD_ACTION`
+set, rather than silently falling back to the module-level `ACTION` — a consumed action —
+the way the other routes do. Extend `check-payload-binding.mjs` (kept in the same file
+rather than a sibling, since both are "does /api/attest trust something it must not"
+checks over attest.mjs's exported functions, and one `node check-payload-binding.mjs`
+tells the whole story for this endpoint's trust boundary) with:
+
+```js
+import { buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
+// ... existing checks above, unchanged ...
+
+const fullEnv = {
+  WORLD_RP_SIGNER_PK: "0x" + "11".repeat(32),
+  WORLD_ATTESTER: "0x" + "22".repeat(20),
+  WORLD_ACTION: "demo-2026-09-09",
+};
+const envCases = [
+  ["all three vars set", fullEnv, false],
+  ["WORLD_RP_SIGNER_PK missing", { ...fullEnv, WORLD_RP_SIGNER_PK: undefined }, true],
+  ["WORLD_ATTESTER missing", { ...fullEnv, WORLD_ATTESTER: undefined }, true],
+  ["WORLD_ACTION missing", { ...fullEnv, WORLD_ACTION: undefined }, true],
+];
+for (const [label, env, wantError] of envCases) {
+  const err = checkAttestEnv(env);
+  const ok = wantError ? typeof err === "string" && err.length > 0 : err === null;
+  console.log(`${ok ? "ok  " : "FAIL"}  checkAttestEnv: ${label}${err ? ` -> ${err}` : ""}`);
+  if (!ok) bad++;
+}
+const actionErr = checkAttestEnv({ ...fullEnv, WORLD_ACTION: undefined });
+const namesTheVar = typeof actionErr === "string" && actionErr.includes("WORLD_ACTION");
+console.log(`${namesTheVar ? "ok  " : "FAIL"}  the WORLD_ACTION error names the variable`);
+if (!namesTheVar) bad++;
+```
+
+Mutation-check it: temporarily remove the `if (!env.WORLD_ACTION) { ... }` block from
+`checkAttestEnv`, run `node check-payload-binding.mjs`, confirm the `WORLD_ACTION missing`
+and `names the variable` lines print `FAIL` with exit code 1, then revert.
 
 - [ ] **Step 5: Verify the JS hash against the contract, locally first**
 

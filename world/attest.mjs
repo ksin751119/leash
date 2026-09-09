@@ -136,3 +136,32 @@ export function buildVerifyPayload({ digest, proof, action }) {
     ],
   };
 }
+
+/// The environment /api/attest needs before it can do anything, checked as a pure
+/// function of an env-like object so it can be tested without starting the server or
+/// touching the network.
+///
+/// `WORLD_ACTION` gets its own named failure rather than folding into a generic
+/// "misconfigured" error, because its failure mode is worse than the other two: `ACTION`
+/// in server.mjs falls back to `"expand-policy"` for the verification harness's other
+/// routes (`/api/config`, `/api/precheck`, `/api/verify`), which is fine for those — but
+/// that default was already consumed on 2026-09-07, and `max_verifications` cannot be
+/// raised for a consumed action. If `/api/attest` reused that fallback, an unset
+/// `WORLD_ACTION` would make it silently send a dead action to World on every call — a
+/// failure that looks like "World is being weird" during a live demo, when it is really
+/// a missing environment variable. Returning `null` here is what lets the caller use the
+/// fallback-free `process.env.WORLD_ACTION` (never the module-level `ACTION` constant)
+/// once this passes.
+export function checkAttestEnv(env) {
+  if (!env.WORLD_RP_SIGNER_PK) return "WORLD_RP_SIGNER_PK not set";
+  if (!env.WORLD_ATTESTER) return "WORLD_ATTESTER not set";
+  if (!env.WORLD_ACTION) {
+    return (
+      'WORLD_ACTION not set: the built-in default ("expand-policy") was already consumed ' +
+      "on 2026-09-07 and max_verifications cannot be raised for a consumed action. " +
+      "Create a fresh action in the Portal and set WORLD_ACTION to it before running " +
+      "/api/attest."
+    );
+  }
+  return null;
+}

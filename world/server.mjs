@@ -12,7 +12,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { signAttestation, buildVerifyPayload, hashSignal } from "./attest.mjs";
+import { signAttestation, buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -133,23 +133,27 @@ const server = createServer(async (req, res) => {
     //
     // `/api/attest` is raw JSON with no trusted caller, so `proof` (and the rest of the
     // body) is attacker-controlled. `signal_hash` and `action` are therefore pinned inside
-    // buildVerifyPayload — from `digest` and the server's own `ACTION`, never from the
+    // buildVerifyPayload — from `digest` and `process.env.WORLD_ACTION`, never from the
     // request body — rather than trusted from the caller. See buildVerifyPayload's
-    // docstring in attest.mjs for the two attacks that closes.
+    // docstring in attest.mjs for the two attacks that closes, and checkAttestEnv's for
+    // why WORLD_ACTION has no fallback here even though ACTION (used by the other
+    // routes) does.
     if (req.method === "POST" && req.url === "/api/attest") {
       const { digest, proof } = await readBody(req);
       if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
         return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
       }
       if (!proof) return json(res, 400, { error: "missing proof" });
-      if (!process.env.WORLD_RP_SIGNER_PK) {
-        return json(res, 500, { error: "WORLD_RP_SIGNER_PK not set" });
-      }
-      if (!process.env.WORLD_ATTESTER) {
-        return json(res, 500, { error: "WORLD_ATTESTER not set" });
-      }
 
-      const payload = buildVerifyPayload({ digest, proof, action: ACTION });
+      // checkAttestEnv (attest.mjs) also refuses to run without WORLD_ACTION set — the
+      // module-level ACTION above falls back to "expand-policy" for the other routes,
+      // but that default was consumed on 2026-09-07 and must never reach World from
+      // here. Use process.env.WORLD_ACTION directly below, not ACTION, so the fallback
+      // stays unreachable even if this guard is ever loosened.
+      const attestEnvErr = checkAttestEnv(process.env);
+      if (attestEnvErr) return json(res, 500, { error: attestEnvErr });
+
+      const payload = buildVerifyPayload({ digest, proof, action: process.env.WORLD_ACTION });
 
       const r = await fetch(VERIFY_URL, {
         method: "POST",

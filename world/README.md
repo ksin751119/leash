@@ -33,6 +33,10 @@ running a live demo.
 `precheck`'s `can_user_verify` cannot answer "has this person already used theirs?" — it is
 an unauthenticated endpoint and does not know who is asking.
 
+`/api/attest` requires `WORLD_ACTION` to be set to a fresh action, and will refuse to run
+(500) without it — it does not fall back to the built-in default above, because that
+default (`expand-policy`) is itself a consumed action.
+
 ---
 
 ## ✅ Verified end to end (2026-09-07)
