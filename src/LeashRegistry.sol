@@ -5,51 +5,61 @@ import { ERC1155 } from "openzeppelin-contracts/contracts/token/ERC1155/ERC1155.
 import { IRegistry, IERC1155Singleton } from "./IRegistry.sol";
 import { IAttester } from "./IAttester.sol";
 
-/// @title LeashRegistry —— 每個 agent 一個 ENS 名字
-/// @notice 掛在 `leash.eth` 底下(`ETHRegistry.setSubregistry`),負責發 `vendors.leash.eth`
-///         這種 agent 子名。每個子名有自己的 resolver 記錄,也就是自己的 policy 指標。
+/// @title LeashRegistry — one ENS name per agent
+/// @notice Hangs under `leash.eth` (via `ETHRegistry.setSubregistry`) and issues agent
+///         subnames like `vendors.leash.eth`. Each subname has its own resolver record,
+///         which is to say its own policy pointer.
 ///
-/// @dev **為什麼要自己寫一個 registry,而不是把子名都塞進一份 resolver 的 mapping:**
+/// @dev **Why write a registry at all, instead of stuffing every subname into one
+///      resolver's mapping:**
 ///
-///      1. **`expiry` 是免費的 dead-man's switch。** 子名可以只發 24 小時 ——
-///         到期之後 `getResolver` 回 `address(0)`,agent 解不出 policy,錢就動不了。
-///         續期要人。這一條是 ENSv2 原生的,不必自己寫定時器。
-///      2. **三層撤銷的中間那一層。** 收回一個子名 = 殺掉那一個 agent,
-///         不影響其他 agent;而換掉整個 registry = 全部 agent 同時停機。
-///         沒有 registry,中間這一層就不存在。
-///      3. ENSv2 的解析是沿著 subregistry 指標往下走的,所以「掛一個自己的 registry」
-///         才是這個架構原本設計的用法,不是繞路。
+///      1. **`expiry` is a free dead man's switch.** A subname can be issued for 24 hours —
+///         once it lapses, `getResolver` returns `address(0)`, the agent cannot resolve a
+///         policy, and no money moves. Renewal takes a human. This comes native with
+///         ENSv2; no timer of our own to write.
+///      2. **It is the middle layer of the three revocation layers.** Taking back one
+///         subname kills that one agent and leaves the others alone; swapping the whole
+///         registry halts every agent at once. Without a registry the middle layer does
+///         not exist.
+///      3. ENSv2 resolution walks down subregistry pointers, so "hang your own registry"
+///         is how the architecture is meant to be used, not a detour.
 ///
-///      **與官方 `PermissionedRegistry` 的差異(刻意的):** 官方用 Enhanced Access
-///      Control —— 128 個角色 + 128 個對應的 admin bit。我們用「registry owner +
-///      registrar 白名單 + 每個名字一個 owner」這種簡單得多的模型。理由是 EAC 的
-///      複雜度買到的是「把個別權限授權下去給第三方」,而 Leash 的金鑰模型只有三把
-///      (ADMIN / WALLET / AGENT),沒有要授權給誰。**這是簡化,不是等價實作** ——
-///      寫在這裡免得日後被誤讀成完整的 EAC。
+///      **Deliberate differences from the official `PermissionedRegistry`:** theirs uses
+///      Enhanced Access Control — 128 roles plus 128 matching admin bits. We use a far
+///      simpler model: registry owner + a registrar allow-list + one owner per name. What
+///      EAC's complexity buys is delegating individual permissions to third parties, and
+///      Leash's key model has exactly three keys (ADMIN / WALLET / AGENT) with nobody to
+///      delegate to. **This is a simplification, not an equivalent implementation** —
+///      recorded here so it is not later misread as full EAC.
 ///
-///      tokenId 的推導**照官方實測反推**:`tokenId = keccak256(label)` 把**低 32 bits
-///      清零**,那 32 bits 放版本號。實測 `leash.eth`:
+///      The tokenId derivation was **reverse-engineered from the deployed contracts**:
+///      `tokenId = keccak256(label)` with the **low 32 bits zeroed**, those 32 bits
+///      holding a version. Measured on `leash.eth`:
 ///      `keccak256("leash")` = `0xe5edd0e4…55011342ffc412`,
-///      實際 tokenId       = `0xe5edd0e4…5501130000 0000`。
-///      版本號在名字被撤銷或過期重發時遞增,舊 token 因此一次失效。
+///      actual tokenId       = `0xe5edd0e4…5501130000 0000`.
+///      The version increments when a name is revoked or re-registered after expiry, which
+///      invalidates the old token in one step.
 contract LeashRegistry is IRegistry, ERC1155 {
-    /// @dev 低 32 bits 是版本號,不屬於名字的身分。
+    /// @dev The low 32 bits are a version, not part of the name's identity.
     uint256 internal constant VERSION_MASK = 0xffffffff;
 
-    /// @notice 子名最長可以發多久。
-    /// @dev 沒有上限的話,`register(label, owner, .., type(uint64).max)` 會**靜默地
-    ///      關掉 dead-man's switch** —— 那正是這份合約存在的主要理由。
-    ///      有上限就強迫「長期存活」必須反覆 `renew`,而 `renew` 要背書。
+    /// @notice The longest a subname can be issued for.
+    /// @dev Without a cap, `register(label, owner, .., type(uint64).max)` would **silently
+    ///      switch off the dead man's switch** — the very reason this contract exists. With
+    ///      a cap, staying alive long-term forces repeated `renew` calls, and `renew`
+    ///      requires an attestation.
     uint64 public constant MAX_DURATION = 365 days;
 
-    /// @notice `namehash("leash.eth")`。事件裡的 `node` 要用它算。
-    /// @dev 凍結的事件 schema 以 `node`(namehash)為 join key,而 registry 內部
-    ///      用的是 labelhash 推導的 tokenId。兩者都要有:tokenId 給 ERC-1155,
-    ///      node 給 subgraph 跟其他事件對接。
+    /// @notice `namehash("leash.eth")`. The `node` in the events is derived from it.
+    /// @dev The frozen event schema joins on `node` (a namehash), while the registry
+    ///      internally uses a tokenId derived from the labelhash. Both are needed: tokenId
+    ///      for ERC-1155, node so the subgraph can join against the other events.
     bytes32 public immutable PARENT_NODE;
 
-    /// @notice 發新子名與續期的背書來源。**`immutable`,沒有 setter。**
-    /// @dev C1 的教訓:可變的 attester 指標讓一把被偷的金鑰同時開兩道鎖。
+    /// @notice The attestation source for issuing and renewing subnames. **`immutable`,
+    ///         with no setter.**
+    /// @dev The lesson of C1: a mutable attester pointer lets one stolen key open both
+    ///      locks.
     IAttester public immutable attester;
 
     // --- EIP-712 ---
@@ -64,39 +74,44 @@ contract LeashRegistry is IRegistry, ERC1155 {
     bytes32 private constant NAME_HASH = keccak256("Leash");
     bytes32 private constant VERSION_HASH = keccak256("1");
 
-    /// @notice 用掉的 attestation。防重放,語意與 `PolicyApprovals` 一致。
+    /// @notice Spent attestations. Replay protection, with the same semantics as
+    ///         `PolicyApprovals`.
     mapping(bytes32 digest => bool) public attestationUsed;
 
     struct Entry {
-        address owner; // 這個名字的持有者。`address(0)` = 從未發出
-        address subregistry; // 往下一層。agent 名字通常是 0(葉節點)
-        address resolver; // 這個 agent 的 policy 指標從哪裡讀
-        uint64 expiry; // 到期時間。**過期後兩個 getter 都回 0**
-        uint32 version; // 併進 tokenId 低 32 bits
+        address owner; // Holder of this name. `address(0)` = never issued
+        address subregistry; // One level down. Usually 0 for an agent name (a leaf)
+        address resolver; // Where this agent's policy pointer is read from
+        uint64 expiry; // Expiry. **Once past it, both getters return 0**
+        uint32 version; // OR-ed into the low 32 bits of the tokenId
     }
 
-    /// @dev key 是 canonical id(清零版本號的),不是 tokenId ——
-    ///      這樣版本遞增之後,記錄仍然找得到。
+    /// @dev Keyed by canonical id (version bits zeroed), not tokenId — so the record is
+    ///      still findable after the version increments.
     mapping(uint256 canonicalId => Entry) internal _entries;
 
-    /// @notice registry 管理者(ADMIN)。可以指派 registrar、可以撤銷任何名字。
+    /// @notice The registry administrator (ADMIN). Can appoint registrars and revoke any
+    ///         name.
     address public owner;
 
-    /// @notice 誰可以發名字。跟 `owner` 分開,是為了讓「發名字」這件事能交給
-    ///         一個受背書的合約(例如要刷臉才發新 agent 的那個),而不必交出 owner。
+    /// @notice Who may issue names. Kept separate from `owner` so that issuance can be
+    ///         handed to an attested contract (say one that requires a face scan before
+    ///         creating a new agent) without handing over ownership.
     mapping(address => bool) public isRegistrar;
 
     IRegistry internal _parent;
     string internal _parentLabel;
 
-    /// @dev ENSv2 規定的事件 —— 索引端靠它知道有新子名。
+    /// @dev The event ENSv2 mandates — indexers learn about new subnames from it.
     event NewSubname(uint256 indexed labelHash, string label);
 
-    /// @dev 以下事件的名稱與欄位**對齊 `docs/events.md` 的凍結 schema**。
-    ///      初版擅自改名(`SubnameRegistered` → `NameRegistered` 等)且只帶 tokenId,
-    ///      沒帶 `node` —— 那讓 subgraph 無法跟 `PolicyPointerSet` / `SpendExecuted` /
-    ///      `AgentBound` 對接(那些都以 `node` 為 key),而且違反凍結規則卻沒留變更紀錄。
-    ///      code review 抓到。現在 `node` 是 indexed 的第一個欄位,tokenId 併在後面。
+    /// @dev The names and fields of the events below **match the frozen schema in
+    ///      `docs/events.md`**. The first version renamed them unilaterally
+    ///      (`SubnameRegistered` → `NameRegistered` and so on) and carried only a tokenId,
+    ///      no `node` — which left the subgraph unable to join against `PolicyPointerSet` /
+    ///      `SpendExecuted` / `AgentBound` (all keyed by `node`), and broke the freeze rule
+    ///      without recording a change. Code review caught it. `node` is now the first
+    ///      indexed field, with the tokenId alongside.
     event SubnameRegistered(
         bytes32 indexed node, string label, address indexed owner, uint64 expiry, uint256 tokenId
     );
@@ -144,11 +159,12 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // IRegistry —— 解析路徑。**這兩個 getter 是整條鏈的熱路徑。**
+    // IRegistry — the resolution path. **These two getters are the hot path of the
+    // entire chain.**
     // ---------------------------------------------------------------
 
     /// @inheritdoc IRegistry
-    /// @dev 過期就回 0。這是 dead-man's switch 的實際位置。
+    /// @dev Returns 0 once expired. This is where the dead man's switch actually lives.
     function getSubregistry(string calldata label) external view returns (IRegistry) {
         Entry storage e = _entries[canonicalIdOf(label)];
         if (!_isLive(e)) return IRegistry(address(0));
@@ -156,8 +172,9 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     /// @inheritdoc IRegistry
-    /// @dev 過期就回 0 —— agent 因此解不出 policy,`LeashAccount` 得到理由碼 3,錢不動。
-    ///      **「到期自動失效」不需要任何人送交易**,時間到了讀出來的值就變了。
+    /// @dev Returns 0 once expired — the agent can then resolve no policy, `LeashAccount`
+    ///      reports reason code 3, and no money moves. **Lapsing needs nobody to send a
+    ///      transaction**; when the time passes, the value read back simply changes.
     function getResolver(string calldata label) external view returns (address) {
         Entry storage e = _entries[canonicalIdOf(label)];
         if (!_isLive(e)) return address(0);
@@ -170,11 +187,13 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     /// @inheritdoc IERC1155Singleton
-    /// @dev 兩種情況都回 `address(0)`:
-    ///      1. 名字過期 —— 跟解析路徑一致,不會出現「token 還在但名字沒用了」兩套說法
-    ///      2. **tokenId 的版本號不是當前版本** —— 這就是那 32 bits 存在的意義。
-    ///         名字被撤銷或過期重發之後,舊 tokenId 與新的共用同一個 canonical id,
-    ///         少了這道比對,舊 token 會讀到新持有者。
+    /// @dev Returns `address(0)` in two cases:
+    ///      1. The name has expired — consistent with the resolution path, so there is
+    ///         never a "the token is still there but the name is dead" split story
+    ///      2. **The tokenId's version is not the current one** — this is what those 32
+    ///         bits are for. After a name is revoked or re-registered post-expiry, the old
+    ///         tokenId shares a canonical id with the new one, and without this check the
+    ///         old token would read back the new holder.
     function ownerOf(uint256 tokenId) public view returns (address) {
         uint256 cid = tokenId & ~VERSION_MASK;
         Entry storage e = _entries[cid];
@@ -184,15 +203,18 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // 發名字 / 收名字
+    // Issuing and taking back names
     // ---------------------------------------------------------------
 
-    /// @notice 發一個 agent 子名。
-    /// @param duration 秒。**這是那個 dead-man's switch** —— 短期名字到期自動失效。
-    /// @return tokenId 含版本號的 tokenId
+    /// @notice Issues an agent subname.
+    /// @param duration In seconds. **This is the dead man's switch** — a short-lived name
+    ///        lapses on its own.
+    /// @return tokenId The tokenId, version bits included
     ///
-    /// @dev 名字已被佔用且還活著 → revert。**過期的名字可以重發**,重發時版本號遞增,
-    ///      舊 token 因此一次失效(不需要逐一清理舊持有者的 balance 以外的狀態)。
+    /// @dev Reverts if the name is taken and still live. **An expired name can be
+    ///      re-registered**, and re-registering increments the version, which invalidates
+    ///      the old token in one step (no need to sweep any per-holder state beyond the
+    ///      balance).
     function register(
         string calldata label,
         address nameOwner,
@@ -208,9 +230,10 @@ contract LeashRegistry is IRegistry, ERC1155 {
         if (duration > MAX_DURATION) revert DurationTooLong(duration, MAX_DURATION);
         _requireNoDot(label);
 
-        // **兩個都要:registrar 且有背書。** 初版只有 `onlyRegistrar`,而
-        // `PLAN.md` 的不對稱表寫「開新 agent 子名 → 要刷臉」——
-        // 那句話當時是假的,整個合約裡沒有任何需要背書的路徑。code review 抓到。
+        // **Both are required: a registrar AND an attestation.** The first version had
+        // only `onlyRegistrar`, while the asymmetry table in `PLAN.md` said "issue a new
+        // agent subname → face scan required". That sentence was false at the time; no
+        // path in the contract required an attestation at all. Code review caught it.
         _consumeAttestation(
             keccak256(
                 abi.encode(
@@ -225,7 +248,8 @@ contract LeashRegistry is IRegistry, ERC1155 {
 
         if (_isLive(e)) revert NameTaken(cid | e.version, e.expiry);
 
-        // 過期重發:燒掉舊 token 並跳版本,舊 tokenId 從此指不到任何東西
+        // Re-registration after expiry: burn the old token and bump the version, so the
+        // old tokenId points at nothing from here on
         if (e.owner != address(0)) {
             _burn(e.owner, cid | e.version, 1);
             unchecked {
@@ -245,10 +269,13 @@ contract LeashRegistry is IRegistry, ERC1155 {
         emit SubnameRegistered(nodeOf(label), label, nameOwner, e.expiry, tokenId);
     }
 
-    /// @notice 收回一個名字。**這是三層撤銷的中間那一層 —— 殺掉一個 agent。**
-    /// @dev 不需要任何背書。**縮權永遠不該被擋** —— 出事時你不會想先找手機刷臉。
-    ///      registry owner 和名字持有者都能做。做完之後 `getResolver` 立刻回 0。
-    ///      版本號遞增,所以這個名字之後重發時是一個新 token。
+    /// @notice Takes a name back. **This is the middle of the three revocation layers —
+    ///         it kills one agent.**
+    /// @dev No attestation of any kind. **A reduction must never be blocked** — when
+    ///      something has gone wrong, hunting for your phone is the last thing you want to
+    ///      do. Both the registry owner and the name's holder can do it. Afterwards
+    ///      `getResolver` returns 0 immediately. The version increments, so a later
+    ///      re-registration of this name is a new token.
     function revoke(string calldata label) external {
         uint256 cid = canonicalIdOf(label);
         Entry storage e = _entries[cid];
@@ -258,9 +285,11 @@ contract LeashRegistry is IRegistry, ERC1155 {
         uint256 tokenId = cid | e.version;
         address holder = e.owner;
 
-        // `owner` 一定要清掉:token 在這裡就燒了、版本也跳了,
-        // 留著 owner 會讓之後的 `register` 以為還有一個舊 token 要燒(而那個版本從未 mint)。
-        // 代價是撤銷之後 `entryOf` 認不出原持有者 —— 所以把它寫進事件,subgraph 才查得到。
+        // `owner` must be cleared: the token is burned here and the version has already
+        // bumped, so leaving `owner` set would make a later `register` think there is
+        // still an old token to burn (at a version that was never minted).
+        // The cost is that `entryOf` can no longer name the former holder after a
+        // revocation — which is why it goes into the event, where the subgraph can find it.
         e.owner = address(0);
         e.expiry = 0;
         e.resolver = address(0);
@@ -273,8 +302,9 @@ contract LeashRegistry is IRegistry, ERC1155 {
         emit SubnameRevoked(nodeOf(label), msg.sender, holder, tokenId);
     }
 
-    /// @notice 續期。dead-man's switch 的「按一下」動作。
-    /// @dev 限 registrar —— 續期是**擴權方向**(延長 agent 的存活時間)。
+    /// @notice Renews. The act of pressing the dead man's switch again.
+    /// @dev Registrar-only — renewal points in the **widening direction** (it extends how
+    ///      long the agent stays alive).
     function renew(
         string calldata label,
         uint64 duration,
@@ -288,12 +318,14 @@ contract LeashRegistry is IRegistry, ERC1155 {
 
         uint64 old = e.expiry;
         uint64 next = old + duration;
-        // 續期後的**剩餘**期限也不能超過上限,否則反覆 renew 就等於沒有上限。
+        // The **remaining** term after renewal must also stay under the cap, otherwise
+        // repeated renewals amount to no cap at all.
         if (next > uint64(block.timestamp) + MAX_DURATION) {
             revert DurationTooLong(next - uint64(block.timestamp), MAX_DURATION);
         }
 
-        // 續期延長 dead-man's switch,**那是擴權**,所以要背書。
+        // Renewal extends the dead man's switch, **which is a widening**, so it needs an
+        // attestation.
         _consumeAttestation(
             keccak256(abi.encode(RENEW_TYPEHASH, keccak256(bytes(label)), duration, nonce)),
             attestation
@@ -304,33 +336,38 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // 名字持有者可以改的東西
+    // What can be changed, and by whom
     // ---------------------------------------------------------------
 
-    /// @notice 換這個 agent 該讀哪一份 policy 指標。**只有 registry owner。**
+    /// @notice Changes which policy pointer this agent reads. **Registry owner only.**
     ///
-    /// @dev **這裡刻意偏離 ENS 的常態,而且那是整個設計的重點。**
-    ///      標準 ENS 裡名字持有者當然能設自己的 resolver。我們不行 ——
-    ///      因為在 Leash 的模型裡,**名字是韁繩,不是財產:它管住持有者,不屬於持有者。**
+    /// @dev **This deliberately departs from normal ENS practice, and that departure is
+    ///      the point of the design.** In standard ENS a name's holder can of course set
+    ///      its own resolver. Here they cannot — because in Leash's model **a name is a
+    ///      leash, not a possession: it governs its holder rather than belonging to them.**
     ///
-    ///      初版接受 `msg.sender == e.owner`。今天是惰性的(子名發給 ADMIN),
-    ///      但只要有一天把子名發給 WALLET —— 而「每個 agent 一個錢包」是很自然的用法 ——
-    ///      WALLET 就能**改自己的 policy 指標**,與 `docs/ensv2-sepolia.md` 實測的
-    ///      `roles(WALLET) = 0` 和「agent 本來就不該能改自己的 policy」直接矛盾。
-    ///      code review 抓到這個潛伏的權限。
+    ///      The first version accepted `msg.sender == e.owner`. Today that is dormant
+    ///      (subnames are issued to ADMIN), but the day a subname is issued to WALLET —
+    ///      and "one wallet per agent" is an entirely natural usage — WALLET could
+    ///      **repoint its own policy**, in direct contradiction with the measured
+    ///      `roles(WALLET) = 0` in `docs/ensv2-sepolia.md` and with the premise that an
+    ///      agent must not be able to change its own policy. Code review caught this
+    ///      latent permission.
     ///
-    ///      **誠實界定這個權力的範圍:** ADMIN 可以把名字指到另一份 policy,
-    ///      而**不需要背書**。這是刻意的 —— 「換一條更嚴的規則」是三層撤銷裡最輕的那一層,
-    ///      不該被擋。代價是 ADMIN 也可以指到一份**較寬鬆**的 policy,
-    ///      但那份 policy 必須已經在批准清單裡(意即曾經有真人核准過它),
-    ///      所以爆炸半徑上限是「所有已批准的 policy」,不是「任意程式碼」。
+    ///      **Bounding this power honestly:** ADMIN can point the name at a different
+    ///      policy **with no attestation**. That is deliberate — "swap in a stricter rule"
+    ///      is the lightest of the three revocation layers and must not be blocked. The
+    ///      cost is that ADMIN can also point at a **more permissive** policy — but that
+    ///      policy must already be on the approval list (meaning a real human approved it
+    ///      at some point), so the blast radius is bounded by "every approved policy", not
+    ///      "arbitrary code".
     function setResolver(string calldata label, address resolver) external onlyOwner {
         Entry storage e = _requireLive(label);
         e.resolver = resolver;
         emit ResolverChanged(nodeOf(label), resolver, canonicalIdOf(label) | e.version);
     }
 
-    /// @notice 見 `setResolver` —— 同樣只有 registry owner。
+    /// @notice See `setResolver` — registry owner only, for the same reasons.
     function setSubregistry(string calldata label, address subregistry) external onlyOwner {
         Entry storage e = _requireLive(label);
         e.subregistry = subregistry;
@@ -338,7 +375,7 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // 管理
+    // Administration
     // ---------------------------------------------------------------
 
     function setRegistrar(address registrar, bool allowed) external onlyOwner {
@@ -346,8 +383,9 @@ contract LeashRegistry is IRegistry, ERC1155 {
         emit RegistrarSet(registrar, allowed);
     }
 
-    /// @dev 由父層在 `setSubregistry` 之後告知我們自己掛在哪 —— `getParent()` 要用。
-    ///      這個值**不影響解析**,只是讓索引端能往上組出完整名字。
+    /// @dev Called by the parent after its `setSubregistry`, to tell us where we hang —
+    ///      `getParent()` needs it. The value **does not affect resolution**; it only lets
+    ///      an indexer reassemble the full name upwards.
     function setParent(IRegistry parent, string calldata label) external onlyOwner {
         _parent = parent;
         _parentLabel = label;
@@ -361,16 +399,18 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // 查詢輔助
+    // Query helpers
     // ---------------------------------------------------------------
 
-    /// @notice label 的 canonical id —— labelhash 低 32 bits 清零。
+    /// @notice The label's canonical id — its labelhash with the low 32 bits zeroed.
     function canonicalIdOf(string memory label) public pure returns (uint256) {
         return uint256(keccak256(bytes(label))) & ~VERSION_MASK;
     }
 
-    /// @notice `namehash("<label>.leash.eth")` —— 事件與 resolver 記錄用的 key。
-    /// @dev 父層固定,所以只要一次 keccak 接上 `PARENT_NODE`,不需要走完整的遞迴。
+    /// @notice `namehash("<label>.leash.eth")` — the key used by the events and by
+    ///         resolver records.
+    /// @dev The parent is fixed, so one keccak against `PARENT_NODE` suffices; the full
+    ///      recursion is unnecessary.
     function nodeOf(string memory label) public view returns (bytes32) {
         return keccak256(abi.encodePacked(PARENT_NODE, keccak256(bytes(label))));
     }
@@ -381,7 +421,8 @@ contract LeashRegistry is IRegistry, ERC1155 {
         );
     }
 
-    /// @notice 發子名要被背書的 digest。前端、後端、鏈上三邊用同一個算法。
+    /// @notice The digest to be attested for issuing a subname. The frontend, the backend
+    ///         and the chain all compute it the same way.
     function registerDigest(
         string calldata label,
         address nameOwner,
@@ -407,7 +448,7 @@ contract LeashRegistry is IRegistry, ERC1155 {
         );
     }
 
-    /// @notice 續期要被背書的 digest。
+    /// @notice The digest to be attested for a renewal.
     function renewDigest(string calldata label, uint64 duration, uint256 nonce)
         external
         view
@@ -422,7 +463,8 @@ contract LeashRegistry is IRegistry, ERC1155 {
         );
     }
 
-    /// @notice 目前活著的 tokenId(含版本號)。名字不存在時回 0。
+    /// @notice The currently live tokenId (version bits included). 0 if the name does not
+    ///         exist.
     function tokenIdOf(string calldata label) external view returns (uint256) {
         uint256 cid = canonicalIdOf(label);
         Entry storage e = _entries[cid];
@@ -430,7 +472,8 @@ contract LeashRegistry is IRegistry, ERC1155 {
         return cid | e.version;
     }
 
-    /// @notice 一次拿到一個 agent 名字的完整狀態,省 RPC。前端和 subgraph 都用這個。
+    /// @notice Fetches an agent name's full state in one call, saving round trips. Used by
+    ///         both the frontend and the subgraph.
     function entryOf(string calldata label)
         external
         view
@@ -438,8 +481,9 @@ contract LeashRegistry is IRegistry, ERC1155 {
     {
         Entry storage e = _entries[canonicalIdOf(label)];
         live = _isLive(e);
-        // 過期的名字照實回報 expiry 和 owner —— 呼叫端要看得出「曾經有過但過期了」
-        // 和「從來沒發過」的差別。live 那個 bool 才是能不能用的答案。
+        // An expired name still reports its expiry and owner faithfully — the caller has
+        // to be able to tell "existed once, then lapsed" from "never issued". The `live`
+        // bool is the answer to whether it is usable.
         return (e.owner, e.resolver, e.subregistry, e.expiry, live);
     }
 
@@ -449,24 +493,26 @@ contract LeashRegistry is IRegistry, ERC1155 {
     }
 
     // ---------------------------------------------------------------
-    // 內部
+    // Internals
     // ---------------------------------------------------------------
 
     function _isLive(Entry storage e) private view returns (bool) {
         return e.owner != address(0) && e.expiry > block.timestamp;
     }
 
-    /// @dev 只檢查「名字還活著」。授權由呼叫端的 modifier 決定 ——
-    ///      `setResolver` / `setSubregistry` 是 `onlyOwner`,`revoke` 另有一套
-    ///      (owner **或**名字持有者,因為撤銷是縮權)。
+    /// @dev Checks only that the name is still live. Authorisation is the caller's
+    ///      modifier's job — `setResolver` / `setSubregistry` are `onlyOwner`, while
+    ///      `revoke` has its own rule (owner **or** the name's holder, because revoking is
+    ///      a reduction).
     function _requireLive(string calldata label) private view returns (Entry storage e) {
         uint256 cid = canonicalIdOf(label);
         e = _entries[cid];
         if (!_isLive(e)) revert NameNotLive(cid | e.version);
     }
 
-    /// @dev label 裡有 `.` 會產生一個永遠解析不到的名字 —— ENS 的解析是逐層走 label 的,
-    ///      `"a.b"` 這個 label 不等於 `a.b.leash.eth`。靜默地發一個壞名字比 revert 糟。
+    /// @dev A `.` inside a label produces a name that can never resolve — ENS resolution
+    ///      walks one label at a time, and the single label `"a.b"` is not `a.b.leash.eth`.
+    ///      Silently issuing a broken name is worse than reverting.
     function _requireNoDot(string calldata label) private pure {
         bytes calldata b = bytes(label);
         for (uint256 i = 0; i < b.length; ++i) {
@@ -474,8 +520,9 @@ contract LeashRegistry is IRegistry, ERC1155 {
         }
     }
 
-    /// @dev 背書的消費點。digest 包 EIP-712 domain(綁 chainId 與這份合約),
-    ///      並在用掉後永久標記 —— 語意與 `PolicyApprovals` 一致。
+    /// @dev Where an attestation is spent. The digest wraps the EIP-712 domain (binding
+    ///      chainId and this contract) and is marked permanently once used — the same
+    ///      semantics as `PolicyApprovals`.
     function _consumeAttestation(bytes32 structHash, bytes calldata attestation) private {
         bytes32 digest = keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
         if (attestationUsed[digest]) revert AttestationReused(digest);
@@ -483,19 +530,22 @@ contract LeashRegistry is IRegistry, ERC1155 {
         attestationUsed[digest] = true;
     }
 
-    /// @dev ERC-1155 轉讓之後,`Entry.owner` 要跟著動 —— 否則 `ownerOf` 和 token 餘額
-    ///      會給出兩套說法。這是 singleton 語意的代價:同一件事存在兩個地方。
+    /// @dev After an ERC-1155 transfer, `Entry.owner` has to follow — otherwise `ownerOf`
+    ///      and the token balance tell two different stories. That is the price of
+    ///      singleton semantics: the same fact lives in two places.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
         internal
         override
     {
         super._update(from, to, ids, values);
-        // mint(from == 0)和 burn(to == 0)由 register / revoke 自己維護 Entry.owner
+        // For mint (from == 0) and burn (to == 0), register / revoke maintain Entry.owner
+        // themselves
         if (from == address(0) || to == address(0)) return;
         for (uint256 i = 0; i < ids.length; ++i) {
             uint256 cid = ids[i] & ~VERSION_MASK;
-            // 版本不符的 token 餘額必為 0,`super._update` 已經會 revert;
-            // 這道比對是保險 —— 絕不讓一個過期版本的 token 改寫當前 Entry。
+            // A token at a stale version necessarily has a zero balance, so
+            // `super._update` would already have reverted; this check is belt and braces —
+            // never let a stale-version token rewrite the current Entry.
             if ((ids[i] & VERSION_MASK) != _entries[cid].version) continue;
             _entries[cid].owner = to;
         }

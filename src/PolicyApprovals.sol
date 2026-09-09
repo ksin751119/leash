@@ -4,44 +4,51 @@ pragma solidity 0.8.28;
 import { IPolicyApprovals } from "./IPolicyApprovals.sol";
 import { IAttester } from "./IAttester.sol";
 
-/// @title PolicyApprovals —— 哪些 policy 位址是真人批准過的
-/// @notice 這份清單是 Leash 安全模型裡的**第二把鎖**。ENS 指標(誰指向哪份 policy)
-///         由 ADMIN 控制;這份清單由**真人**控制。
+/// @title PolicyApprovals — which policy addresses a real human has approved
+/// @notice This list is the **second lock** in Leash's security model. The ENS pointer
+///         (who points at which policy) is controlled by ADMIN; this list is controlled by
+///         a **human**.
 ///
-/// @dev **這份合約沒有 owner,而那是刻意的。**
+/// @dev **This contract has no owner, and that is deliberate.**
 ///
-///      初版有 `owner` 和 `setAttester(onlyOwner)`,而部署腳本把 `PolicyApprovals`、
-///      `LeashResolver`、`LeashRegistry` 的 owner 都設成同一把 ADMIN 金鑰。
-///      code review 指出這讓**一把鑰匙同時開兩道鎖**:
-///      `setAttester(永遠回true的東西)` → `approve(任何東西)`,
-///      直接推翻我們寫在 `PLAN.md` 裡的那句「ADMIN 金鑰被偷,攻擊者改得動指標,
-///      但指不到一份沒被批准過的 policy」。
+///      The first version had an `owner` and `setAttester(onlyOwner)`, and the deploy
+///      script set the owner of `PolicyApprovals`, `LeashResolver` and `LeashRegistry` all
+///      to the same ADMIN key. Code review pointed out that this made **one key open both
+///      locks**: `setAttester(something that always returns true)` → `approve(anything)`,
+///      which flatly refutes the sentence we had written in `PLAN.md` — "if the ADMIN key
+///      is stolen the attacker can move the pointer, but cannot point it at a policy that
+///      was never approved".
 ///
-///      修法不是「換一把鑰匙持有它」——那只是把問題搬家。修法是**拿掉那個可變性**:
-///      `attester` 是 `immutable`,沒有 setter,所以也就不需要 owner。
-///      要換 attester 只能部署一份新的 `PolicyApprovals`,而那是一筆看得見的鏈上交易。
+///      The fix is not "have a different key hold it" — that only relocates the problem.
+///      The fix is to **remove the mutability**: `attester` is `immutable` with no setter,
+///      which is precisely why no owner is needed. Changing the attester means deploying a
+///      new `PolicyApprovals`, and that is a visible onchain transaction.
 ///
-///      不對稱是刻意的,而且是整個設計的重點:
+///      The asymmetry is deliberate, and it is the point of the whole design:
 ///
-///      | 動作 | 要背書 | 為什麼 |
+///      | Action | Needs attestation | Why |
 ///      |---|---|---|
-///      | `approve` —— 讓一份新 policy 可用 | ✅ 要 | 被入侵的 agent 最想做的就是幫自己批准一份寬鬆規則 |
-///      | `revoke` —— 讓一份 policy 失效 | ❌ 不要 | 出事時你不會想先找手機刷臉 |
+///      | `approve` — make a new policy usable | ✅ yes | The first thing a compromised agent wants is to approve permissive rules for itself |
+///      | `revoke` — take a policy out of service | ❌ no | When something has gone wrong, hunting for your phone is the last thing you want to do |
 ///
-///      `revoke` 連 owner 都不限:**任何人都能撤銷**。看起來很怪,但想清楚就對了 ——
-///      撤銷只會讓系統更嚴(那份 policy 從此擋下所有花費),而讓「踩煞車」需要權限,
-///      是在真的出事的那一刻幫攻擊者省事。誰按都一樣,煞車就是煞車。
+///      `revoke` is not even restricted to an owner: **anyone can revoke**. That looks
+///      strange until you follow it through — revoking can only make the system stricter
+///      (that policy now blocks every spend), and putting a permission on the brake pedal
+///      does the attacker a favour at exactly the moment things go wrong. It does not
+///      matter who pushes it; a brake is a brake.
 contract PolicyApprovals is IPolicyApprovals {
-    /// @notice 唯一的批准來源。**沒有 setter** —— 見合約註解。
+    /// @notice The only source of approval. **No setter** — see the contract notes.
     IAttester public immutable attester;
 
-    /// @notice 介面要的 `isApproved(address)` 由這個 public mapping 直接提供 getter。
+    /// @notice The `isApproved(address)` the interface requires is the auto-generated
+    ///         getter of this public mapping.
     mapping(address policy => bool) public isApproved;
 
-    /// @notice 批准當下記下的說明字串,前端拿來顯示「這條規則是什麼」。
+    /// @notice The description recorded at approval time; the frontend shows it as "what
+    ///         this rule is".
     mapping(address policy => string) public descriptionOf;
 
-    /// @notice 用掉的 attestation。**防重放的核心** —— 見 `approve`。
+    /// @notice Spent attestations. **The core of replay protection** — see `approve`.
     mapping(bytes32 digest => bool) public attestationUsed;
 
     // --- EIP-712 ---
@@ -65,27 +72,31 @@ contract PolicyApprovals is IPolicyApprovals {
     error AttestationReused(bytes32 digest);
 
     constructor(IAttester attester_) {
-        // attester 不能是 0:那會讓整份清單永遠批准不了任何東西,
-        // 而且沒有 setter 可以救。寧可部署時就失敗。
+        // The attester cannot be 0: that would leave the list permanently unable to
+        // approve anything, with no setter to recover. Better to fail at deploy time.
         if (address(attester_) == address(0)) revert ZeroAttester();
         attester = attester_;
     }
 
-    /// @notice 批准一份 policy。**要真人背書,而且一份背書只能用一次。**
-    /// @param nonce 由簽發端選;同一組 (policy, description) 換 nonce 就是換一份背書
+    /// @notice Approves a policy. **Requires a human attestation, and each attestation
+    ///         can be used exactly once.**
+    /// @param nonce Chosen by the issuer; the same (policy, description) pair with a
+    ///        different nonce is a different attestation
     ///
-    /// @dev **這裡沒有 sender 檢查,而那是對的** —— 門檻是背書,不是身分,
-    ///      因為這是一份**全域單例**清單,「誰送這筆交易」不影響結果。
-    ///      (注意:`LeashAccount` 是 per-wallet 的,那裡的擴權必須「兩個都要」——
-    ///      `msg.sender == address(this)` 且 attestation。同一句註解套過去會出事,
-    ///      code review 抓到過。)
+    /// @dev **There is no sender check here, and that is correct** — the gate is the
+    ///      attestation, not an identity, because this is a **global singleton** list and
+    ///      "who submitted the transaction" does not change the outcome.
+    ///      (Careful: `LeashAccount` is per-wallet, and widening there requires **both** —
+    ///      `msg.sender == address(this)` *and* an attestation. Carrying this comment over
+    ///      to that contract would be a bug; code review caught exactly that.)
     ///
-    ///      **防重放:** 初版的 digest 沒有 nonce,也沒有記錄用過的 attestation。
-    ///      加上公開的 `revoke`,真的 `WorldAttester` 上線後會出現這條攻擊:
-    ///      從公開 calldata 抄下那份 attestation → `revoke(policy)` →
-    ///      用**同一份** blob 重新 `approve`,不需要任何人再刷一次臉。
-    ///      現在 digest 帶 nonce,而且 `attestationUsed` 一旦標記就永久有效 ——
-    ///      **撤銷之後要重新批准,必須拿一份新 nonce 的背書。**
+    ///      **Replay protection:** the first version's digest had no nonce and kept no
+    ///      record of spent attestations. Combined with a public `revoke`, that opens this
+    ///      attack once the real `WorldAttester` is live: copy the attestation out of the
+    ///      public calldata → `revoke(policy)` → `approve` again with the **same** blob, no
+    ///      new face scan from anyone. The digest now carries a nonce, and once
+    ///      `attestationUsed` is marked it stays marked forever — **re-approving after a
+    ///      revocation requires an attestation with a fresh nonce.**
     function approve(
         address policy,
         string calldata description,
@@ -105,9 +116,10 @@ contract PolicyApprovals is IPolicyApprovals {
         emit PolicyApproved(policy, description, nonce, keccak256(attestation));
     }
 
-    /// @notice 撤銷一份 policy。**任何人都能做,不需要背書。**
-    /// @dev 見合約註解 —— 縮權永遠不該被擋。重複撤銷不 revert,冪等。
-    ///      也清掉 `descriptionOf`,否則前端會顯示一份已經失效的規則說明。
+    /// @notice Revokes a policy. **Anyone can do it, and no attestation is required.**
+    /// @dev See the contract notes — a reduction must never be blocked. Revoking twice
+    ///      does not revert; it is idempotent. It also clears `descriptionOf`, otherwise
+    ///      the frontend keeps showing the description of a rule that no longer applies.
     function revoke(address policy) external {
         if (!isApproved[policy]) return;
         isApproved[policy] = false;
@@ -115,13 +127,15 @@ contract PolicyApprovals is IPolicyApprovals {
         emit PolicyRevoked(policy, msg.sender);
     }
 
-    /// @notice 要被背書的 EIP-712 digest。前端、後端、鏈上都用這個算,確保三邊一致。
-    /// @dev 初版是自製的 `keccak256(abi.encode(...))`,不是 EIP-712 —— 沒有 domain
-    ///      separator、沒有 `\x19\x01` 前綴,而 `IAttester` 的註解和 sprint 項目 8
-    ///      都寫 EIP-712。`WorldAttester` 的後端會用標準函式庫簽,對不上就驗不過。
+    /// @notice The EIP-712 digest to be attested. The frontend, the backend and the chain
+    ///         all compute it here, so all three agree.
+    /// @dev The first version rolled its own `keccak256(abi.encode(...))` — not EIP-712:
+    ///      no domain separator, no `\x19\x01` prefix — while `IAttester`'s notes and
+    ///      sprint item 8 both say EIP-712. `WorldAttester`'s backend will sign with a
+    ///      standard library, and a mismatch simply fails verification.
     ///
-    ///      `chainId` 和 `verifyingContract` 進 domain separator,所以同一份背書
-    ///      挪不到另一條鏈或另一份清單上。
+    ///      `chainId` and `verifyingContract` go into the domain separator, so one
+    ///      attestation cannot be carried to another chain or another approval list.
     function approvalDigest(address policy, string memory description, uint256 nonce)
         public
         view
@@ -133,7 +147,8 @@ contract PolicyApprovals is IPolicyApprovals {
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    /// @dev 每次現算,不快取 —— 鏈分叉之後 `block.chainid` 會變,快取的值會失效。
+    /// @dev Recomputed every call, never cached — `block.chainid` changes after a chain
+    ///      split, and a cached value would then be wrong.
     function domainSeparator() public view returns (bytes32) {
         return keccak256(
             abi.encode(DOMAIN_TYPEHASH, NAME_HASH, VERSION_HASH, block.chainid, address(this))

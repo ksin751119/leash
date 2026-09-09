@@ -4,48 +4,57 @@ pragma solidity 0.8.28;
 import { IPolicy } from "./IPolicy.sol";
 import { IPolicyApprovals } from "./IPolicyApprovals.sol";
 
-/// @title LeashResolver —— 把 policy 位址掛在 ENS 名字底下
-/// @notice 每個 agent 是一個 ENS 名字(`vendors.acme.eth`),名字的 resolver 記錄
-///         存的就是那個 agent 該過哪一份 policy。`LeashAccount` 每次付款前走一次
-///         這條解析;解不出來就是理由碼 3,錢不動。
+/// @title LeashResolver — hangs a policy address under an ENS name
+/// @notice Each agent is an ENS name (`vendors.acme.eth`), and that name's resolver
+///         record holds which policy the agent must satisfy. `LeashAccount` walks this
+///         resolution before every payment; if it does not resolve, that is reason code 3
+///         and no money moves.
 ///
-/// @dev **只實作 ENSIP-10 `resolve(bytes,bytes)`。** 這不是偷懶,是實測結論:
-///      ENSv2 Sepolia 上的極簡 resolver(例如 `nick.eth` 用的那支)**根本沒有**
-///      `addr(bytes32)` / `text(bytes32,string)` 這兩個外部函式,直接呼叫會 revert,
-///      `supportsInterface` 也一律回 false。ENSv2 的讀取慣例就是 `resolve()` 一個入口,
-///      legacy 介面是舊世界的東西。完整實測見 `docs/ensv2-sepolia.md`。
+/// @dev **Only ENSIP-10 `resolve(bytes,bytes)` is implemented.** That is not laziness, it
+///      is what measurement showed: the minimal resolvers on ENSv2 Sepolia (the one
+///      behind `nick.eth`, for instance) **do not have** `addr(bytes32)` or
+///      `text(bytes32,string)` as external functions at all — calling them reverts, and
+///      `supportsInterface` returns false across the board. The ENSv2 read convention is
+///      the single `resolve()` entry point; the legacy interfaces belong to the old world.
+///      Full measurements in `docs/ensv2-sepolia.md`.
 ///
-///      另一個讓「鏈上強制」成立的實測結論:`resolve()` **直接回傳資料**,
-///      不會 revert 成 `OffchainLookup`。所以合約可以在交易執行當下把 registry walk
-///      跟記錄讀取一次做完,**不需要 CCIP-read gateway**。沒有這一條,整個設計不成立。
+///      The other measured fact that makes onchain enforcement possible: `resolve()`
+///      **returns data directly** and does not revert with `OffchainLookup`. So a contract
+///      can complete the registry walk and the record read inside the transaction,
+///      **with no CCIP-read gateway**. Without that, the whole design collapses.
 contract LeashResolver {
-    // --- ENSIP-10 內層呼叫支援的 selector(編譯期常數,不靠記憶抄) ---
+    // --- selectors of the inner calls ENSIP-10 supports (compile-time constants, not
+    //     transcribed from memory) ---
     bytes4 private constant SEL_ADDR = bytes4(keccak256("addr(bytes32)"));
     bytes4 private constant SEL_ADDR_COIN = bytes4(keccak256("addr(bytes32,uint256)"));
     bytes4 private constant SEL_TEXT = bytes4(keccak256("text(bytes32,string)"));
     bytes4 private constant SEL_RESOLVE = bytes4(keccak256("resolve(bytes,bytes)"));
     bytes4 private constant SEL_ERC165 = bytes4(keccak256("supportsInterface(bytes4)"));
 
-    /// @dev ENS 的 EVM 幣別。`addr(node, 60)` 等同 `addr(node)`。
+    /// @dev ENS's coin type for the EVM. `addr(node, 60)` is equivalent to `addr(node)`.
     uint256 private constant COIN_TYPE_ETH = 60;
 
     address public owner;
 
-    /// @notice 批准清單。**`immutable`,沒有 setter** —— 這是 C1 修正的另一半。
-    /// @dev 初版有 `setApprovalsSource(onlyOwner)`。就算把 `PolicyApprovals.setAttester`
-    ///      鎖死,只要這個指標可以被 ADMIN 改,被偷的金鑰就能:部署一份自己的
-    ///      `PolicyApprovals` + 自己的 attester → `setApprovalsSource(那份)` →
-    ///      `approve(任何東西)`。**兩道鎖仍然是同一把鑰匙開的,只是多一步。**
+    /// @notice The approval list. **`immutable`, with no setter** — this is the other
+    ///         half of the C1 fix.
+    /// @dev The first version had `setApprovalsSource(onlyOwner)`. Even with
+    ///      `PolicyApprovals.setAttester` locked shut, as long as ADMIN can repoint *this*
+    ///      pointer, a stolen key can: deploy its own `PolicyApprovals` with its own
+    ///      attester → `setApprovalsSource(that one)` → `approve(anything)`. **Both locks
+    ///      still open with the same key; it just takes one more step.**
     ///
-    ///      所以第二道鎖的**指標本身**也必須是不可變的。要換就部署一份新的
-    ///      `LeashResolver` 再 `LeashRegistry.setResolver(label, 新的)` ——
-    ///      那是一筆看得見的鏈上交易,而且新 resolver 的 policy 指標是空的,
-    ///      攻擊者得從頭把每一個名字重新指一次。
+    ///      So the **pointer** to the second lock has to be immutable too. Replacing it
+    ///      means deploying a new `LeashResolver` and calling
+    ///      `LeashRegistry.setResolver(label, theNewOne)` — a visible onchain transaction,
+    ///      and the new resolver's policy pointers start empty, so an attacker would have
+    ///      to repoint every single name from scratch.
     ///
-    ///      建構時不接受 `address(0)`:沒有 setter 可以補救,寧可部署時就失敗。
+    ///      The constructor rejects `address(0)`: there is no setter to recover with, so
+    ///      failing at deploy time is the better outcome.
     IPolicyApprovals public immutable approvals;
 
-    /// @notice ENS 節點 → policy 位址。`address(0)` = 沒設 / 已清空 = 全面停機。
+    /// @notice ENS node → policy address. `address(0)` = unset / cleared = fully halted.
     mapping(bytes32 node => address policy) public policyOf;
 
     event PolicyPointerSet(
@@ -56,8 +65,9 @@ contract LeashResolver {
     error NotOwner();
     error ZeroOwner();
     error ZeroApprovals();
-    /// @dev 內層呼叫的 selector 我們不認識。**revert 而不是回空值** —— 呼叫端
-    ///      分不出「沒設定」和「不支援」的話,fail-closed 就無從做起。
+    /// @dev The inner call's selector is one we do not recognise. **Revert rather than
+    ///      return empty** — if the caller cannot tell "unset" from "unsupported", there
+    ///      is no way to fail closed.
     error UnsupportedResolverCall(bytes4 selector);
     error UnsupportedCoinType(uint256 coinType);
 
@@ -75,16 +85,19 @@ contract LeashResolver {
     }
 
     // ---------------------------------------------------------------
-    // 寫入(ADMIN)
+    // Writes (ADMIN)
     // ---------------------------------------------------------------
 
-    /// @notice 指定某個 agent 名字該過哪一份 policy。
-    /// @dev **這裡刻意不檢查 `approved`。** 指標由 ADMIN 控制、批准清單由刷臉控制,
-    ///      兩層分開才有意義:ADMIN 金鑰被偷,攻擊者改得動指標,但指到一份沒被批准過的
-    ///      policy 時 `LeashAccount` 會擋下來(理由碼 4)。強制在帳戶層,不在這裡。
+    /// @notice Sets which policy a given agent name must satisfy.
+    /// @dev **`approved` is deliberately not checked here.** The pointer is controlled by
+    ///      ADMIN and the approval list by a face scan; separating the two is the whole
+    ///      point. If the ADMIN key is stolen the attacker can move the pointer, but when
+    ///      it points at a policy that was never approved, `LeashAccount` blocks the spend
+    ///      (reason code 4). Enforcement lives in the account layer, not here.
     ///
-    ///      設成 `address(0)` 是**縮權**(該 agent 立刻全面停機),永遠不該被擋 ——
-    ///      出事時你不會想先找手機刷臉。
+    ///      Setting `address(0)` is a **reduction** (that agent halts immediately) and must
+    ///      never be blocked — when something has gone wrong, hunting for your phone is the
+    ///      last thing you want to do.
     function setPolicy(bytes32 node, address policy) external onlyOwner {
         policyOf[node] = policy;
         emit PolicyPointerSet(node, policy, msg.sender, _isApproved(policy));
@@ -100,15 +113,17 @@ contract LeashResolver {
     // ENSIP-10
     // ---------------------------------------------------------------
 
-    /// @notice ENSIP-10 萬用解析入口。
-    /// @param  data 內層呼叫,ABI 編碼過的 `addr(bytes32)` / `addr(bytes32,uint256)` /
-    ///              `text(bytes32,string)`。
-    /// @return 內層呼叫的回傳值,再 ABI 編碼一層(ENSIP-10 的規定)。
+    /// @notice The ENSIP-10 wildcard resolution entry point.
+    /// @param  data The inner call, ABI-encoded: `addr(bytes32)`,
+    ///              `addr(bytes32,uint256)`, or `text(bytes32,string)`.
+    /// @return The inner call's return value, ABI-encoded once more (as ENSIP-10 requires).
     ///
-    /// @dev **`name` 刻意不使用。** node 已經在內層 calldata 裡了,再把 DNS 編碼的名字
-    ///      重新 hash 一次去比對,是為了防一個我們的信任模型裡不存在的攻擊 ——
-    ///      呼叫端本來就是自己算出 node 才來查的。ENS 官方的 `ExtendedResolver` 也是這樣做。
-    ///      參數保留是因為介面要合,不是因為它有用。
+    /// @dev **`name` is deliberately unused.** The node is already in the inner calldata;
+    ///      re-hashing the DNS-encoded name to cross-check it would defend against an
+    ///      attack that does not exist in our trust model — the caller derived that node
+    ///      itself in order to make the query. ENS's own `ExtendedResolver` does the same.
+    ///      The parameter stays because the interface requires it, not because it is
+    ///      useful.
     function resolve(
         bytes calldata,
         /* name */
@@ -128,7 +143,7 @@ contract LeashResolver {
         if (sel == SEL_ADDR_COIN) {
             (bytes32 node, uint256 coinType) = abi.decode(data[4:], (bytes32, uint256));
             if (coinType != COIN_TYPE_ETH) revert UnsupportedCoinType(coinType);
-            // ENSIP-9:多幣別型別回傳的是 raw bytes,不是 address
+            // ENSIP-9: the multi-coin form returns raw bytes, not an address
             return abi.encode(abi.encodePacked(policyOf[node]));
         }
 
@@ -145,24 +160,26 @@ contract LeashResolver {
     }
 
     // ---------------------------------------------------------------
-    // 唯讀輔助
+    // Read-only helpers
     // ---------------------------------------------------------------
 
-    /// @notice 一次拿到「指到哪」和「批准了嗎」,省一趟 RPC。
-    /// @dev    `LeashAccount` 和前端都是這樣用。
+    /// @notice Fetches "where it points" and "is it approved" together, saving a round trip.
+    /// @dev    This is how both `LeashAccount` and the frontend use it.
     function policyAndApproval(bytes32 node) external view returns (address policy, bool approved) {
         policy = policyOf[node];
         approved = _isApproved(policy);
     }
 
     // ---------------------------------------------------------------
-    // 內部
+    // Internals
     // ---------------------------------------------------------------
 
-    /// @dev 三個 text 記錄,全部是**給人看的**,沒有一個在強制路徑上:
-    ///      - `policy`      → policy 位址的十六進位字串(`dig`-style 查詢、前端顯示)
-    ///      - `description` → policy 自己的 `describe()`,問不到就回空字串
-    ///      - `leash`       → 版本標記,讓人一眼看出這個名字是被 Leash 管的
+    /// @dev Three text records, all of them **for humans**, none on the enforcement path:
+    ///      - `policy`      → the policy address as a hex string (`dig`-style lookups,
+    ///                        frontend display)
+    ///      - `description` → the policy's own `describe()`; empty string if unreachable
+    ///      - `leash`       → a version marker, so a reader can see at a glance that this
+    ///                        name is governed by Leash
     function _text(bytes32 node, string memory key) private view returns (string memory) {
         bytes32 k = keccak256(bytes(key));
         address policy = policyOf[node];
@@ -172,7 +189,8 @@ contract LeashResolver {
         }
         if (k == keccak256("description")) {
             if (policy == address(0)) return "";
-            // describe() 是 pure,staticcall 一定安全。壞掉的 policy 不該讓顯示路徑爆掉。
+            // describe() is pure, so a staticcall is always safe. A broken policy must
+            // not blow up the display path.
             (bool ok, bytes memory ret) = policy.staticcall(abi.encodeCall(IPolicy.describe, ()));
             if (!ok || ret.length == 0) return "";
             return abi.decode(ret, (string));
@@ -180,18 +198,21 @@ contract LeashResolver {
         if (k == keccak256("leash")) {
             return "leash-v1";
         }
-        // 未知的 text key **回空字串,不 revert。**
+        // An unknown text key **returns the empty string; it does not revert.**
         //
-        // 初版是 revert,理由是「呼叫端要分得出沒設定和不支援」。
-        // 那個理由對 `resolve` 的**未知 selector** 是對的(在強制路徑上,fail-closed
-        // 有意義),對 **text key** 是錯的:text 記錄純顯示、不在強制路徑上,
-        // 而 ENS 的 UI 常常一次批次查 `avatar` / `com.twitter` / `description`——
-        // 其中一個 revert 會讓整批查詢掛掉,這個名字在 ENS 前端就變成壞的。
+        // The first version reverted, on the grounds that "the caller has to tell unset
+        // from unsupported". That reasoning is right for an **unknown selector** in
+        // `resolve` (it is on the enforcement path, where failing closed means something)
+        // and wrong for a **text key**: text records are display-only, off the enforcement
+        // path, and ENS UIs routinely batch-query `avatar` / `com.twitter` /
+        // `description` — one revert takes the whole batch down and the name looks broken
+        // in the ENS frontend.
         return "";
     }
 
-    /// @dev `approvals` 是 immutable 且建構時不得為 0,所以只要擋掉 policy 為 0。
-    ///      fail-closed 仍然成立:0 位址永遠不是「已批准」。
+    /// @dev `approvals` is immutable and cannot be 0 at construction, so the only case
+    ///      left to guard is a zero policy. Failing closed still holds: the zero address
+    ///      is never "approved".
     function _isApproved(address policy) private view returns (bool) {
         if (policy == address(0)) return false;
         return approvals.isApproved(policy);
@@ -204,7 +225,7 @@ contract LeashResolver {
         out[1] = "x";
         uint160 v = uint160(a);
         for (uint256 i = 0; i < 20; ++i) {
-            // 截斷是刻意的:每次只要最低那個 byte
+            // The truncation is deliberate: we want only the lowest byte each round
             // forge-lint: disable-next-line(unsafe-typecast)
             uint8 b = uint8(v >> (8 * (19 - i)));
             out[2 + i * 2] = digits[b >> 4];

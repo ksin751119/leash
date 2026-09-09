@@ -4,17 +4,21 @@ pragma solidity 0.8.28;
 import { IPolicy, SpendContext } from "./IPolicy.sol";
 import { Reason } from "./Reason.sol";
 
-/// @title StandardPolicy —— 預設規則:代幣白名單、收款人白名單、單筆上限、週期預算、時段
-/// @notice 介面允許有副作用;這一份刻意收緊成 `pure`。
-///         沒有 storage、沒有 owner、沒有 constructor 參數,也不讀任何外部合約 ——
-///         所以判斷完全由輸入決定,agent 和前端可以在鏈下完全重現。
+/// @title StandardPolicy — the default rules: token allow-list, payee allow-list,
+///        per-tx cap, period budget, time window
+/// @notice The interface permits side effects; this implementation deliberately narrows
+///         itself to `pure`. No storage, no owner, no constructor arguments, and it reads
+///         no external contract — so the verdict is a total function of its inputs, and
+///         both the agent and the frontend can reproduce it exactly offchain.
 ///
-///         代價寫在這裡以免日後忘記:這份 policy **讀不到外部狀態** ——
-///         沒有價格預言機、沒有共用黑名單、沒有跨 agent 共用預算。
-///         那些要另外寫一份實作(例如 `SharedBudgetPolicy`),介面已經留好門。
+///         The price is recorded here so it is not forgotten later: this policy **cannot
+///         read external state** — no price oracle, no shared blocklist, no budget pooled
+///         across agents. Those need a separate implementation (say
+///         `SharedBudgetPolicy`); the interface already leaves the door open.
 contract StandardPolicy is IPolicy {
-    /// @dev 檢查順序即為理由碼的優先序。多條同時違反時,回報**最外層**的那條。
-    ///      這樣 agent 修正一項之後重試,才會逐步收斂而不是在同一層打轉。
+    /// @dev The order of the checks *is* the precedence of the reason codes. When
+    ///      several are violated at once, report the **outermost** one. That way an agent
+    ///      that fixes one item and retries converges, instead of circling on one layer.
     function check(SpendContext calldata ctx) external pure returns (uint8) {
         if (!ctx.tokenAllowed) return Reason.TOKEN_NOT_ALLOWED;
         if (!ctx.payeeAllowed) return Reason.PAYEE_NOT_ALLOWED;
@@ -22,7 +26,7 @@ contract StandardPolicy is IPolicy {
         if (ctx.txLimit != 0 && ctx.amount > ctx.txLimit) return Reason.OVER_TX_LIMIT;
 
         if (ctx.periodLimit != 0) {
-            // 先擋掉「已經超支」,剩下的減法才不會 underflow
+            // Reject "already over budget" first, so the subtraction below cannot underflow
             if (ctx.spentSoFar >= ctx.periodLimit) return Reason.OVER_PERIOD_LIMIT;
             if (ctx.amount > ctx.periodLimit - ctx.spentSoFar) return Reason.OVER_PERIOD_LIMIT;
         }
@@ -38,8 +42,9 @@ contract StandardPolicy is IPolicy {
         return "StandardPolicy/1: token+payee allowlist, per-tx cap, period budget, daily window";
     }
 
-    /// @dev `start == end` 視為全天開放。`start > end` 是跨午夜的時段(例如 22:00–06:00)。
-    ///      以 UTC 計算 —— 時區換算留給前端,鏈上不猜。
+    /// @dev `start == end` means open all day. `start > end` is a window that crosses
+    ///      midnight (say 22:00-06:00). Computed in UTC — timezone conversion is the
+    ///      frontend's job; the chain does not guess.
     function _inWindow(uint64 nowTs, uint16 start, uint16 end) private pure returns (bool) {
         if (start == end) return true;
         uint256 minuteOfDay = (uint256(nowTs) % 1 days) / 60;

@@ -7,51 +7,56 @@ import { IAttester } from "./IAttester.sol";
 import { IPolicy, SpendContext } from "./IPolicy.sol";
 import { Reason } from "./Reason.sol";
 
-/// @title LeashAccount —— agent 唯一的花費路徑
-/// @notice 一份 EIP-7702 delegate 實作。被委派的 EOA 在任何轉帳之前必須:
-///         授權 agent → ENS 三跳解出 policy → 比對批准清單 → 過 policy。
+/// @title LeashAccount — the agent's only spending path
+/// @notice An EIP-7702 delegate implementation. Before any transfer, the delegated EOA
+///         must: authorise the agent → walk three ENS hops to a policy → check it against
+///         the approval list → pass the policy.
 ///
-/// @dev **不要說「唯一的花費路徑」。** EIP-7702 只約束打到那個 EOA 的呼叫;
-///      WALLET 私鑰照樣能直簽 `USDC.transfer`,policy 那條路徑根本不會執行。
-///      這既是邊界也是**逃生口** —— 錢包持有者永遠拿得回自己的錢。
+/// @dev **Do not call it "the only spending path".** EIP-7702 constrains only calls *to*
+///      that EOA; the WALLET private key can still sign `USDC.transfer` directly, and the
+///      policy path never executes. This is both the boundary and the **escape hatch** —
+///      the wallet's owner can always retrieve their own funds.
 ///
-///      **沒有 `initialize()`。** 全域設定是 `immutable`,烙在 bytecode 裡,
-///      所以委派後 storage 空白的那段窗口沒有東西可以搶。per-EOA 的權限
-///      一律是 `msg.sender == address(this)`,而只有錢包的私鑰能讓那個 EOA 送交易。
+///      **There is no `initialize()`.** The global configuration is `immutable`, burned
+///      into the bytecode, so the window after delegation where storage is still blank has
+///      nothing to race for. Per-EOA authority is always `msg.sender == address(this)`, and
+///      only the wallet's private key can make that EOA send a transaction.
 contract LeashAccount {
     using LeashStorage for LeashStorage.AccountStorage;
 
-    // --- 烙在 bytecode 裡 ---
+    // --- burned into the bytecode ---
 
-    /// @notice ENSv2 的 .eth registry。解析的起點,也是「全滅」拉桿的位置。
+    /// @notice ENSv2's .eth registry. The start of resolution, and where the "kill
+    ///         everything" lever sits.
     address public immutable ETH_REGISTRY;
 
-    /// @notice 批准清單。**immutable** —— 見 `PolicyApprovals` 的 C1 註解。
+    /// @notice The approval list. **immutable** — see the C1 notes on `PolicyApprovals`.
     IPolicyApprovals public immutable APPROVALS;
 
-    /// @notice 擴權的背書來源。**immutable**。
+    /// @notice The attestation source for widening. **immutable**.
     IAttester public immutable ATTESTER;
 
-    /// @notice **impl 自己被部署時的位址。**
-    /// @dev 這是 7702 特有的一個小陷阱:同一份程式碼裡,`address(this)` 和
-    ///      「這份程式碼住在哪」是**兩個不同的值**。delegate 執行時
-    ///      `address(this)` 是 EOA,而 `immutable` 在部署時被烙進 bytecode,
-    ///      所以 `SELF` 記得的是 impl 的位址。
+    /// @notice **The address the impl itself was deployed at.**
+    /// @dev A small trap specific to 7702: inside one piece of code, `address(this)` and
+    ///      "where this code lives" are **two different values**. When the delegate runs,
+    ///      `address(this)` is the EOA, whereas an `immutable` was burned into the bytecode
+    ///      at deploy time — so `SELF` remembers the impl's address.
     ///
-    ///      attestation 的 digest 需要**兩個都有**:`address(this)` 綁住
-    ///      「哪個錢包」,`SELF` 綁住「哪一版 impl」。少了 `SELF`,錢包重新委派到
-    ///      新版之後,舊版的 attestation 可以重放(新版可能換了 ERC-7201 命名空間,
-    ///      讀不到舊的 `attestationUsed` 紀錄)。
+    ///      An attestation digest needs **both**: `address(this)` binds *which wallet*,
+    ///      `SELF` binds *which impl version*. Without `SELF`, once a wallet redelegates to
+    ///      a new version, an attestation from the old version could be replayed (the new
+    ///      version may use a different ERC-7201 namespace and so cannot see the old
+    ///      `attestationUsed` records).
     address public immutable SELF;
 
     string public constant PARENT_LABEL = "leash";
 
-    /// @notice `namehash("leash.eth")`。`bindAgent` 用它驗證 node 與 label 一致。
+    /// @notice `namehash("leash.eth")`. `bindAgent` uses it to verify node and label agree.
     bytes32 public constant PARENT_NODE =
         0x91fbe3f2c79f13bf641a8f388bc00cc7b13192a0a6c5a986e9ceb50456706fbf;
 
-    /// @notice 呼叫 policy 的 gas 上限。超過就 fail-closed(理由碼 12)。
-    /// @dev 刻意的上限:一份能燒掉全部 gas 的 policy 等於一個 DoS 開關。
+    /// @notice The gas cap on calling a policy. Exceeding it fails closed (reason code 12).
+    /// @dev A deliberate cap: a policy that can burn all the gas is a DoS switch.
     uint256 public constant POLICY_GAS = 200_000;
 
     // --- EIP-712 ---
@@ -71,8 +76,9 @@ contract LeashAccount {
     );
 
     event AgentBound(address indexed agent, bytes32 indexed node);
-    /// @dev 證明這個 EOA 現在委派給 LeashAccount。**subgraph 的 template 觸發點** ——
-    ///      7702 的委派不發 log,所以索引端只能靠這個知道要監聽哪個位址。
+    /// @dev Evidence that this EOA now delegates to LeashAccount. **The subgraph's
+    ///      template trigger** — 7702 delegation emits no log, so this is the only way an
+    ///      indexer learns which address to watch.
     event Leashed(bytes32 indexed node, address indexed wallet, address impl);
     event AgentRevoked(address indexed agent, address indexed by);
     event Paused(address indexed by);
@@ -97,8 +103,9 @@ contract LeashAccount {
     event PayeeAllowed(bytes32 indexed node, address indexed payee, bytes32 attestationHash);
     event PayeeRemoved(bytes32 indexed node, address indexed payee, address indexed by);
 
-    /// @dev `node` 刻意不 indexed —— 三個 indexed 名額給 `agent`/`payee`/`token`,
-    ///      這三個是 subgraph 查詢最常拿來 filter 的欄位(見 `docs/events.md`)。
+    /// @dev `node` is deliberately not indexed — the three indexed slots go to `agent` /
+    ///      `payee` / `token`, the fields subgraph queries filter on most (see
+    ///      `docs/events.md`).
     event PolicyResolved(bytes32 indexed node, address indexed policy, bool approved);
     event SpendExecuted(
         bytes32 node,
@@ -137,8 +144,9 @@ contract LeashAccount {
     error ZeroAmount();
     error TransferFailed();
 
-    /// @dev per-EOA 的權限只有這一種。`address(this)` 在 delegate 裡是那個 EOA,
-    ///      而只有它的私鑰能讓它送出交易 —— 所以這就是「錢包自己」。
+    /// @dev The only form of per-EOA authority. Inside a delegate, `address(this)` is that
+    ///      EOA, and only its private key can make it send a transaction — so this *is*
+    ///      "the wallet itself".
     modifier onlySelf() {
         if (msg.sender != address(this)) revert NotSelf();
         _;
@@ -151,17 +159,20 @@ contract LeashAccount {
         SELF = address(this);
     }
 
-    /// @notice **必須有。** 純轉 ETH = 用空 calldata 呼叫 delegate;
-    ///         沒有這個函式,委派之後這個錢包就收不到用足額 gas 送出的 ETH。
-    /// @dev 這個保證是有上限的:`.transfer()`/`.send()` 那種只帶 2300 gas
-    ///      stipend 的老式轉帳,打進一個 7702 委派過的錢包**還是會失敗**——
-    ///      委派後每一筆呼叫都要先過 dispatcher,那筆固定開銷本身就超過
-    ///      2300 gas,跟有沒有 `receive()` 無關。這裡救得到的只有「足額 gas
-    ///      的純值轉帳」,不是那兩個限流 API。
+    /// @notice **Mandatory.** A plain ETH transfer is a call to the delegate with empty
+    ///         calldata; without this function, a delegated wallet can no longer receive
+    ///         ETH sent with adequate gas.
+    /// @dev The guarantee has a ceiling: the old-style `.transfer()` / `.send()` transfers
+    ///      that carry only the 2300-gas stipend **still fail** against a 7702-delegated
+    ///      wallet — after delegation every call goes through a dispatcher first, and that
+    ///      fixed overhead alone exceeds 2300 gas, with or without a `receive()`. What this
+    ///      rescues is plain value transfers with adequate gas, not those two throttled
+    ///      APIs.
     receive() external payable { }
 
-    /// @notice 打錯 selector 明確 revert,不要靜默吞掉。
-    /// @dev 這個帳戶**不做**通用呼叫轉發(見 spec 的 YAGNI 表)。
+    /// @notice An unknown selector reverts explicitly rather than being swallowed.
+    /// @dev This account **does not** do general-purpose call forwarding (see the YAGNI
+    ///      table in the spec).
     fallback() external payable {
         revert UnknownSelector();
     }
@@ -181,8 +192,9 @@ contract LeashAccount {
         return (b.node, b.label, b.revoked);
     }
 
-    /// @notice `namehash("<label>.leash.eth")`。
-    /// @dev 父層固定,所以只要一次 keccak 接上 `PARENT_NODE` —— 兩次 keccak,不是迴圈。
+    /// @notice `namehash("<label>.leash.eth")`.
+    /// @dev The parent is fixed, so one keccak against `PARENT_NODE` suffices — two keccaks
+    ///      in total, not a loop.
     function nodeFor(string memory label) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(PARENT_NODE, keccak256(bytes(label))));
     }
@@ -191,66 +203,74 @@ contract LeashAccount {
         return LeashStorage.layout().paused;
     }
 
-    /// @notice 綁定一個 agent。**縮權方向,不需要背書** —— 從零開始給權限,
-    ///         而那個權限的內容完全由 ENS 那一側(ADMIN)和批准清單(真人)決定。
+    /// @notice Binds an agent. **Points in the reducing direction, so no attestation** —
+    ///         it grants authority starting from zero, and the *content* of that authority
+    ///         is decided entirely by the ENS side (ADMIN) and the approval list (a human).
     ///
-    /// @dev `node` 與 `label` **必須一致**。`node` 不只是 resolver 的 key,
-    ///      它也是 `rules` / `payees` / `spent` 的 key —— 不一致會讓這個 agent
-    ///      花 A 名字的預算卻由 B 名字的 policy 判斷,而 `AgentBound` 不帶 label,
-    ///      鏈下看不出來。
+    /// @dev `node` and `label` **must agree**. `node` is not only the resolver's key; it is
+    ///      also the key for `rules` / `payees` / `spent` — a mismatch would let this agent
+    ///      spend name A's budget while being judged by name B's policy, and since
+    ///      `AgentBound` carries no label, that would be invisible offchain.
     function bindAgent(address agent, bytes32 node, string calldata label) external onlySelf {
         bytes32 expected = nodeFor(label);
         if (node != expected) revert NodeLabelMismatch(expected, node);
 
         LeashStorage.AccountStorage storage $ = LeashStorage.layout();
         LeashStorage.AgentBinding storage b = $.bindings[agent];
-        // 已存在就 revert:否則「撤銷後免費重綁」會繞過凍結文件對理由碼 2 的規定
-        // (恢復要刷臉)。綁錯的補救是 `unbindAgent` 再 `bindAgent`,兩步都是縮權。
+        // Revert if it already exists: otherwise "rebind for free after a revocation"
+        // would sidestep what the frozen document says about reason code 2 (restoring
+        // requires a face scan). The remedy for a wrong bind is `unbindAgent` then
+        // `bindAgent` — both of which are reductions.
         if (b.node != bytes32(0)) revert AlreadyBound();
 
         b.node = node;
         b.label = label;
         emit AgentBound(agent, node);
 
-        // **第一次綁定時發 `Leashed`。**
+        // **Emit `Leashed` on the first bind.**
         //
-        // EIP-7702 的委派**不發任何 log**,所以 subgraph 沒有 factory 事件可以
-        // 觸發 template —— 它不知道要監聽哪些 EOA 位址。這一筆就是那個觸發點。
-        // (`Leashed` 已經在凍結 schema 裡,這裡給它一個明確的發出時機。)
-        // demo 另外會在 subgraph.yaml 寫死錢包位址當保險,見 sprint 項目 9。
-        // `b.node == 0` 的分支已經在上面確認過(否則 AlreadyBound),
-        // 所以能走到這裡的都是「這個 agent 的第一次綁定」。
-        // 但 `Leashed` 是**錢包層級**的事實,不該每綁一個 agent 就重發一次 ——
-        // 用一個獨立的旗標記住它。
+        // EIP-7702 delegation **emits no log at all**, so a subgraph has no factory event
+        // to trigger a template from — it does not know which EOA addresses to watch. This
+        // is that trigger. (`Leashed` was already in the frozen schema; this gives it a
+        // definite moment of emission.)
+        // The demo additionally hardcodes the wallet address in subgraph.yaml as a
+        // fallback; see sprint item 9.
+        // The `b.node == 0` branch was already established above (otherwise AlreadyBound),
+        // so anything reaching here is this agent's first bind.
+        // But `Leashed` is a **wallet-level** fact and must not be re-emitted for every
+        // agent bound — a separate flag remembers it.
         if (!$.leashedEmitted) {
             $.leashedEmitted = true;
             emit Leashed(node, address(this), SELF);
         }
     }
 
-    /// @notice 完全解除綁定。**縮權,完全免費。**
-    /// @dev 這是「綁錯名字」的補救路徑。解綁之後那個 agent 什麼都不能做,
-    ///      可以重新 `bindAgent` 到正確的名字 —— 中間沒有任何一刻權限比原本大。
+    /// @notice Unbinds completely. **A reduction, entirely free.**
+    /// @dev This is the remedy for "bound to the wrong name". Once unbound the agent can do
+    ///      nothing, and it can be `bindAgent`-ed again to the correct name — at no point
+    ///      in between does it hold more authority than before.
     function unbindAgent(address agent) external {
         _requireSelfOrAgent(agent);
         delete LeashStorage.layout().bindings[agent];
         emit AgentRevoked(agent, msg.sender);
     }
 
-    /// @notice 撤銷一個 agent(保留綁定,標記為 revoked)。**縮權,不需要背書。**
-    /// @dev 與 `unbindAgent` 的差別:這裡保留 node/label,所以 `spend` 走到 2b
-    ///      會發出可索引的 `SpendBlocked(AGENT_REVOKED)`,agent 查 subgraph
-    ///      就知道自己為什麼不能動了。`unbindAgent` 則讓它變成「從未綁定」,
-    ///      那會在 2a 直接 revert。
+    /// @notice Revokes an agent (the binding is kept and marked revoked). **A reduction,
+    ///         no attestation.**
+    /// @dev How it differs from `unbindAgent`: node/label are kept, so `spend` reaches step
+    ///      2b and emits an indexable `SpendBlocked(AGENT_REVOKED)` — the agent can query
+    ///      the subgraph and learn why it is stuck. `unbindAgent` instead makes it "never
+    ///      bound", which reverts outright at 2a.
     function revokeAgent(address agent) external {
         _requireSelfOrAgent(agent);
         LeashStorage.layout().bindings[agent].revoked = true;
         emit AgentRevoked(agent, msg.sender);
     }
 
-    /// @notice 恢復一個被撤銷的 agent。**擴權 —— 兩個都要。**
-    /// @dev 三個參數全部進 digest,所以一份恢復用的背書不能被挪去恢復別的 agent
-    ///      或把它綁到別的名字。
+    /// @notice Restores a revoked agent. **A widening — both conditions required.**
+    /// @dev All three parameters go into the digest, so an attestation issued for one
+    ///      restoration cannot be redirected to restore a different agent or to bind it to
+    ///      a different name.
     function restoreAgent(
         address agent,
         bytes32 node,
@@ -274,8 +294,10 @@ contract LeashAccount {
         emit AgentBound(agent, node);
     }
 
-    /// @notice 全面暫停。**錢包自己或任何未被撤銷的被綁定 agent 都能按。**
-    /// @dev 踩煞車只會讓系統更嚴,讓它需要權限是在真的出事的那一刻幫攻擊者省事。
+    /// @notice Pauses everything. **The wallet itself, or any bound agent that has not
+    ///         been revoked, can press it.**
+    /// @dev Hitting the brake can only make the system stricter; requiring a permission for
+    ///      it does the attacker a favour at exactly the moment things go wrong.
     function pause() external {
         if (msg.sender != address(this)) {
             LeashStorage.AgentBinding storage b = LeashStorage.layout().bindings[msg.sender];
@@ -285,14 +307,16 @@ contract LeashAccount {
         emit Paused(msg.sender);
     }
 
-    /// @notice 解除暫停。**只有錢包自己,而且不需要背書。**
-    /// @dev **不能要背書。** 任何 agent 都能免費 `pause`,若 `unpause` 要刷臉,
-    ///      被入侵的 agent 就能反覆逼持有者刷臉 —— 那是一個 DoS。
-    ///      免費的煞車必須配免費的放開,兩邊都由錢包自己控制。
-    ///      凍結文件也把理由碼 10 列為「ADMIN 的日常操作」,不需刷臉。
+    /// @notice Unpauses. **The wallet itself only, and no attestation.**
+    /// @dev **It must not require an attestation.** Any agent can `pause` for free, so if
+    ///      `unpause` cost a face scan, a compromised agent could force the holder to scan
+    ///      their face over and over — that is a DoS. A free brake demands a free release,
+    ///      both controlled by the wallet itself. The frozen document also lists reason
+    ///      code 10 as "an ADMIN's routine operation", needing no scan.
     ///
-    ///      `Unpaused` 的凍結簽章有一個 `attestationHash` 欄位 —— 送 `bytes32(0)`,
-    ///      subgraph 要把 0 解讀為「不需背書的解除」,而不是「缺資料」。
+    ///      The frozen signature of `Unpaused` has an `attestationHash` field — we send
+    ///      `bytes32(0)`, and the subgraph must read 0 as "an unpause that needs no
+    ///      attestation", not as missing data.
     function unpause() external onlySelf {
         LeashStorage.layout().paused = false;
         emit Unpaused(msg.sender, bytes32(0));
@@ -303,7 +327,7 @@ contract LeashAccount {
         if (LeashStorage.layout().bindings[agent].node == bytes32(0)) revert NotBoundAgent();
     }
 
-    /// @notice 白名單一個收款人。**擴權 —— 兩個都要。**
+    /// @notice Allow-lists a payee. **A widening — both conditions required.**
     function allowPayee(
         bytes32 node,
         address token,
@@ -318,7 +342,7 @@ contract LeashAccount {
         emit PayeeAllowed(node, payee, keccak256(attestation));
     }
 
-    /// @notice 讀取 (node, token) 目前的規則。
+    /// @notice Reads the current rule for (node, token).
     function ruleOf(bytes32 node, address token)
         external
         view
@@ -340,16 +364,19 @@ contract LeashAccount {
         return LeashStorage.layout().spent[node][token][_bucket(r)];
     }
 
-    /// @notice 設定規則。**擴權 —— 兩個都要。**
-    /// @dev `period` 改變時 `epoch` 自動遞增。**光是換 `period` 就已經換桶了**
-    ///      ——`_bucket` 的低位直接是 `timestamp / period`,跟 `epoch` 無關。
-    ///      `epoch` 真正的作用是**鍵空間隔離**:放在 `_bucket` 的高位,擋掉
-    ///      「新一代 period 剛好算出跟舊一代相同的桶」這個重疊風險,讓每一代
-    ///      的帳本各佔自己的位址,不會被前一代的餘額汙染或覆寫。
-    ///      「清帳永遠要一份背書」這件事也不是靠 `epoch` 本身撐的——是因為
-    ///      整個合約只有這個函式會寫 `period`,而 `tightenRule` 的
-    ///      `_isTighter` 檢查保證它絕不動 `period`,所以能換桶的路徑就只剩
-    ///      這條需要 attestation 的路。
+    /// @notice Sets a rule. **A widening — both conditions required.**
+    /// @dev `epoch` increments automatically when `period` changes. **Changing `period`
+    ///      alone already changes the bucket** — the low bits of `_bucket` are simply
+    ///      `timestamp / period`, independent of `epoch`. What `epoch` actually provides is
+    ///      **key-space isolation**: sitting in the high bits of `_bucket`, it removes the
+    ///      risk that a new generation's period happens to compute the same bucket as the
+    ///      old one, giving each generation's ledger its own addresses, uncontaminated and
+    ///      unoverwritten by the previous one.
+    ///      Nor does "wiping the ledger always costs an attestation" rest on `epoch`
+    ///      itself — it holds because this is the only function in the whole contract that
+    ///      writes `period`, and `tightenRule`'s `_isTighter` check guarantees it never
+    ///      touches `period`, so the only path that can change the bucket is this one,
+    ///      which requires an attestation.
     function setRule(
         bytes32 node,
         address token,
@@ -377,26 +404,30 @@ contract LeashAccount {
         );
 
         LeashStorage.TokenRule storage cur = LeashStorage.layout().rules[node][token];
-        // 全零代表這個 (node, token) 從未被 setRule 寫過 —— 沒有舊帳可清,
-        // 不算「換週期」。少了這個判斷,第一次 setRule 就會把 epoch 從 0 誤判成
-        // 「period 從預設值 0 變成了 rule.period」而白白 +1,跟
-        // `test_setRule_bumps_epoch_only_when_period_changes` 對不上。
+        // All-zero means this (node, token) has never been written by setRule — there is
+        // no old ledger to wipe, so it does not count as "changing the period". Without
+        // this check, the very first setRule would read epoch 0 as "period changed from its
+        // default 0 to rule.period" and bump it for nothing, contradicting
+        // `test_setRule_bumps_epoch_only_when_period_changes`.
         bool exists = cur.allowed || cur.txLimit != 0 || cur.periodLimit != 0 || cur.period != 0
             || cur.windowStart != 0 || cur.windowEnd != 0 || cur.epoch != 0;
         bool wasAllowed = cur.allowed;
         uint256 oldLimit = cur.periodLimit;
         uint32 epoch = cur.epoch;
-        // 判斷「有沒有變寬」要在寫入前做,用的是舊值 vs 新值 —— 寫完再比就是
-        // 拿 cur 跟自己比,永遠是 true。用 `_isTighterIgnoringEpoch`(不是
-        // `_isTighter`)——原因見它自己的註解:`rule.epoch` 對 `setRule` 而言
-        // 不受 attestation 保護、也從不被採信,拿它去跟 `cur.epoch` 比會把
-        // 「epoch 曾經被撞過」的無關噪音誤判成「變寬」。
-        // `_isTighterIgnoringEpoch` 對關閉中的舊規則一律回 false(「原本就關著,
-        // 沒有更嚴可言」),所以第一次開啟(或重新開啟)一定落在 !tighterOrEqual,
-        // `LimitRaised` 會跟著 `TokenAllowed` 一起發 —— 這正是「開一個沒有上限的
-        // token」該有的行為:兩個事件都要有。
+        // "Did it widen?" has to be decided before the write, comparing old against new —
+        // compare after writing and you are comparing `cur` with itself, which is always
+        // true. It uses `_isTighterIgnoringEpoch` rather than `_isTighter`; the reason is
+        // in that function's own notes: as far as `setRule` is concerned, `rule.epoch` is
+        // not covered by the attestation and is never trusted, so comparing it against
+        // `cur.epoch` would misread the irrelevant noise of "epoch has been bumped before"
+        // as a widening.
+        // `_isTighterIgnoringEpoch` returns false for any old rule that is currently
+        // disabled ("it was already off, there is nothing stricter to be"), so the first
+        // enable (or a re-enable) always lands in !tighterOrEqual and `LimitRaised` is
+        // emitted alongside `TokenAllowed` — which is exactly right for "open a token with
+        // no cap": both events belong.
         bool tighterOrEqual = _isTighterIgnoringEpoch(cur, rule);
-        if (exists && cur.period != rule.period) epoch += 1; // 換週期 = 換一套帳
+        if (exists && cur.period != rule.period) epoch += 1; // new period = a new ledger
 
         cur.allowed = rule.allowed;
         cur.txLimit = rule.txLimit;
@@ -408,20 +439,21 @@ contract LeashAccount {
 
         bytes32 h = keccak256(attestation);
         if (!wasAllowed && rule.allowed) emit TokenAllowed(node, token, h);
-        // 「Raised」只在真的變寬時發 —— 逐位元組相同(或更嚴)的 setRule 不該發
-        // 一個名字叫「放寬」的事件。用跟 `tightenRule` 共用的同一套子集/大小
-        // 判準(`_isTighterIgnoringEpoch`)當依據,而不是另外湊一條「periodLimit
-        // 有沒有變大」的規則,否則 window/period 變寬又會漏掉,重演
-        // `tightenRule` 當初要修的同一個洞。
+        // "Raised" fires only on an actual widening — a byte-identical (or stricter)
+        // setRule must not emit an event named after loosening. The test is the same
+        // subset/magnitude criterion `tightenRule` uses (`_isTighterIgnoringEpoch`) rather
+        // than an ad-hoc "did periodLimit grow?" rule, which would miss a widened
+        // window/period and reopen exactly the hole `tightenRule` was written to close.
         if (!tighterOrEqual) {
             emit LimitRaised(node, token, oldLimit, rule.periodLimit, rule.period, h);
         }
     }
 
-    /// @notice 收緊規則。**縮權 —— 只要 `address(this)`,不需要背書。**
-    /// @dev 要求**每一個欄位都弱單調收緊**。這把「更嚴」變成一個可檢查的斷言,
-    ///      而配對式的 raise/lower 函式會漏掉 window 和 period ——
-    ///      而漏掉的那些正好可以被用來放寬。
+    /// @notice Tightens a rule. **A reduction — `address(this)` only, no attestation.**
+    /// @dev Requires that **every field is weakly monotonically tightened**. That turns
+    ///      "stricter" into a checkable assertion, whereas a pair of raise/lower functions
+    ///      would leave window and period uncovered — and precisely those omissions could
+    ///      then be used to widen.
     function tightenRule(bytes32 node, address token, LeashStorage.TokenRule calldata rule)
         external
         onlySelf
@@ -437,7 +469,7 @@ contract LeashAccount {
         cur.periodLimit = rule.periodLimit;
         cur.windowStart = rule.windowStart;
         cur.windowEnd = rule.windowEnd;
-        // period 與 epoch 刻意不動 —— 見 `_isTighter`
+        // `period` and `epoch` are deliberately left alone — see `_isTighter`
 
         if (wasAllowed && !rule.allowed) emit TokenRemoved(node, token, msg.sender);
         if (oldLimit != rule.periodLimit) {
@@ -445,7 +477,7 @@ contract LeashAccount {
         }
     }
 
-    /// @notice 移除一個收款人。**縮權,不需要背書。**
+    /// @notice Removes a payee. **A reduction, no attestation.**
     function removePayee(bytes32 node, address token, address payee) external onlySelf {
         LeashStorage.layout().payees[node][token][payee] = false;
         emit PayeeRemoved(node, payee, msg.sender);
@@ -463,8 +495,9 @@ contract LeashAccount {
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
-    /// @dev 背書的消費點。digest 同時綁住這個錢包(`address(this)` 進 domain)
-    ///      和這一版 impl(`SELF` 進 structHash)。用掉後永久標記。
+    /// @dev Where an attestation is spent. The digest binds both this wallet
+    ///      (`address(this)` goes into the domain) and this impl version (`SELF` goes into
+    ///      the structHash). Marked permanently once used.
     function _consumeAttestation(bytes32 structHash, bytes calldata attestation) private {
         bytes32 d = _digest(structHash);
         LeashStorage.AccountStorage storage $ = LeashStorage.layout();
@@ -473,124 +506,137 @@ contract LeashAccount {
         $.attestationUsed[d] = true;
     }
 
-    /// @dev **弱單調收緊**的定義。每一條都有專門測試。
+    /// @dev The definition of **weakly monotonic tightening**. Each clause has its own
+    ///      dedicated test.
     function _isTighter(LeashStorage.TokenRule storage old_, LeashStorage.TokenRule calldata new_)
         private
         view
         returns (bool)
     {
-        if (old_.allowed && !new_.allowed) return true; // 直接關掉一定更嚴
-        if (!old_.allowed) return false; // 原本就關著,沒有更嚴可言
-        // period 與 epoch 不准動:改 period 會換桶,累計歸零 ——
-        // 「調低上限」反而讓可花的變多。清帳只能走 setRule(要背書)。
+        if (old_.allowed && !new_.allowed) return true; // switching it off is always stricter
+        if (!old_.allowed) return false; // already off; there is nothing stricter to be
+        // `period` and `epoch` must not move: changing `period` changes the bucket and
+        // zeroes the running total — so "lower the cap" would actually increase what can be
+        // spent. Wiping the ledger goes only through setRule, which needs an attestation.
         if (new_.period != old_.period || new_.epoch != old_.epoch) return false;
         return _lteOrUnlimited(new_.txLimit, old_.txLimit)
             && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
             && _windowIsSubset(new_.windowStart, new_.windowEnd, old_.windowStart, old_.windowEnd);
     }
 
-    /// @dev 跟 `_isTighter` 判準相同,但**完全不看 `epoch`** —— 只有 `setRule`
-    ///      用它來決定要不要發 `LimitRaised`。`RULE_TYPEHASH` 沒有 `epoch` 這個
-    ///      欄位,attestation 保護不到它,`setRule` 其餘地方也完全不採信呼叫者
-    ///      填的 `rule.epoch`(見 `setRule` 內 epoch 的計算,只從 `cur.epoch`
-    ///      往上加)。如果直接用 `_isTighter` 比,一旦 `epoch` 曾經被撞過
-    ///      (period 換過一次),之後任何一次逐位元組相同的重放呼叫都會因為
-    ///      呼叫者慣用的 `epoch: 0` 對不上目前非零的 `cur.epoch`,被誤判成
-    ///      「變寬」而白白發一次 `LimitRaised`。
+    /// @dev The same criterion as `_isTighter`, but **ignoring `epoch` entirely** — only
+    ///      `setRule` uses it, to decide whether to emit `LimitRaised`. `RULE_TYPEHASH` has
+    ///      no `epoch` field, so the attestation does not cover it, and nowhere else does
+    ///      `setRule` trust the caller's `rule.epoch` (see the epoch computation in
+    ///      `setRule`, which only counts up from `cur.epoch`). Comparing with `_isTighter`
+    ///      directly would mean that once `epoch` has been bumped (period changed once),
+    ///      any later byte-identical replay would fail the comparison — the caller's
+    ///      customary `epoch: 0` against a now-nonzero `cur.epoch` — and be misread as a
+    ///      widening, emitting a spurious `LimitRaised`.
     function _isTighterIgnoringEpoch(
         LeashStorage.TokenRule storage old_,
         LeashStorage.TokenRule calldata new_
     ) private view returns (bool) {
         if (old_.allowed && !new_.allowed) return true;
         if (!old_.allowed) return false;
-        if (new_.period != old_.period) return false; // 理由同 `_isTighter`,epoch 除外
+        if (new_.period != old_.period) return false; // same reason as `_isTighter`, minus epoch
         return _lteOrUnlimited(new_.txLimit, old_.txLimit)
             && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
             && _windowIsSubset(new_.windowStart, new_.windowEnd, old_.windowStart, old_.windowEnd);
     }
 
-    /// @dev `0 = 不限`,所以比較會反轉:
-    ///      `0 → 100` 收緊(true);`100 → 0` 放寬(false);`100 → 50` 收緊。
-    ///      **這是最容易寫反的一行。**
+    /// @dev `0 = unlimited`, so the comparison inverts:
+    ///      `0 → 100` tightens (true); `100 → 0` widens (false); `100 → 50` tightens.
+    ///      **This is the easiest line in the file to get backwards.**
     function _lteOrUnlimited(uint256 new_, uint256 old_) private pure returns (bool) {
-        if (old_ == 0) return true; // 原本無限,任何值(含 0)都不更寬
-        if (new_ == 0) return false; // 原本有限,改成無限 = 放寬
+        if (old_ == 0) return true; // was unlimited; no value (0 included) is wider
+        if (new_ == 0) return false; // was finite, now unlimited = a widening
         return new_ <= old_;
     }
 
-    /// @dev 新的分鐘集合必須是舊的子集。三種情況:
-    ///      - 舊的是全天(`start == end`)→ 任何新時段都是收緊
-    ///      - 新的是全天、舊的不是 → 放寬
-    ///      - 兩者都是有限區間 → 逐分鐘檢查子集
+    /// @dev The new set of minutes must be a subset of the old one. Three cases:
+    ///      - The old window is all day (`start == end`) → any new window tightens
+    ///      - The new window is all day and the old one is not → a widening
+    ///      - Both are bounded intervals → check the subset minute by minute
     ///
-    ///      **刻意用 O(1440) 的迴圈,不用不等式湊。** `pure`/`view` 只代表不寫
-    ///      state,不代表免費 —— 這個迴圈是從 `tightenRule`(external,會改狀態)
-    ///      呼叫的,gas 是在交易裡真的付的。兩個常見情況(「舊的全天」「新的
-    ///      全天、舊的不是」)都提前 return,是 O(1);迴圈只在兩邊都是有限
-    ///      區間、且新的確實是舊的子集(跑滿全部 1440 分鐘才能確認)時才吃到
-    ///      全部成本 —— 實測約 480k gas(`test_a_narrower_overnight_window_is_tightening`)。
-    ///      `tightenRule` 是縮權操作,一天跑不到幾次,Sepolia 上多付這筆 gas
-    ///      無關痛癢。換成不等式湊的跨午夜子集判斷很容易寫反,而寫反**沒有任何
-    ///      revert、任何錯誤** —— 只是靜默地放寬規則。花這筆 gas 換掉一個
-    ///      不會被發現的 bug,划算。
+    ///      **The O(1440) loop is deliberate; no inequality juggling.** `pure`/`view` means
+    ///      "writes no state", not "free" — this loop is called from `tightenRule`, which is
+    ///      external and state-changing, so the gas is really paid in a transaction. The two
+    ///      common cases ("old is all day", "new is all day and old is not") return early
+    ///      and are O(1); the loop only pays in full when both are bounded intervals and the
+    ///      new one really is a subset of the old (confirming that requires all 1440
+    ///      minutes) — measured at about 480k gas
+    ///      (`test_a_narrower_overnight_window_is_tightening`). `tightenRule` is a
+    ///      reduction, run a handful of times a day at most, and paying that gas on Sepolia
+    ///      is immaterial. An inequality-based overnight subset test is very easy to get
+    ///      backwards, and getting it backwards produces **no revert and no error** — it
+    ///      just silently widens the rule. Spending the gas to eliminate a bug that would
+    ///      never be noticed is a good trade.
     function _windowIsSubset(uint16 ns, uint16 ne, uint16 os, uint16 oe)
         private
         pure
         returns (bool)
     {
-        if (os == oe) return true; // 舊的全天
-        if (ns == ne) return false; // 新的全天、舊的不是
+        if (os == oe) return true; // old window is all day
+        if (ns == ne) return false; // new window is all day and the old one was not
         for (uint16 m = 0; m < 1440; ++m) {
             if (_inWindow(m, ns, ne) && !_inWindow(m, os, oe)) return false;
         }
         return true;
     }
 
-    /// @dev 與 `StandardPolicy._inWindow` 同語意。`start > end` 表示跨午夜。
+    /// @dev Same semantics as `StandardPolicy._inWindow`. `start > end` crosses midnight.
     function _inWindow(uint16 minuteOfDay, uint16 start, uint16 end) private pure returns (bool) {
         if (start == end) return true;
         if (start < end) return minuteOfDay >= start && minuteOfDay < end;
         return minuteOfDay >= start || minuteOfDay < end;
     }
 
-    /// @dev `spent` 的 key。`epoch` 放高位、週期索引放低位,兩者不互相污染
-    ///      (`period` 最小 1 秒,`timestamp / 1` 遠小於 `2^224`)。
-    ///      `period == 0` 時所有花費累計進同一個桶 = 永不重置的終身額度。
+    /// @dev The key into `spent`. `epoch` occupies the high bits and the period index the
+    ///      low bits, so neither contaminates the other (`period` is at least 1 second, and
+    ///      `timestamp / 1` is far below `2^224`).
+    ///      When `period == 0` every spend accumulates into one bucket = a lifetime
+    ///      allowance that never resets.
     function _bucket(LeashStorage.TokenRule storage r) private view returns (uint256) {
         uint256 hi = uint256(r.epoch) << 224;
         return r.period == 0 ? hi : hi | (block.timestamp / r.period);
     }
 
-    /// @notice 從 ENS 解出這個名字該過哪一份 policy。解不出來回 `address(0)`。
+    /// @notice Resolves, from ENS, which policy this name must satisfy. Returns
+    ///         `address(0)` if it does not resolve.
     ///
-    /// @dev **三跳,而且每一跳的回傳長度不一樣:**
+    /// @dev **Three hops, and each returns a different number of bytes:**
     ///
-    ///      | 跳 | 呼叫 | 預期 returndata |
+    ///      | Hop | Call | Expected returndata |
     ///      |---|---|---|
     ///      | 1 | `ETH_REGISTRY.getSubregistry("leash")` | 32 |
     ///      | 2 | `LeashRegistry.getResolver(label)` | 32 |
     ///      | 3 | `LeashResolver.resolve(dns, addr(node))` | **96** |
     ///
-    ///      第三跳回傳 `bytes`,ABI 編碼是 offset(32) + length(32) + 內層(32)。
-    ///      **寫成 `== 32` 檢查的話快樂路徑永遠不成立**,而且理由碼會是
-    ///      `NO_POLICY`(「ENS 讀不到 policy」)—— 完全誤導除錯方向。
+    ///      Hop three returns `bytes`, whose ABI encoding is offset (32) + length (32) +
+    ///      inner (32). **Check it for `== 32` and the happy path never succeeds** — while
+    ///      the reason code says `NO_POLICY` ("ENS has no policy pointer"), which sends you
+    ///      to debug entirely the wrong thing.
     ///
-    ///      全部用低階 `staticcall` 並各自檢查自己的預期長度:ENS 的合約還在
-    ///      Immunefi 審計期(至 09-14),位址可能變動或行為改變。我們不能因為
-    ///      別人的合約 revert 就讓帳戶整個卡死 —— 解不出來就是 `NO_POLICY`,
-    ///      錢不動,而那正是安全的預設。
+    ///      All three use low-level `staticcall` and each checks its own expected length:
+    ///      ENS's contracts are still in their Immunefi audit window (through 09-14), so
+    ///      addresses may move and behaviour may change. Another contract reverting must not
+    ///      wedge this account — failing to resolve is `NO_POLICY`, no money moves, and that
+    ///      is the safe default.
     ///
-    ///      **長度對不代表結構對,而且全程不對外部回傳資料呼叫 `abi.decode`。**
-    ///      `abi.decode` 對畸形輸入(header 的 offset/length 不對、或
-    ///      `address` 高 12 bytes 不乾淨)會 revert,而不是回傳失敗值 ——
-    ///      那樣一個壞掉(或惡意)的 ENS 合約回傳長度對但內容假的資料,
-    ///      就能讓 `resolvePolicy` revert,壞了「絕不 revert」的保證。
-    ///      所以三跳全部只用 assembly 讀 word、自己驗證結構與 padding,
-    ///      細節見 `_wordToAddress`。
+    ///      **The right length does not mean the right structure, and no externally
+    ///      returned data is ever passed to `abi.decode`.** `abi.decode` reverts on
+    ///      malformed input (a bad offset/length in the header, or an `address` whose high
+    ///      12 bytes are not clean) rather than returning a failure value — which would let
+    ///      a broken (or malicious) ENS contract returning right-length, wrong-content data
+    ///      make `resolvePolicy` revert, breaking the "never reverts" guarantee.
+    ///      So all three hops read words in assembly and validate structure and padding
+    ///      themselves; the details are in `_wordToAddress`.
     ///
-    ///      這條路徑同時是三層撤銷的實作:hop1 回 0 = 全滅、
-    ///      hop2 回 0 = 這一個 agent 死(撤銷或 `expiry` 到期)、
-    ///      hop3 回 0 = 換規則那一層清空了指標。
+    ///      This path is also the implementation of the three revocation layers: hop1
+    ///      returning 0 = everything halts, hop2 returning 0 = this one agent dies (revoked
+    ///      or `expiry` lapsed), hop3 returning 0 = the swap-the-rules layer cleared the
+    ///      pointer.
     function resolvePolicy(bytes32 node, string memory label) public view returns (address) {
         address reg = _staticAddress(
             ETH_REGISTRY, abi.encodeWithSignature("getSubregistry(string)", PARENT_LABEL)
@@ -605,12 +651,13 @@ contract LeashAccount {
         (bool ok, bytes memory ret) = res.staticcall{ gas: HOP_GAS }(
             abi.encodeWithSignature("resolve(bytes,bytes)", dnsName, inner)
         );
-        // 96 = offset(32) + length(32) + 內層(32)。**只檢查總長度不夠** ——
-        // 長度對但 header 是假的(例如 offset 不是 0x20)一樣會讓
-        // `abi.decode(ret, (bytes))` revert,壞了「絕不 revert」的保證
-        // (2026-09-08 用一個孤立的 forge 測試實測過:`abi.decode` 對這類
-        // 畸形輸入真的會 revert,不是理論風險)。所以完全不對外部回傳的
-        // bytes 呼叫 `abi.decode`,自己用 assembly 讀三個字、自己驗證結構。
+        // 96 = offset(32) + length(32) + inner(32). **Checking the total length alone is
+        // not enough** — the right length with a forged header (an offset that is not 0x20,
+        // say) still makes `abi.decode(ret, (bytes))` revert, breaking the "never reverts"
+        // guarantee. (Measured on 2026-09-08 with an isolated forge test: `abi.decode`
+        // really does revert on this kind of malformed input; it is not a theoretical
+        // risk.) So no externally returned bytes are ever passed to `abi.decode`; we read
+        // the three words in assembly and validate the structure ourselves.
         if (!ok || ret.length != 96) return address(0);
         uint256 offset;
         uint256 innerLength;
@@ -622,19 +669,20 @@ contract LeashAccount {
         }
         if (offset != 0x20 || innerLength != 0x20) return address(0);
         address policy = _wordToAddress(word);
-        // policy 不能是自己 —— 同樣的憑證問題,見 `spend` 的 BadTarget 護欄
+        // The policy must not be this account — the same authority-confusion problem; see
+        // the BadTarget guards in `spend`
         if (policy == address(this)) return address(0);
         return policy;
     }
 
-    /// @dev 每一跳的 gas 上限。ENS 那邊壞掉不能拖垮我們。
+    /// @dev The per-hop gas cap. Breakage on the ENS side must not drag us down with it.
     uint256 private constant HOP_GAS = 100_000;
 
     function _staticAddress(address target, bytes memory cd) private view returns (address) {
         (bool ok, bytes memory ret) = target.staticcall{ gas: HOP_GAS }(cd);
         if (!ok || ret.length != 32) return address(0);
-        // 同樣不對外部回傳資料用 `abi.decode` —— 理由跟 hop3 一樣,見下面
-        // `_wordToAddress` 的註解。
+        // Again, no `abi.decode` on externally returned data — same reason as hop three;
+        // see the notes on `_wordToAddress` below.
         uint256 word;
         assembly {
             word := mload(add(ret, 0x20))
@@ -642,71 +690,81 @@ contract LeashAccount {
         return _wordToAddress(word);
     }
 
-    /// @dev 把一個 32-byte word 當 address 讀出來,**自己驗證高 12 bytes 是 0**。
+    /// @dev Reads a 32-byte word as an address, **validating that the high 12 bytes are
+    ///      zero ourselves**.
     ///
-    ///      這裡有兩個都不能用的選項:
-    ///      - `abi.decode(bytes, (address))` 會檢查高位並在不乾淨時 revert
-    ///        (已實測驗證),但 `resolvePolicy` 的合約是「絕不 revert」——
-    ///        一個回傳髒資料的 ENS 合約會直接把整個帳戶卡死。
-    ///      - 直接用 assembly 把 word 截斷成 `uint160`(`address(uint160(word))`)
-    ///        不會 revert,但也不驗證 —— 一個回傳高位有垃圾的 resolver 會被
-    ///        安靜地截斷成一個看起來合法、但完全不是它原本意圖的地址放行。
+    ///      Two options are both unusable here:
+    ///      - `abi.decode(bytes, (address))` does check the high bits and reverts when they
+    ///        are dirty (verified by measurement) — but `resolvePolicy`'s contract is "never
+    ///        reverts", and an ENS contract returning dirty data would wedge the whole
+    ///        account.
+    ///      - Truncating the word to `uint160` in assembly (`address(uint160(word))`) does
+    ///        not revert, but does not validate either — a resolver returning garbage in the
+    ///        high bits would be silently truncated into an address that looks legitimate
+    ///        and is not remotely what was intended, and then allowed through.
     ///
-    ///      兩者都不安全,所以自己做這個檢查:高位不乾淨就直接當作
-    ///      `address(0)`(跟 hop1/hop2/hop3 其他失敗情形共用同一個「解不出來」
-    ///      的訊號,呼叫端不需要另外分辨),乾淨才截斷回傳。**這是唯一驗證
-    ///      padding 的地方** —— 呼叫端(`resolvePolicy`、`_staticAddress`)
-    ///      直接信任這裡回傳的值,不再重複檢查,以免出現「兩處都要改」
-    ///      的重複邏輯。
+    ///      Neither is safe, so we do the check ourselves: dirty high bits are treated as
+    ///      `address(0)` (sharing the same "did not resolve" signal as every other hop1 /
+    ///      hop2 / hop3 failure, so the caller has nothing extra to distinguish), and only a
+    ///      clean word is truncated and returned. **This is the only place padding is
+    ///      validated** — the callers (`resolvePolicy`, `_staticAddress`) trust the value
+    ///      returned here and do not re-check it, so there is no duplicated logic that would
+    ///      have to be fixed in two places.
     function _wordToAddress(uint256 word) private pure returns (address) {
         if (word >> 160 != 0) return address(0);
         return address(uint160(word));
     }
 
-    /// @dev DNS wire format:`<len><label>...<len>eth<0>`。
-    ///      父層固定是 `leash.eth`,所以只有第一段是變數。
-    ///      實測:`vendors.leash.eth` = `0x0776656e646f7273056c656173680365746800`
+    /// @dev DNS wire format: `<len><label>...<len>eth<0>`.
+    ///      The parent is always `leash.eth`, so only the first segment varies.
+    ///      Measured: `vendors.leash.eth` = `0x0776656e646f7273056c656173680365746800`
     function _dnsEncode(string memory label) private pure returns (bytes memory) {
         return abi.encodePacked(uint8(bytes(label).length), label, hex"056c656173680365746800");
     }
 
-    /// @notice **agent 唯一的花費路徑。**
+    /// @notice **The agent's only spending path.**
     ///
-    /// @dev `node` 與 `label` 不由 caller 提供,從 `bindings[msg.sender]` 讀 ——
-    ///      那消滅了「node 與 label 不一致」一整類要驗證的錯誤。
+    /// @dev `node` and `label` are not supplied by the caller; they are read from
+    ///      `bindings[msg.sender]` — which eliminates an entire class of "node and label
+    ///      disagree" validation.
     ///
-    ///      **被擋 ≠ revert。** 政策違反 → 不轉帳、發 `SpendBlocked`、正常結束,
-    ///      因為 subgraph 要索引得到「為什麼被擋」。只有 **2a(caller 根本不是
-    ///      被綁定的 agent)** 才 revert —— 那不是政策決定,是入侵;而 **2b
-    ///      (已綁定但被撤銷)不 revert** —— 撤銷是行政動作,那個 agent
-    ///      該查得到自己為什麼不能動了(revert 的 log 會被丟棄)。
+    ///      **Blocked ≠ revert.** A policy violation means: no transfer, emit
+    ///      `SpendBlocked`, return normally — because the subgraph has to be able to index
+    ///      *why* it was blocked. Only **2a (the caller is not a bound agent at all)**
+    ///      reverts; that is not a policy decision, it is an intrusion. **2b (bound but
+    ///      revoked) does not revert** — revocation is an administrative act, and that agent
+    ///      deserves to be able to look up why it is stuck (logs from a reverted call are
+    ///      discarded).
     function spend(address token, address payee, uint256 amount) external {
         LeashStorage.AccountStorage storage $ = LeashStorage.layout();
 
-        // 1. 重入鎖 —— 第一道防線,連「這是不是被綁定的 agent」都還沒查就先擋。
+        // 1. Reentrancy lock — the first line of defence, before even checking whether
+        //    this is a bound agent.
         if ($.entered) revert Reentrant();
         $.entered = true;
 
-        // 2a. 綁定過嗎 —— 沒有就 revert,這是入侵而不是政策決定。
+        // 2a. Is it bound? If not, revert — this is an intrusion, not a policy decision.
         LeashStorage.AgentBinding storage b = $.bindings[msg.sender];
         if (b.node == bytes32(0)) revert NotBoundAgent();
         bytes32 node = b.node;
 
-        // 護欄:token / payee 不能指回自己或 0,token 必須有 code。
-        // 放在授權之後、政策之前 —— 這不是政策違反,是格式錯誤。
+        // Guards: token / payee must not point back at this account or at 0, and token
+        // must have code. Placed after authorisation and before policy — these are
+        // malformed inputs, not policy violations.
         if (amount == 0) revert ZeroAmount();
         if (token == address(this) || payee == address(this)) revert BadTarget();
         if (token == address(0) || payee == address(0)) revert BadTarget();
         if (token.code.length == 0) revert BadTarget();
 
-        // 被擋分支(2b/3/4/5)共用同一組「目前累計/上限」——`token` 這時已經
-        // 通過護欄驗證,查表安全。在這裡先查一次、往下傳值而不是傳
-        // storage 參照,是為了讓 `_blocked` 不用自己重算 —— 沒有
-        // `--via-ir` 時,重算會讓那個函式自己疊出 stack too deep(實測踩過)。
+        // The blocking branches (2b/3/4/5) share one pair of "spent so far / limit"
+        // values — `token` has passed the guards by now, so the lookup is safe. Looking it
+        // up once here and passing values down rather than a storage reference keeps
+        // `_blocked` from recomputing it: without `--via-ir`, recomputing pushes that
+        // function into stack-too-deep (measured, not hypothetical).
         LeashStorage.TokenRule storage r = $.rules[node][token];
         uint256 spentSoFar = $.spent[node][token][_bucket(r)];
 
-        // 2b. 被撤銷了嗎 —— **不 revert**,發可索引的事件。
+        // 2b. Revoked? **Do not revert** — emit an indexable event.
         if (b.revoked) {
             _blocked(
                 $,
@@ -722,7 +780,7 @@ contract LeashAccount {
             return;
         }
 
-        // 3. 暫停
+        // 3. Paused
         if ($.paused) {
             _blocked(
                 $, node, payee, token, amount, Reason.PAUSED, address(0), spentSoFar, r.periodLimit
@@ -730,7 +788,7 @@ contract LeashAccount {
             return;
         }
 
-        // 4. ENS 三跳
+        // 4. The three ENS hops
         address policy = resolvePolicy(node, b.label);
         if (policy == address(0)) {
             _blocked(
@@ -747,9 +805,10 @@ contract LeashAccount {
             return;
         }
 
-        // 5. 批准清單 —— **事件在這裡發,帶真值**。排在檢查之後的話這個欄位
-        //    永遠只能是 true,而「指標指到一份沒被批准的 policy」正是
-        //    ADMIN 金鑰被偷時唯一的鏈上訊號。
+        // 5. The approval list — **the event is emitted here, carrying the real value**.
+        //    Placed after the check, that field could only ever be true — and "the pointer
+        //    aims at an unapproved policy" is exactly the one onchain signal that the ADMIN
+        //    key has been stolen.
         bool approved = APPROVALS.isApproved(policy);
         emit PolicyResolved(node, policy, approved);
         if (!approved) {
@@ -767,15 +826,17 @@ contract LeashAccount {
             return;
         }
 
-        // 6-13 抽到獨立函式:單一 `spend` 裡塞進 ctx 建構 + policy 呼叫 + 轉帳
-        // 全部的區域變數,在沒有 `--via-ir` 時會炸 "stack too deep"
-        // (實測踩過)。拆開純粹是編譯器限制,不是邏輯分層。
+        // Steps 6-13 are split into a separate function: holding the locals for ctx
+        // construction + the policy call + the transfer all inside one `spend` blows up
+        // with "stack too deep" without `--via-ir` (measured, not hypothetical). The split
+        // is purely a compiler constraint, not a layering decision.
         _execute($, node, token, payee, amount, policy);
     }
 
-    /// @dev `spend` 的後半段:組 `SpendContext`、限 gas 問 policy、
-    ///      **先記帳再轉帳**、發事件。`msg.sender` 沿用外層呼叫的值 ——
-    ///      private 函式呼叫不是外部呼叫,不會換掉 `msg.sender`。
+    /// @dev The second half of `spend`: build the `SpendContext`, ask the policy under a
+    ///      gas cap, **write the ledger before transferring**, emit the event.
+    ///      `msg.sender` carries over from the outer call — a private function call is not
+    ///      an external call and does not change `msg.sender`.
     function _execute(
         LeashStorage.AccountStorage storage $,
         bytes32 node,
@@ -784,12 +845,13 @@ contract LeashAccount {
         uint256 amount,
         address policy
     ) private {
-        // 6-7. 組 SpendContext —— policy 不碰帳戶的 storage,只看這包輸入。
+        // 6-7. Build the SpendContext — the policy never touches the account's storage;
+        //      it sees only this bundle of inputs.
         LeashStorage.TokenRule storage r = $.rules[node][token];
         uint256 bucket = _bucket(r);
         uint256 spentSoFar = $.spent[node][token][bucket];
 
-        // 8. 呼叫 policy,限 gas、檢查回傳長度、fail-closed。
+        // 8. Call the policy: capped gas, checked return length, fail closed.
         uint8 reason = _askPolicy(
             policy,
             SpendContext({
@@ -808,29 +870,32 @@ contract LeashAccount {
             })
         );
 
-        // 9. 被擋 —— 跟 2b/3/4/5 共用同一條路徑,不要重複貼一次
-        //    「解鎖 + 發 SpendBlocked」的邏輯(review 抓到的重複)。`$` 這裡
-        //    本來就在 scope 裡,呼叫 `_blocked` 沒有額外的 stack 代價。
+        // 9. Blocked — shares one path with 2b/3/4/5 rather than pasting the
+        //    "unlock + emit SpendBlocked" logic again (a duplication review caught). `$` is
+        //    already in scope here, so calling `_blocked` costs nothing extra on the stack.
         if (reason != Reason.OK) {
             _blocked($, node, payee, token, amount, reason, policy, spentSoFar, r.periodLimit);
             return;
         }
 
-        // 10. **先記帳** —— 在外部呼叫之前。重入鎖是第一道防線,這是第二道,
-        //     兩道都失效才會出事(轉帳能重入、記帳卻只認第一次)。
+        // 10. **Write the ledger first** — before the external call. The reentrancy lock
+        //     is the first line of defence and this is the second; it takes both failing to
+        //     cause harm (a transfer that can reenter but a ledger that only counts once).
         uint256 spentAfter = spentSoFar + amount;
         $.spent[node][token][bucket] = spentAfter;
 
-        // 11-12 也抽出去:同一個原因,`_execute` 自己塞了 ctx 建構跟 policy
-        // 呼叫之後,再疊上轉帳跟事件的區域變數一樣會 stack too deep。
+        // Steps 11-12 are split out for the same reason: once `_execute` is holding the
+        // locals for ctx construction and the policy call, adding the transfer's and the
+        // event's locals on top hits stack-too-deep again.
         _transferAndEmit(node, token, payee, amount, policy, r.period, r.periodLimit, spentAfter);
 
-        // 13. 解鎖
+        // 13. Unlock
         $.entered = false;
     }
 
-    /// @dev `_execute` 的最後一段:轉帳、發 `SpendExecuted`。純粹是為了不讓
-    ///      `_execute` 自己塞進太多區域變數(stack too deep,見上面的註解)。
+    /// @dev The last stretch of `_execute`: transfer, then emit `SpendExecuted`. It exists
+    ///      purely to keep `_execute` from holding too many locals (stack too deep; see the
+    ///      notes above).
     function _transferAndEmit(
         bytes32 node,
         address token,
@@ -841,30 +906,32 @@ contract LeashAccount {
         uint256 periodLimit,
         uint256 spentAfter
     ) private {
-        // 11. 轉帳。**嚴格檢查:恰好 32 bytes 且是 true。** 不用 SafeERC20 的
-        //     寬鬆版 —— 寬鬆換來的相容性,代價是「回報成功但沒轉帳」。
+        // 11. The transfer. **Strict: exactly 32 bytes, and it must be true.** Not
+        //     SafeERC20's permissive variant — the compatibility permissiveness buys is
+        //     paid for with "reported success, transferred nothing".
         //
-        //     跟 `_askPolicy` 用同一套解法,不對外部回傳資料直接
-        //     `abi.decode(ret, (bool))`:一個回傳 32 bytes 但不是 0/1 的
-        //     代幣(例如整數 2)會讓 `abi.decode` 直接 revert 成 `Panic`,
-        //     蓋掉真正的失敗理由。改成當 `uint256` 讀出來自己判斷,
-        //     失敗一律歸給 `TransferFailed()`。
+        //     Same approach as `_askPolicy`: never `abi.decode(ret, (bool))` on externally
+        //     returned data. A token that returns 32 bytes that are not 0/1 (the integer 2,
+        //     say) would make `abi.decode` revert with a `Panic` and bury the real reason
+        //     for the failure. Instead we read it as a `uint256` and judge it ourselves,
+        //     attributing every failure to `TransferFailed()`.
         (bool ok, bytes memory ret) =
             token.call(abi.encodeWithSignature("transfer(address,uint256)", payee, amount));
         if (!ok || ret.length != 32) revert TransferFailed();
         uint256 rawReturn = abi.decode(ret, (uint256));
         if (rawReturn != 1) revert TransferFailed();
 
-        // 12. 事件
+        // 12. Events
         uint64 periodEnd = period == 0 ? 0 : uint64(((block.timestamp / period) + 1) * period);
         emit SpendExecuted(
             node, msg.sender, payee, token, amount, policy, spentAfter, periodLimit, periodEnd
         );
     }
 
-    /// @dev 限 gas 呼叫 policy,任何異常都當成理由碼 12(policy 壞了,不是
-    ///      「policy 說不行」)。**一份能燒掉全部 gas 的 policy 等於一個 DoS
-    ///      開關**,所以上限是刻意的;回傳長度不是 32 一樣 fail-closed。
+    /// @dev Calls the policy under a gas cap, treating any anomaly as reason code 12 (the
+    ///      policy is broken, not "the policy said no"). **A policy that can burn all the
+    ///      gas is a DoS switch**, so the cap is deliberate; a return length other than 32
+    ///      fails closed just the same.
     function _askPolicy(address policy, SpendContext memory ctx) private returns (uint8) {
         (bool ok, bytes memory ret) =
             policy.call{ gas: POLICY_GAS }(abi.encodeCall(IPolicy.check, (ctx)));
@@ -874,10 +941,12 @@ contract LeashAccount {
         return uint8(raw);
     }
 
-    /// @dev 被擋的共用路徑:解鎖重入鎖、發 `SpendBlocked`。**不 revert** ——
-    ///      政策違反的證據是「錢沒有動」,不是交易紅字。
-    ///      `spentSoFar`/`limit` 由呼叫端算好傳進來,這裡不再查表 ——
-    ///      理由見呼叫端 `spend` 裡的註解(stack too deep)。
+    /// @dev The shared blocking path: release the reentrancy lock, emit `SpendBlocked`.
+    ///      **No revert** — the evidence of a policy violation is that money did not move,
+    ///      not that the transaction went red.
+    ///      `spentSoFar` / `limit` are computed by the caller and passed in rather than
+    ///      looked up again here; the reason is in the notes inside `spend`
+    ///      (stack too deep).
     function _blocked(
         LeashStorage.AccountStorage storage $,
         bytes32 node,

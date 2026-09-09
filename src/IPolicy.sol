@@ -1,54 +1,65 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @notice 一次花費請求的完整脈絡。**由 `LeashAccount` 組好之後整包送進 policy。**
-/// @dev    這個 struct 存在的理由:policy 不需要、也不應該去帳戶裡撈東西。
-///         帳戶查完表把結論塞進來,policy 只做判斷。兩個後果:
-///         1. policy 是被 `call` 的外部合約,**碰不到帳戶的 storage**
-///            (只有 `delegatecall` 會破壞這條 —— 我們永遠不用它)
-///         2. 前端和 agent 可以用同一份輸入走 `eth_call` 預演,結果保證一致
+/// @notice The full context of one spend request. **Assembled by `LeashAccount` and
+///         handed to the policy in one piece.**
+/// @dev    Why this struct exists: a policy does not need — and should not be able — to
+///         reach into the account for anything. The account does the lookups and passes
+///         the conclusions in; the policy only judges. Two consequences:
+///         1. The policy is an external contract reached by `call`, so it **cannot touch
+///            the account's storage** (only `delegatecall` would break that, and we never
+///            use it)
+///         2. The frontend and the agent can dry-run the same inputs through `eth_call`
+///            and are guaranteed the same verdict
 struct SpendContext {
     address agent;
     address payee;
     address token;
     uint256 amount;
-    // --- 由帳戶查表後填入 ---
+    // --- filled in by the account after its lookups ---
     bool tokenAllowed;
     bool payeeAllowed;
-    uint256 txLimit; // 單筆上限。0 = 不限
-    uint256 periodLimit; // 週期上限。0 = 不限
-    uint256 spentSoFar; // 本週期已花(不含這筆)
-    uint64 nowTs; // 帳戶傳入的 block.timestamp
-    uint16 windowStart; // 允許時段起點,以 UTC 當日分鐘數計(0–1439)
-    uint16 windowEnd; // 允許時段終點(不含)。start == end 表示全天開放
+    uint256 txLimit; // per-tx cap. 0 = unlimited
+    uint256 periodLimit; // per-period cap. 0 = unlimited
+    uint256 spentSoFar; // already spent this period (excluding this request)
+    uint64 nowTs; // block.timestamp, passed in by the account
+    uint16 windowStart; // start of the allowed window, as minute of the day UTC (0-1439)
+    uint16 windowEnd; // end of the window (exclusive). start == end means all day
 }
 
-/// @title IPolicy —— 可替換的規則實作
-/// @notice policy 位址存在 ENS 名字的 resolver 記錄裡,由 ADMIN 指定;
-///         但「這個位址有沒有被批准過」由批准清單決定,而那份清單要刷臉才能加。
-///         兩層分開,ADMIN 金鑰被偷也換不上沒批准過的規則。
+/// @title IPolicy — the swappable rule implementation
+/// @notice The policy address lives in the ENS name's resolver record and is set by
+///         ADMIN; but whether that address has *ever been approved* is decided by the
+///         approval list, and getting onto that list costs a face scan. Splitting the two
+///         means a stolen ADMIN key still cannot install unapproved rules.
 interface IPolicy {
-    /// @return reason `Reason.OK` 表示放行,其餘為攔截理由碼
-    /// @dev **刻意不是 `view`。** policy 允許有自己的 storage —— 「多個 agent 共用一筆
-    ///      總預算」需要有人記帳,而讓 policy 自己記,是唯一不用在帳戶裡開特例的做法。
+    /// @return reason `Reason.OK` means allow; anything else is a block reason code
+    /// @dev **Deliberately not `view`.** A policy is allowed its own storage — "several
+    ///      agents share one pooled budget" needs someone to keep the ledger, and letting
+    ///      the policy keep it is the only way that does not carve a special case into the
+    ///      account.
     ///
-    ///      安全保證沒有因此變弱:policy 是被 `call` 的獨立合約,寫的是**自己的** storage。
-    ///      能碰到帳戶 storage 的只有 `delegatecall`,我們永遠不用。
+    ///      No security guarantee weakens as a result: the policy is a separate contract
+    ///      reached by `call`, and it writes **its own** storage. Only `delegatecall`
+    ///      could reach the account's storage, and we never use it.
     ///
-    ///      **有副作用,所以帳戶只在真的要付款時呼叫一次。** 預演走 `eth_call`。
-    ///      呼叫端必須:上重入鎖、限 gas、回傳長度不對一律當成擋下(fail-closed)。
+    ///      **It has side effects, so the account calls it exactly once, and only when it
+    ///      genuinely intends to pay.** Dry runs go through `eth_call`. The caller must:
+    ///      hold a reentrancy lock, cap the gas, and treat any unexpected return length as
+    ///      a block (fail closed).
     ///
-    ///      實作可以收緊可變性(Solidity 允許 override 時收緊)——
-    ///      `StandardPolicy` 就是 `pure` 的。
+    ///      Implementations may tighten the mutability (Solidity permits tightening on
+    ///      override) — `StandardPolicy` is `pure`.
     ///
-    ///      🔴 **policy 只能在回傳 `Reason.OK` 時記帳。**
+    ///      🔴 **A policy may only write to its ledger when it returns `Reason.OK`.**
     ///
-    ///      因為帳戶在被擋時**不 revert** —— 如果 policy 先扣了共用預算才回傳
-    ///      「超限」,那筆扣款不會被回滾,共用預算會漏。
-    ///      `SharedBudgetPolicy` 現在的寫法剛好是對的(先檢查再累加),
-    ///      但那是巧合而不是被要求的。**現在它被要求了。**
+    ///      Because the account **does not revert** when it blocks: if a policy debits the
+    ///      shared budget and *then* returns "over limit", that debit is never rolled back
+    ///      and the shared budget leaks. The way `SharedBudgetPolicy` is written today
+    ///      happens to be correct (check first, then accumulate), but that was an accident
+    ///      rather than a requirement. **It is a requirement now.**
     function check(SpendContext calldata ctx) external returns (uint8 reason);
 
-    /// @notice 給人看的識別字串,會出現在前端與 demo 裡
+    /// @notice Human-readable identifier; shown in the frontend and in the demo
     function describe() external pure returns (string memory);
 }
