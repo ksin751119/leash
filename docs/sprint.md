@@ -53,10 +53,10 @@ Points = hours. `M` = must (without it a prize is unreachable), `S` = should,
 | 6 | ENS wiring and onchain resolution working end to end (`setResolver`/`setSubregistry`) | 4 | M | 3,4,5 | ✅ **done 9/8**; the official UniversalResolver resolves it too |
 | 7a | `LeashAccount` — the wallet that forces every execution through the policy (reentrancy lock, policy gas cap, `isLeashed`) | 5 | M | 3,6 | 🟢 |
 | 7b | Upgrade to an **EIP-7702 delegate** (the EOA itself governed by the policy) | 5 | **X** | 1,7a | 🔴 toolchain risk |
-| 8 | `AttesterGate` — EIP-712 verification of widening signatures, **behind an interface with two implementations** | 4 | M | 3 | 🟠 **half done 9/8**: `IAttester` + `MockAttester` + `PolicyApprovals` deployed; `WorldAttester` remains |
+| 8 | `AttesterGate` — EIP-712 verification of widening signatures, **behind an interface with two implementations** | 4 | M | 3 | ✅ **done 9/9**: `WorldAttester` deployed and `LeashAccount` re-delegated onto it. `MockAttester` deliberately still serves `PolicyApprovals` and `LeashRegistry` |
 | 9 | Subgraph: schema + mappings + deploy to Studio + index | 6 | M | 2,6,7a | 🟡 indexing takes time |
 | 10 | The agent decision loop: query the subgraph → decide → sign → send | 6 | M | 9 | 🟢 |
-| 11 | World: IDKit + backend verification + EIP-712 issuance | 6 | M | 8 | 🟢 **IDKit and backend verification worked end to end on 9/7** (`world/`); only EIP-712 issuance remains |
+| 11 | World: IDKit + backend verification + EIP-712 issuance | 6 | M | 8 | ✅ **done 9/9**: `POST /api/attest` signs only after World returns 200, and `crosscheck.mjs` proves the JS and Solidity EIP-712 agree. The digest path has never run against World's live API - one action, one scan, saved for the demo |
 | 12 | The single-page frontend | 5 | M | 8,9,11 | 🟢 |
 | 13 | End-to-end rehearsal and fixes | 5 | M | all | 🟡 |
 | 14 | README (public repo, architecture diagram, how to run it) | 3 | M | 13 | 🟢 |
