@@ -1,0 +1,233 @@
+import { BigInt, Bytes, Address } from "@graphprotocol/graph-ts";
+import {
+  SpendExecuted,
+  SpendBlocked,
+  AgentBound,
+  AgentRevoked,
+  Leashed,
+  PayeeAllowed,
+  PayeeRemoved,
+  LimitRaised,
+} from "../generated/LeashAccount-wallet1/LeashAccount";
+import { AgentBudget, Payee, Spend, Agent, LeashedWallet } from "../generated/schema";
+import { reasonName } from "./reason";
+
+const ZERO = BigInt.fromI32(0);
+
+function budgetId(node: Bytes, token: Address): string {
+  return node.toHexString() + "-" + token.toHexString();
+}
+
+function payeeId(node: Bytes, token: Address, payee: Address): string {
+  return node.toHexString() + "-" + token.toHexString() + "-" + payee.toHexString();
+}
+
+/// Pre-computed remaining budget. **This is where "the arithmetic lives in the mapping,
+/// not in the agent" actually happens.**
+///
+/// `limit == 0` means unlimited, and we return null for it. An agent that reads null
+/// knows there is no cap. Returning 0 instead would be read as "no budget left" — the
+/// exact opposite meaning.
+function remainingOf(limit: BigInt, spent: BigInt): BigInt | null {
+  if (limit.equals(ZERO)) return null;
+  if (spent.ge(limit)) return ZERO;
+  return limit.minus(spent);
+}
+
+export function handleSpendExecuted(event: SpendExecuted): void {
+  const node = event.params.node;
+  const token = event.params.token;
+
+  // --- Question 1: budget snapshot ---
+  const bid = budgetId(node, token);
+  let b = AgentBudget.load(bid);
+  if (b == null) {
+    b = new AgentBudget(bid);
+    b.node = node;
+    b.token = token;
+  }
+  b.spent = event.params.spentAfter;
+  b.limit = event.params.limit;
+  b.remaining = remainingOf(event.params.limit, event.params.spentAfter);
+  b.periodEnd = event.params.periodEnd;
+  b.lastSpendAt = event.block.timestamp;
+  b.lastSpendTx = event.transaction.hash;
+  b.save();
+
+  // --- Question 2: this payee's running total ---
+  const pid = payeeId(node, token, event.params.payee);
+  let p = Payee.load(pid);
+  if (p == null) {
+    // PayeeAllowed should have fired first, but event ordering is not something to
+    // assume — create the record if it is missing.
+    p = new Payee(pid);
+    p.node = node;
+    p.token = token;
+    p.payee = event.params.payee;
+    p.allowed = true;
+    p.paidCount = 0;
+    p.paidTotal = ZERO;
+    p.firstAllowedAt = event.block.timestamp;
+  }
+  p.paidCount = p.paidCount + 1;
+  p.paidTotal = p.paidTotal.plus(event.params.amount);
+  p.lastPaidAt = event.block.timestamp;
+  p.save();
+
+  recordSpend(event.transaction.hash, event.logIndex, node, event.params.agent,
+    event.params.payee, token, event.params.amount, true, 0, event.params.policy,
+    event.params.spentAfter, event.params.limit, event.block.number, event.block.timestamp);
+
+  bumpAgent(event.params.agent, true);
+}
+
+/// **A blocked attempt has to leave a record.** The whole design chose no-op + event
+/// over revert precisely so this handler has something to index: the chain discards a
+/// reverted transaction's logs, and the agent could then never answer "why was I
+/// blocked last time?"
+export function handleSpendBlocked(event: SpendBlocked): void {
+  recordSpend(event.transaction.hash, event.logIndex, event.params.node, event.params.agent,
+    event.params.payee, event.params.token, event.params.amount, false,
+    event.params.reason, event.params.policy,
+    event.params.spentSoFar, event.params.limit, event.block.number, event.block.timestamp);
+
+  bumpAgent(event.params.agent, false);
+}
+
+function recordSpend(
+  txHash: Bytes, logIndex: BigInt, node: Bytes, agent: Address, payee: Address,
+  token: Address, amount: BigInt, executed: boolean, reason: i32, policy: Address,
+  spentAfter: BigInt, limit: BigInt, blockNumber: BigInt, timestamp: BigInt
+): void {
+  const s = new Spend(txHash.toHexString() + "-" + logIndex.toString());
+  s.node = node;
+  s.agent = agent;
+  s.payee = payee;
+  s.token = token;
+  s.amount = amount;
+  s.executed = executed;
+  s.reason = reason;
+  s.reasonName = reasonName(reason);
+  s.policy = policy;
+  s.spentAfter = spentAfter;
+  s.limit = limit;
+  s.blockNumber = blockNumber;
+  s.timestamp = timestamp;
+  s.txHash = txHash;
+  s.save();
+}
+
+function bumpAgent(agent: Address, executed: boolean): void {
+  const a = Agent.load(agent.toHexString());
+  if (a == null) return; // AgentBound was not indexed (bound before startBlock) — do not fabricate one
+  if (executed) a.spendCount = a.spendCount + 1;
+  else a.blockedCount = a.blockedCount + 1;
+  a.save();
+}
+
+export function handleAgentBound(event: AgentBound): void {
+  const id = event.params.agent.toHexString();
+  let a = Agent.load(id);
+  if (a == null) {
+    a = new Agent(id);
+    a.agent = event.params.agent;
+    a.spendCount = 0;
+    a.blockedCount = 0;
+  }
+  a.node = event.params.node;
+  a.wallet = event.address; // in delegate execution, address(this) *is* that EOA
+  a.revoked = false;
+  a.boundAt = event.block.timestamp;
+  a.save();
+}
+
+export function handleAgentRevoked(event: AgentRevoked): void {
+  const a = Agent.load(event.params.agent.toHexString());
+  if (a == null) return;
+  a.revoked = true;
+  a.save();
+}
+
+/// `Leashed` fires on the first `bindAgent`.
+///
+/// ⚠️ **It cannot serve as a subgraph template trigger**, even though the design doc
+/// originally said it would. The EOA itself emits this event, and a template must be
+/// triggered by a contract the subgraph is *already* watching — so the subgraph cannot
+/// see it before it watches that EOA. Chicken and egg.
+///
+/// That is why the addresses in subgraph.yaml are hardcoded, and why this handler only
+/// records the fact.
+export function handleLeashed(event: Leashed): void {
+  const id = event.params.wallet.toHexString();
+  let w = LeashedWallet.load(id);
+  if (w == null) {
+    w = new LeashedWallet(id);
+    w.leashedAt = event.block.timestamp;
+  }
+  w.wallet = event.params.wallet;
+  w.impl = event.params.impl;
+  w.node = event.params.node;
+  w.save();
+}
+
+/// The positive source for question 2. `PayeeAllowed` carries no token (the frozen
+/// schema has only node/payee/hash), so the id built here uses `token = 0x0` as a
+/// placeholder — see the note inside.
+export function handlePayeeAllowed(event: PayeeAllowed): void {
+  // The frozen `PayeeAllowed(node, payee, attestationHash)` **has no token field**,
+  // while the account's allowlist is per-(node, token, payee). The event therefore
+  // cannot tell us which token was whitelisted.
+  //
+  // Handling: record it under a `token = 0x0` id, meaning "this node whitelisted this
+  // payee". When a payment actually happens, `handleSpendExecuted` creates the record
+  // carrying the real token and accumulates against it.
+  //
+  // This is an existing limitation of the frozen schema, not an oversight here — it is
+  // recorded in docs/events.md as a follow-up.
+  const zeroToken = Address.zero();
+  const pid = payeeId(event.params.node, zeroToken, event.params.payee);
+  let p = Payee.load(pid);
+  if (p == null) {
+    p = new Payee(pid);
+    p.node = event.params.node;
+    p.token = zeroToken;
+    p.payee = event.params.payee;
+    p.paidCount = 0;
+    p.paidTotal = ZERO;
+    p.firstAllowedAt = event.block.timestamp;
+  }
+  p.allowed = true;
+  p.save();
+}
+
+export function handlePayeeRemoved(event: PayeeRemoved): void {
+  const zeroToken = Address.zero();
+  const p = Payee.load(payeeId(event.params.node, zeroToken, event.params.payee));
+  if (p == null) return;
+  p.allowed = false;
+  p.save();
+}
+
+/// Create the AgentBudget when a limit is raised, so "has a budget but has not spent
+/// yet" is queryable. Otherwise the agent's very first decision would read null and
+/// have no idea how much it may spend.
+export function handleLimitRaised(event: LimitRaised): void {
+  const bid = budgetId(event.params.node, event.params.token);
+  let b = AgentBudget.load(bid);
+  if (b == null) {
+    b = new AgentBudget(bid);
+    b.node = event.params.node;
+    b.token = event.params.token;
+    b.spent = ZERO;
+    b.periodEnd = ZERO;
+    b.lastSpendAt = ZERO;
+    b.lastSpendTx = Bytes.empty();
+  }
+  b.limit = event.params.newLimit;
+  b.remaining = remainingOf(event.params.newLimit, b.spent);
+  // periodEnd cannot be derived here: the event gives the period *length*, not the
+  // alignment point. A newly created entity keeps 0, and the first SpendExecuted fills
+  // in the real value. (Existing values are not overwritten — that would erase a
+  // periodEnd we already know.)
+  b.save();
+}

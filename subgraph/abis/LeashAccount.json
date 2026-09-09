@@ -1,0 +1,1177 @@
+[
+ {
+  "type": "constructor",
+  "inputs": [
+   {
+    "name": "ethRegistry_",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "approvals_",
+    "type": "address",
+    "internalType": "contract IPolicyApprovals"
+   },
+   {
+    "name": "attester_",
+    "type": "address",
+    "internalType": "contract IAttester"
+   }
+  ],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "fallback",
+  "stateMutability": "payable"
+ },
+ {
+  "type": "receive",
+  "stateMutability": "payable"
+ },
+ {
+  "type": "function",
+  "name": "APPROVALS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "contract IPolicyApprovals"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "ATTESTER",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "contract IAttester"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "ETH_REGISTRY",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "PARENT_LABEL",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "string",
+    "internalType": "string"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "PARENT_NODE",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "POLICY_GAS",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "SELF",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "allowPayee",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "attestation",
+    "type": "bytes",
+    "internalType": "bytes"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "bindAgent",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "label",
+    "type": "string",
+    "internalType": "string"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "bindingOf",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "label",
+    "type": "string",
+    "internalType": "string"
+   },
+   {
+    "name": "revoked",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "domainSeparator",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "isPayeeAllowed",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "nodeFor",
+  "inputs": [
+   {
+    "name": "label",
+    "type": "string",
+    "internalType": "string"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "pure"
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "inputs": [],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "payeeDigest",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "removePayee",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "resolvePolicy",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "label",
+    "type": "string",
+    "internalType": "string"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "restoreAgent",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "label",
+    "type": "string",
+    "internalType": "string"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "attestation",
+    "type": "bytes",
+    "internalType": "bytes"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "revokeAgent",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "ruleOf",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "internalType": "struct LeashStorage.TokenRule",
+    "components": [
+     {
+      "name": "allowed",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "txLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "periodLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "period",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "windowStart",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "windowEnd",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "epoch",
+      "type": "uint32",
+      "internalType": "uint32"
+     }
+    ]
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "setRule",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "rule",
+    "type": "tuple",
+    "internalType": "struct LeashStorage.TokenRule",
+    "components": [
+     {
+      "name": "allowed",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "txLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "periodLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "period",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "windowStart",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "windowEnd",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "epoch",
+      "type": "uint32",
+      "internalType": "uint32"
+     }
+    ]
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "attestation",
+    "type": "bytes",
+    "internalType": "bytes"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "spend",
+  "inputs": [
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "spentInCurrentPeriod",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "tightenRule",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "rule",
+    "type": "tuple",
+    "internalType": "struct LeashStorage.TokenRule",
+    "components": [
+     {
+      "name": "allowed",
+      "type": "bool",
+      "internalType": "bool"
+     },
+     {
+      "name": "txLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "periodLimit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "period",
+      "type": "uint64",
+      "internalType": "uint64"
+     },
+     {
+      "name": "windowStart",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "windowEnd",
+      "type": "uint16",
+      "internalType": "uint16"
+     },
+     {
+      "name": "epoch",
+      "type": "uint32",
+      "internalType": "uint32"
+     }
+    ]
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "unbindAgent",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "inputs": [],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "event",
+  "name": "AgentBound",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "AgentRevoked",
+  "inputs": [
+   {
+    "name": "agent",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "Leashed",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "wallet",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "impl",
+    "type": "address",
+    "indexed": false,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "LimitLowered",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "oldLimit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "newLimit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "LimitRaised",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "oldLimit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "newLimit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "period",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   },
+   {
+    "name": "attestationHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "Paused",
+  "inputs": [
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "PayeeAllowed",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "attestationHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "PayeeRemoved",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "PolicyResolved",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "policy",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "approved",
+    "type": "bool",
+    "indexed": false,
+    "internalType": "bool"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "SpendBlocked",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "agent",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "reason",
+    "type": "uint8",
+    "indexed": false,
+    "internalType": "uint8"
+   },
+   {
+    "name": "policy",
+    "type": "address",
+    "indexed": false,
+    "internalType": "address"
+   },
+   {
+    "name": "spentSoFar",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "limit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "SpendExecuted",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "agent",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "payee",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "policy",
+    "type": "address",
+    "indexed": false,
+    "internalType": "address"
+   },
+   {
+    "name": "spentAfter",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "limit",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "periodEnd",
+    "type": "uint64",
+    "indexed": false,
+    "internalType": "uint64"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "TokenAllowed",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "attestationHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "TokenRemoved",
+  "inputs": [
+   {
+    "name": "node",
+    "type": "bytes32",
+    "indexed": true,
+    "internalType": "bytes32"
+   },
+   {
+    "name": "token",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "Unpaused",
+  "inputs": [
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "attestationHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "error",
+  "name": "AlreadyBound",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "AttestationReused",
+  "inputs": [
+   {
+    "name": "digest",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "error",
+  "name": "BadTarget",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NodeLabelMismatch",
+  "inputs": [
+   {
+    "name": "expected",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   },
+   {
+    "name": "got",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "error",
+  "name": "NotAttested",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NotBoundAgent",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NotSelf",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NotSelfOrAgent",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NotTighter",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "Reentrant",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "TransferFailed",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "UnknownSelector",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "ZeroAmount",
+  "inputs": []
+ }
+]

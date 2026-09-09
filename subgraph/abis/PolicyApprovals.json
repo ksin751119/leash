@@ -1,0 +1,247 @@
+[
+ {
+  "type": "constructor",
+  "inputs": [
+   {
+    "name": "attester_",
+    "type": "address",
+    "internalType": "contract IAttester"
+   }
+  ],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "approvalDigest",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "description",
+    "type": "string",
+    "internalType": "string"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "approve",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "description",
+    "type": "string",
+    "internalType": "string"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "attestation",
+    "type": "bytes",
+    "internalType": "bytes"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "attestationUsed",
+  "inputs": [
+   {
+    "name": "digest",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "attester",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "contract IAttester"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "descriptionOf",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "string",
+    "internalType": "string"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "domainSeparator",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "isApproved",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "revoke",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "event",
+  "name": "PolicyApproved",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "description",
+    "type": "string",
+    "indexed": false,
+    "internalType": "string"
+   },
+   {
+    "name": "nonce",
+    "type": "uint256",
+    "indexed": false,
+    "internalType": "uint256"
+   },
+   {
+    "name": "attestationHash",
+    "type": "bytes32",
+    "indexed": false,
+    "internalType": "bytes32"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "event",
+  "name": "PolicyRevoked",
+  "inputs": [
+   {
+    "name": "policy",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   },
+   {
+    "name": "by",
+    "type": "address",
+    "indexed": true,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": false
+ },
+ {
+  "type": "error",
+  "name": "AlreadyApproved",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "AttestationReused",
+  "inputs": [
+   {
+    "name": "digest",
+    "type": "bytes32",
+    "internalType": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "error",
+  "name": "NotAttested",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "ZeroAttester",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "ZeroPolicy",
+  "inputs": []
+ }
+]

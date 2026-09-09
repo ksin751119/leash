@@ -1,0 +1,198 @@
+# Leash subgraph — entities store *answers*, not copies of events.
+#
+# The shape of this schema is dictated by the four agent questions in
+# `docs/events.md`, not by a generic data model:
+#   1. How much is left this period?      -> AgentBudget.remaining
+#   2. Have I paid this payee before?     -> Payee.allowed
+#   3. Which policy governs me, approved? -> PolicyPointer.policy / .approved
+#   4. Why was I blocked last time?       -> Spend.reason
+#
+# **Why the arithmetic lives in the mapping, not in the agent.** The whole design
+# assumes the agent is untrusted. If "how much is left" required the agent to sum
+# events and decide for itself whether the period had rolled over, that logic would
+# live in the one place we do not trust — a compromised agent only has to get the
+# sum wrong to convince itself it still has budget. With the arithmetic here, the
+# agent reads a number and has no room to compute it incorrectly.
+#
+# (The agent can of course read `remaining: 0` and submit the transaction anyway.
+#  The onchain policy rejects it — that is demo act two. The subgraph helps the
+#  agent make the right decision; the chain makes the wrong one impossible.
+#  Two separate layers.)
+
+# ---------------------------------------------------------------
+# The three the agent reads to decide — overwritten current-state snapshots
+# ---------------------------------------------------------------
+
+"""Question 1: how much this (node, token) has left this period. Overwritten on every SpendExecuted."""
+type AgentBudget @entity(immutable: false) {
+  "<node>-<token>"
+  id: ID!
+  node: Bytes!
+  token: Bytes!
+
+  "Pre-computed remaining budget. limit == 0 means unlimited, in which case this is null."
+  remaining: BigInt
+  spent: BigInt!
+  "0 = unlimited"
+  limit: BigInt!
+  "When the period resets. 0 = never resets (a lifetime budget)."
+  periodEnd: BigInt!
+
+  lastSpendAt: BigInt!
+  lastSpendTx: Bytes!
+}
+
+"""Question 2: whether this payee may receive right now, and how often it has been paid."""
+type Payee @entity(immutable: false) {
+  "<node>-<token>-<payee>"
+  id: ID!
+  node: Bytes!
+  token: Bytes!
+  payee: Bytes!
+
+  "Current state. PayeeAllowed sets true, PayeeRemoved sets false — the agent never has to pair and cancel events itself."
+  allowed: Boolean!
+  paidCount: Int!
+  paidTotal: BigInt!
+  firstAllowedAt: BigInt!
+  lastPaidAt: BigInt
+}
+
+"""
+Question 3: which policy this name currently points at, and whether a human approved it.
+
+**This is the only entity that has to overlay two timelines.** The pointer comes from
+LeashResolver (PolicyPointerSet, controlled by ADMIN); the approval state comes from
+PolicyApprovals (PolicyApproved / PolicyRevoked, controlled by a human face scan) —
+two different contracts. Overlaying them here is a dozen lines. Doing it in the agent
+would put it somewhere easy to get wrong and that nobody would ever test.
+"""
+type PolicyPointer @entity(immutable: false) {
+  "node"
+  id: ID!
+  node: Bytes!
+
+  "0x0 = pointer cleared = this agent is fully halted (reason code 3)"
+  policy: Bytes!
+  "Was this policy on the approval list at the time (reason code 4)"
+  approved: Boolean!
+  "Description recorded at approval time, for the frontend"
+  description: String
+  setBy: Bytes!
+  updatedAt: BigInt!
+}
+
+# ---------------------------------------------------------------
+# The three for humans and the demo — append-only, or control-plane state
+# ---------------------------------------------------------------
+
+"""
+Question 4: every spend attempt, executed and blocked alike. Append-only.
+
+**The evidence that something was blocked is that the money did not move, not a red
+transaction.** So a blocked record has to be an event left by a transaction that ended
+normally — not a revert log, which the chain discards.
+"""
+type Spend @entity(immutable: true) {
+  "<txHash>-<logIndex>"
+  id: ID!
+  node: Bytes!
+  agent: Bytes!
+  payee: Bytes!
+  token: Bytes!
+  amount: BigInt!
+
+  executed: Boolean!
+  "0 = allowed. See src/Reason.sol for the rest. The account judges 1-4/10/12; the policy judges 5-9/11."
+  reason: Int!
+  reasonName: String!
+  "Address of the policy that made this call — so a reviewer can verify which one judged it"
+  policy: Bytes!
+
+  spentAfter: BigInt!
+  limit: BigInt!
+
+  blockNumber: BigInt!
+  timestamp: BigInt!
+  txHash: Bytes!
+}
+
+"""One agent's binding state."""
+type Agent @entity(immutable: false) {
+  "agent address"
+  id: ID!
+  agent: Bytes!
+  node: Bytes!
+  wallet: Bytes!
+  revoked: Boolean!
+  boundAt: BigInt!
+
+  spendCount: Int!
+  blockedCount: Int!
+}
+
+"""
+Whether a subname is alive. Evidence for demo act four — one transaction halts an
+agent without ever touching its account. It also expires on its own, and that needs
+no transaction at all.
+"""
+type Subname @entity(immutable: false) {
+  "node"
+  id: ID!
+  node: Bytes!
+  label: String!
+  owner: Bytes!
+  expiry: BigInt!
+  live: Boolean!
+  revokedAt: BigInt
+  revokedBy: Bytes
+}
+
+"""
+A wallet that has delegated to LeashAccount.
+
+⚠️ **EIP-7702 has no factory, so "which wallets are delegated" is not a discoverable
+set.** An indexer has to be *told* which addresses to watch — they are hardcoded in
+subgraph.yaml. This is a property of the EIP, not a flaw in our design: ERC-4337 has a
+factory event, 7702 emits no log at all. The `Leashed` event below cannot rescue it
+either, because the EOA itself emits it — the subgraph cannot see it before it is
+already watching that address.
+"""
+type LeashedWallet @entity(immutable: false) {
+  "wallet address"
+  id: ID!
+  wallet: Bytes!
+  impl: Bytes!
+  node: Bytes!
+  leashedAt: BigInt!
+}
+
+"""
+Authoritative current state of the approval list. Keyed by **policy address**
+(global), not by node.
+
+The approval list is controlled by a **human** (face scan); PolicyPointer's pointer is
+controlled by **ADMIN**. Separating the two is the point: with a stolen ADMIN key an
+attacker can move the pointer, but cannot make an unapproved policy count as approved
+on the existing list.
+
+**Why this is not folded into PolicyPointer:** approval is per-policy, the pointer is
+per-node, and one policy may be pointed at by many nodes. Maintaining a reverse index
+in the mapping would mean appending to an unbounded array on every PolicyPointerSet.
+One extra query is far cheaper, and "is this policy currently approved" deserves a
+single authoritative source anyway.
+"""
+type ApprovedPolicy @entity(immutable: false) {
+  "policy address"
+  id: ID!
+  policy: Bytes!
+  approved: Boolean!
+  "Description recorded at approval time, for the frontend and the demo"
+  description: String!
+  nonce: BigInt!
+  attestationHash: Bytes!
+  approvedAt: BigInt!
+  "Anyone may revoke, with no attestation — reducing privilege must never be gated"
+  revokedAt: BigInt
+  revokedBy: Bytes
+}

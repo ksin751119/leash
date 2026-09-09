@@ -1,0 +1,125 @@
+specVersion: 1.0.0
+description: >
+  Leash — an onchain policy engine for AI agent wallets. Indexes the control plane
+  (ENS subnames, policy pointers, the human approval list) and the execution layer
+  (every spend attempt, executed and blocked alike).
+repository: https://github.com/ksin751119/leash
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  # ---------------------------------------------------------------
+  # Control plane — three contracts at fixed addresses.
+  # startBlock is 11662233 for all three (the second deployment, 2026-09-08 16:34 UTC).
+  # ---------------------------------------------------------------
+  - kind: ethereum
+    name: LeashRegistry
+    network: sepolia
+    source:
+      address: "0x6fB6CB4a789067b2283C4d4C657d3422ce742A51"
+      abi: LeashRegistry
+      startBlock: 11662233
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/registry.ts
+      entities: [Subname]
+      abis:
+        - name: LeashRegistry
+          file: ./abis/LeashRegistry.json
+      eventHandlers:
+        - event: SubnameRegistered(indexed bytes32,string,indexed address,uint64,uint256)
+          handler: handleSubnameRegistered
+          receipt: false
+        - event: SubnameRevoked(indexed bytes32,indexed address,indexed address,uint256)
+          handler: handleSubnameRevoked
+
+  - kind: ethereum
+    name: LeashResolver
+    network: sepolia
+    source:
+      address: "0x607a4d7363d9E7511a932F82eAE1e12FB609915b"
+      abi: LeashResolver
+      startBlock: 11662233
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/resolver.ts
+      entities: [PolicyPointer]
+      abis:
+        - name: LeashResolver
+          file: ./abis/LeashResolver.json
+      eventHandlers:
+        - event: PolicyPointerSet(indexed bytes32,indexed address,indexed address,bool)
+          handler: handlePolicyPointerSet
+
+  - kind: ethereum
+    name: PolicyApprovals
+    network: sepolia
+    source:
+      address: "0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4"
+      abi: PolicyApprovals
+      startBlock: 11662233
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/approvals.ts
+      entities: [PolicyPointer]
+      abis:
+        - name: PolicyApprovals
+          file: ./abis/PolicyApprovals.json
+      eventHandlers:
+        - event: PolicyApproved(indexed address,string,uint256,bytes32)
+          handler: handlePolicyApproved
+        - event: PolicyRevoked(indexed address,indexed address)
+          handler: handlePolicyRevoked
+
+  # ---------------------------------------------------------------
+  # Execution layer — ⚠️ the address is **hardcoded**, and that is not laziness.
+  #
+  # EIP-7702 has no factory, so "which EOAs are delegated" is not a discoverable set.
+  # ERC-4337 has a factory event that can drive an address template; 7702 emits no log
+  # at all. Our own `Leashed` event cannot rescue it either — the EOA itself emits it,
+  # so the subgraph cannot see it before it is already watching that address.
+  #
+  # An indexer therefore has to be *told* which addresses to watch. To add a wallet,
+  # add another dataSource here, with that wallet's delegation block as startBlock —
+  # there is no need to scan earlier.
+  # ---------------------------------------------------------------
+  - kind: ethereum
+    name: LeashAccount-wallet1
+    network: sepolia
+    source:
+      # WALLET, delegated to impl 0x136b33c6…B83C at 2026-09-09 01:20 UTC
+      address: "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6"
+      abi: LeashAccount
+      startBlock: 11664742
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/account.ts
+      entities: [AgentBudget, Payee, Spend, Agent, LeashedWallet]
+      abis:
+        - name: LeashAccount
+          file: ./abis/LeashAccount.json
+      eventHandlers:
+        - event: SpendExecuted(bytes32,indexed address,indexed address,indexed address,uint256,address,uint256,uint256,uint64)
+          handler: handleSpendExecuted
+        - event: SpendBlocked(bytes32,indexed address,indexed address,indexed address,uint256,uint8,address,uint256,uint256)
+          handler: handleSpendBlocked
+        - event: AgentBound(indexed address,indexed bytes32)
+          handler: handleAgentBound
+        - event: AgentRevoked(indexed address,indexed address)
+          handler: handleAgentRevoked
+        - event: Leashed(indexed bytes32,indexed address,address)
+          handler: handleLeashed
+        - event: PayeeAllowed(indexed bytes32,indexed address,bytes32)
+          handler: handlePayeeAllowed
+        - event: PayeeRemoved(indexed bytes32,indexed address,indexed address)
+          handler: handlePayeeRemoved
+        - event: LimitRaised(indexed bytes32,indexed address,uint256,uint256,uint64,bytes32)
+          handler: handleLimitRaised
