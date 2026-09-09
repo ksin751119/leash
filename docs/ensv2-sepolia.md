@@ -1,18 +1,18 @@
-# ENSv2 on Sepolia — 實測結果
+# ENSv2 on Sepolia — measured results
 
-> 實測日期:2026-09-01
+> Measured: 2026-09-01
 > RPC:`https://ethereum-sepolia-rpc.publicnode.com`
-> 工具:`cast` (foundry 1.7.1)
-> **以下每一項都是實際敲鏈得到的,不是文件推測。**
+> Tool: `cast` (foundry 1.7.1)
+> **Every item below came from actually hitting the chain, not from reading documentation.**
 
-ENSv2 目前**只在 Sepolia**(Beta 於 2026-08-12 啟動),主網尚未上線。
-這也解釋了為什麼 ENS 的獎項規定 Sepolia only。
+ENSv2 is currently **on Sepolia only** (the beta started 2026-08-12); mainnet is not live.
+That also explains why the ENS prize requires Sepolia.
 
 ---
 
-## 合約位址(全部確認有 bytecode)
+## Contract addresses (all confirmed to have bytecode)
 
-| 合約 | 位址 |
+| Contract | Address |
 |---|---|
 | RootRegistry | `0x8115186e8f2e0b0281e86ab91f0f48ba90364354` |
 | ETHRegistry | `0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2` |
@@ -21,18 +21,19 @@ ENSv2 目前**只在 Sepolia**(Beta 於 2026-08-12 啟動),主網尚未上線。
 | PublicResolverV2 | `0xe7b9a25607e02da8145e4eb1836ca539e53f11f7` |
 | PermissionedResolverImpl | `0x9eae5c2730a7dd16bdd1dee6421a1b91e3b0365e` |
 | ManagedUniversalResolverProxy | `0x6d80F2172CFdEc5730fE683860C33d26fC42e6F1` |
-| **MockUSDC**(註冊付款代幣) | `0x768f42455a2d082e23ceef7d51e5787c82d67a39` |
+| **MockUSDC** (the token registration is paid in) | `0x768f42455a2d082e23ceef7d51e5787c82d67a39` |
 | PriceOracle | `0x8914b66260eb8c4fff795650c3ae8cd335958987` |
 
-RootRegistry 與 ETHRegistry 的 bytecode 長度相同(29463 chars),
-符合「兩者都是 PermissionedRegistry 實例」。
+RootRegistry and ETHRegistry have identical bytecode lengths (29463 chars), consistent with
+both being instances of PermissionedRegistry.
 
-MockUSDC:symbol `USDC`,6 位小數,`mint(address,uint256)`(`0x40c10f19`)
-**無權限控管** —— 以隨機地址 `eth_call` 模擬鑄造成功。另有 `permit`。
+MockUSDC: symbol `USDC`, 6 decimals, and `mint(address,uint256)` (`0x40c10f19`) with **no
+access control** — simulating a mint from a random address via `eth_call` succeeds. It also
+has `permit`.
 
 ---
 
-## ⚠️ 最重要的發現:resolver 只支援 ENSIP-10
+## ⚠️ The most important finding: resolvers support ENSIP-10 only
 
 ```
 supportsInterface(addr    0x3b3b57de) = false
@@ -40,32 +41,35 @@ supportsInterface(text    0x59d1d43c) = false
 supportsInterface(resolve 0x9061b923) = TRUE
 ```
 
-**直接呼叫 `addr(bytes32)` / `text(bytes32,string)` 會 revert。實測三個全掛。**
+**Calling `addr(bytes32)` or `text(bytes32,string)` directly reverts. All three attempts
+failed.**
 
-必須改用 ENSIP-10 wildcard 介面:
+The ENSIP-10 wildcard interface must be used instead:
 
 ```solidity
 resolver.resolve(
-    dnsEncodedName,                                  // 例:0x046e69636b0365746800
+    dnsEncodedName,                                  // e.g. 0x046e69636b0365746800
     abi.encodeCall(ITextResolver.text, (node, "policy"))
 );
 ```
 
-### 而這正是好消息
+### And this is exactly the good news
 
-實測 `resolve()` **直接回傳資料** —— 沒有 `OffchainLookup` revert、沒有 gateway、沒有 CCIP-read。
+Measured: `resolve()` **returns data directly** — no `OffchainLookup` revert, no gateway, no
+CCIP-read.
 
-> **原本「合約在執行當下讀不到 policy」這個會推翻整個架構的風險,現在是實測排除的。**
+> **The risk that would have overturned the whole architecture — "a contract cannot read the
+> policy at execution time" — is now ruled out by measurement.**
 
-實作提醒:別照 ENSv1 的習慣寫 `addr()`,會白白浪費時間。
+Implementation note: do not write `addr()` out of ENSv1 habit; it only wastes time.
 
 ---
 
-## 鏈上 walk 驗證(`nick.eth`)
+## Verifying the onchain walk (`nick.eth`)
 
 ```
 RootRegistry.getSubregistry("eth")
-  → 0xBDC85dD5b15D7ecb354cd7cb6f2c50b4f2c4F0E2      ✅ 與文件的 ETHRegistry 完全一致
+  → 0xBDC85dD5b15D7ecb354cd7cb6f2c50b4f2c4F0E2      ✅ exactly the ETHRegistry in the docs
 
 ETHRegistry.getResolver("nick")
   → 0xae66c62AcAE72098BdAc57d8E8AED53EF000b2Ba
@@ -74,28 +78,28 @@ resolver.resolve(0x046e69636b0365746800, addr(node))
   → 0xb8c2c29ee19d8307cb7255e1cd9cbde883a267d5
 ```
 
-**用 UniversalResolverV2 跑同一個查詢,回傳完全相同的位址。**
-我們手動走的路徑與官方入口等價 —— 代表 7702 delegate 可以自己走,
-不必依賴 UniversalResolver。
+**Running the same query through UniversalResolverV2 returns exactly the same address.**
+The path we walk by hand is equivalent to the official entry point — meaning a 7702 delegate
+can walk it itself, without depending on UniversalResolver.
 
 ---
 
-## 已驗證的 selector
+## Verified selectors
 
 ### IRegistry / PermissionedRegistry
 
-| 函式 | selector | 用途 |
+| Function | Selector | Purpose |
 |---|---|---|
-| `getSubregistry(string)` | `0x35af6216` | walk 下一層 |
-| `getResolver(string)` | `0xe4ae7d77` | 取得 resolver |
-| **`setSubregistry(uint256,address)`** | **`0x341ec559`** | **全滅撤銷** |
-| `setResolver(uint256,address)` | `0xbc7b6d62` | 換 policy |
+| `getSubregistry(string)` | `0x35af6216` | walk one level down |
+| `getResolver(string)` | `0xe4ae7d77` | fetch the resolver |
+| **`setSubregistry(uint256,address)`** | **`0x341ec559`** | **the kill-everything revocation** |
+| `setResolver(uint256,address)` | `0xbc7b6d62` | swap the policy |
 | `ownerOf(uint256)` | `0x6352211e` | ERC1155Singleton |
 | `getResource(uint256)` | `0x1e8fca2d` | EAC resource |
 
 ### ETHRegistrar
 
-| 函式 | selector |
+| Function | Selector |
 |---|---|
 | `isAvailable(string)` | `0x965306aa` |
 | `getRegisterPrice(string,uint64,address)` → `(base, premium)` | `0x61907b12` |
@@ -104,96 +108,100 @@ resolver.resolve(0x046e69636b0365746800, addr(node))
 | `makeCommitment(string,address,uint256,address,address,uint64,uint256)` | `0x1e966f07` |
 | `register(string,address,uint256,address,address,uint64,address,uint256)` | `0xcff3e7c2` |
 
-常數(實測值):
+Constants (measured):
 
-| 常數 | 值 |
+| Constant | Value |
 |---|---|
-| MIN_COMMITMENT_AGE | 60 秒 |
-| MAX_COMMITMENT_AGE | 86400 秒(24 小時) |
-| MIN_REGISTRATION_DURATION | 2419200 秒(28 天) |
+| MIN_COMMITMENT_AGE | 60 s |
+| MAX_COMMITMENT_AGE | 86400 s (24 hours) |
+| MIN_REGISTRATION_DURATION | 2419200 s (28 days) |
 
 ---
 
-## 註冊流程
+## The registration flow
 
-經典 commit-reveal:
+A classic commit-reveal:
 
 ```
 makeCommitment(label, owner, secret, subregistry, resolver, duration, referrer)
   → commit(commitment)
-    → 等 ≥60 秒
+    → wait ≥60 s
       → register(label, owner, secret, subregistry, resolver, duration, paymentToken, referrer)
 ```
 
-### 對我們最關鍵的一點
+### The single most important point for us
 
-**`register()` 的參數裡本來就有 `subregistry`。**
-註冊 `acme.eth` 的當下就能把我們自己的 registry 掛上去,不需要事後再設定。
+**`register()` already takes a `subregistry` parameter.**
+Our own registry can be hung at the moment `acme.eth` is registered; no separate step
+afterwards is needed.
 
-註冊者拿到的 role bitmap 包含:
+The role bitmap the registrant receives includes:
 `ROLE_SET_SUBREGISTRY`、`ROLE_SET_SUBREGISTRY_ADMIN`、
 `ROLE_SET_RESOLVER`、`ROLE_SET_RESOLVER_ADMIN`、`ROLE_CAN_TRANSFER_ADMIN`
 
-→ **「一筆交易讓全公司 agent 停機」確認可行。**
+→ **"One transaction halts every agent in the company" is confirmed viable.**
 
 ---
 
-## 價格(MockUSDC,可自由鑄造 = 實質免費)
+## Prices (in MockUSDC, freely mintable = effectively free)
 
-| 名字 | 1 年 | 備註 |
+| Name | 1 year | Note |
 |---|---|---|
-| `agentwallet` | **8.000021 USDC** | 5 字以上 |
+| `agentwallet` | **8.000021 USDC** | 5 characters or more |
 | `policy-agent-demo` | **8.000021 USDC** | |
-| `acme` | 160.000009 USDC | 4 字加價;28 天只要 12.27 |
+| `acme` | 160.000009 USDC | 4 characters costs more; 28 days is only 12.27 |
 
-**實測可註冊**:`acme` `agentwallet` `policyagent` `hackathon` `ethglobal` `company` `parent` `sub`
-**已被註冊**:`nick` `test` `ens` `dao` `agent` `demo` `org` `integration-tests`
-
----
-
-## 附帶觀察
-
-**每個名字真的會拿到自己的 resolver clone。**
-從一筆真實註冊交易中看到一個 78 bytes 的合約被建立(EIP-1167 minimal proxy),
-且 `supportsInterface(0x9061b923)` = true。
-證實文件說的「per-account Permissioned Resolver」。
-
-**ENSv2 Sepolia 非常活躍。**
-最近 5000 個區塊內有 **1813 筆** registrar 事件。
-好處:網路是活的、文件有人維護。
-壞處:**印證了「審計期間(8/18–9/14)可能重新部署」的風險是實的** —— 位址要集中管理。
+**Measured as available**: `acme` `agentwallet` `policyagent` `hackathon` `ethglobal`
+`company` `parent` `sub`
+**Already taken**: `nick` `test` `ens` `dao` `agent` `demo` `org` `integration-tests`
 
 ---
 
-## 已知的坑
+## Incidental observations
 
-官方 app-developer 教學明講:
+**Each name really does get its own resolver clone.**
+In a real registration transaction a 78-byte contract is created (an EIP-1167 minimal
+proxy), and `supportsInterface(0x9061b923)` = true.
+This confirms the "per-account Permissioned Resolver" the documentation describes.
+
+**ENSv2 Sepolia is very active.**
+**1813** registrar events in the last 5000 blocks.
+Upside: the network is alive and the documentation is maintained.
+Downside: **it confirms that "a redeploy during the audit window (8/18-9/14)" is a real
+risk** — addresses must be managed in one place.
+
+---
+
+## Known traps
+
+The official app-developer tutorial says explicitly:
 
 > subname owners typically hold no roles on the parent resolver,
 > so a `setText` from their wallet reverts with `EACUnauthorizedAccountRoles`
 
-子名持有者**預設不能改父 resolver 上的記錄**。
+A subname's holder **cannot change records on the parent's resolver by default**.
 
-解法:給子名自己的 resolver,或用 `authorize*Roles` 把 role 授權下去。
+The fix: give the subname its own resolver, or delegate the role with `authorize*Roles`.
 
-**對我們而言這是 feature 不是 bug** —— agent 本來就不該能改自己的 policy。
+**For us this is a feature, not a bug** — an agent should never be able to change its own
+policy.
 
 ---
 
-## 重現方式
+## How to reproduce
 
 ```bash
 export R=https://ethereum-sepolia-rpc.publicnode.com
 ROOT=0x8115186e8f2e0b0281e86ab91f0f48ba90364354
 
-# 1. walk 到 .eth
+# 1. walk to .eth
 cast call $ROOT "getSubregistry(string)(address)" "eth" --rpc-url $R
 
-# 2. 取得 nick.eth 的 resolver
+# 2. fetch nick.eth's resolver
 ETHREG=0xbdc85dd5b15d7ecb354cd7cb6f2c50b4f2c4f0e2
 cast call $ETHREG "getResolver(string)(address)" "nick" --rpc-url $R
 
-# 3. 用 ENSIP-10 讀記錄(注意:直接 addr() 會 revert)
+# 3. read the record via ENSIP-10 (note: calling addr() directly reverts)
 RES=0xae66c62AcAE72098BdAc57d8E8AED53EF000b2Ba
 NODE=$(cast namehash nick.eth)
 cast call $RES "resolve(bytes,bytes)(bytes)" \
@@ -202,28 +210,30 @@ cast call $RES "resolve(bytes,bytes)(bytes)" \
 
 ---
 
-## tokenId 的推導規則(2026-09-02 實測)
+## How tokenId is derived (measured 2026-09-02)
 
-`setSubregistry(uint256,address)` 和 `setResolver(uint256,address)` 都吃 **tokenId**,
-不是字串。實際註冊 `leash.eth` 之後對照出來:
+`setSubregistry(uint256,address)` and `setResolver(uint256,address)` both take a
+**tokenId**, not a string. Comparing after actually registering `leash.eth`:
 
 ```
 keccak256("leash") = 0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011342ffc412
-實際 tokenId       = 0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011300000000
+actual tokenId     = 0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011300000000
                                                                               ^^^^^^^^
 ```
 
-**tokenId = labelhash 的最低 32 bits 歸零。**
+**tokenId = the labelhash with its low 32 bits zeroed.**
 
 ```solidity
 uint256 tokenId = uint256(keccak256(bytes(label))) & ~uint256(type(uint32).max);
 ```
 
-那 32 bits 是 `Entry.tokenVersionId`。名字被 burn / 過期重註冊時會遞增,
-**tokenId 會跟著改變** —— 所以任何長期保存 tokenId 的地方都要考慮這件事。
+Those 32 bits are `Entry.tokenVersionId`. They increment when a name is burned or
+re-registered after expiry, and **the tokenId changes with them** — so anywhere a tokenId is
+stored long-term has to account for it.
 
-新註冊的名字 `tokenVersionId` 是 0,所以現在剛好等於 labelhash 對齊後的值,
-但**不要依賴這個巧合**。最保險是從 ERC-1155 `TransferSingle` log 讀:
+A freshly registered name has `tokenVersionId` 0, which is why it currently equals the
+aligned labelhash exactly — but **do not rely on that coincidence**. The safest source is
+the ERC-1155 `TransferSingle` log:
 
 ```bash
 cast receipt <TX> --rpc-url $R --json \
@@ -231,21 +241,22 @@ cast receipt <TX> --rpc-url $R --json \
                        # data[0:32] = id
 ```
 
-## 實際註冊紀錄(可重現的基準)
+## The actual registration record (a reproducible baseline)
 
-| 項目 | 值 |
+| Item | Value |
 |---|---|
-| 名稱 | `leash.eth` |
+| Name | `leash.eth` |
 | owner | `0x36B3F5364A0dE03dc8eBaf0162C516E22D6bF959` |
 | tokenId | `0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011300000000` |
-| 期間 | 31536000 秒(1 年) |
-| 付款 | MockUSDC **8.000021**(= getRegisterPrice 的報價,無誤差) |
+| Duration | 31536000 s (1 year) |
+| Paid | MockUSDC **8.000021** (exactly getRegisterPrice's quote, to the digit) |
 | register gas | 217,387 |
 | commit tx | `0x0339df95b0b66399e3d5ff46253747551fb4ae74c2b6fff9ef0a81ecf9bc440e` |
 | register tx | `0xcf6792b412f8d61cd1b00115b7c838a79a7cc76ae206f2f83f316bb5ab5a9d08` |
-| 註冊時 subregistry / resolver | 皆 `address(0)`,9/4 才接上 |
+| subregistry / resolver at registration | both `address(0)`; wired up on 9/4 |
 
-**函式簽章(用 selector 反推驗證,`secret` 與 `referrer` 是 `bytes32` 不是 `uint256`):**
+**Function signatures (verified by reversing the selectors; `secret` and `referrer` are
+`bytes32`, not `uint256`):**
 
 ```
 isAvailable(string)                                                       0x965306aa
@@ -256,65 +267,78 @@ register(string,address,bytes32,address,address,uint64,address,bytes32)   0xcff3
 renew(string,uint64,address,bytes32)                                      0x89d779c3
 ```
 
-MIN_COMMITMENT_AGE = 60 秒 · MAX_COMMITMENT_AGE = 2,419,200 秒(28 天) · MIN_DURATION = 86,400 秒
+MIN_COMMITMENT_AGE = 60 s · MAX_COMMITMENT_AGE = 2,419,200 s (28 days) · MIN_DURATION = 86,400 s
 
 ---
 ---
 
-# 2026-09-03 賽前研究(全部 read-only,唯二寫入是 7702 授權與撤銷)
+# Pre-event research, 2026-09-03 (all read-only; the only two writes are a 7702
+# authorisation and its revocation)
 
-## 一、EIP-7702 在 Sepolia 完全可用 ✅
+## 1. EIP-7702 is fully usable on Sepolia ✅
 
-foundry 1.7.1 支援:`cast send --auth <address>`、`cast wallet sign-auth`。
+foundry 1.7.1 supports `cast send --auth <address>` and `cast wallet sign-auth`.
 
-**實測(agent EOA 委派給 MockUSDC 再撤銷):**
+**Measured (an agent EOA delegating to MockUSDC, then revoking):**
 
 ```bash
-# 委派
+# delegate
 cast send $ADMIN_ADDR --auth $MOCK_USDC --private-key $AGENT_PK --value 0
 #   tx 0xfc91071b…08fa · status 1 · type 0x4 · gas 36,800
 cast code $AGENT_ADDR
 #   0xef0100768f42455a2d082e23ceef7d51e5787c82d67a39
-#   = 0xef0100 + delegate 位址,正是 EIP-7702 的 delegation designator
+#   = 0xef0100 + the delegate address, exactly EIP-7702's delegation designator
 
-# 撤銷
+# revoke
 cast send $ADMIN_ADDR --auth 0x0000000000000000000000000000000000000000 --private-key $AGENT_PK --value 0
 #   tx 0x8c083e58…1b296 · gas 36,800
 cast code $AGENT_ADDR   # → 0x
 ```
 
-**⚠️ 陷阱一:交易的 `to` 不能是被委派的 EOA 自己。**
-委派生效後,空 calldata 會打到 delegate 的 fallback。第一次嘗試就是這樣 revert 的
+**⚠️ Trap one: the transaction's `to` must not be the delegated EOA itself.**
+Once delegation is in effect, empty calldata hits the delegate's fallback. That is exactly
+how the first attempt reverted
 (`Failed to estimate gas: execution reverted, data: "0x"`)。
-把 `to` 換成任何普通位址即可 —— 授權是掛在交易上的,跟 `to` 無關。
+Point `to` at any ordinary address instead — the authorisation rides on the transaction and
+has nothing to do with `to`.
 
-**⚠️ 陷阱二(對架構重要):委派後的程式碼在 EOA 自己的 storage 執行。**
+**⚠️ Trap two (important for the architecture): delegated code executes against the EOA's
+own storage.**
 
-委派給 MockUSDC 之後,對 EOA 位址呼叫:
+After delegating to MockUSDC, calling the EOA's address:
 
 ```
-decimals()  → 0     (不是 6)
-symbol()    → ""    (不是 "USDC")
+decimals()  → 0     (not 6)
+symbol()    → ""    (not "USDC")
 ```
 
-函式**有執行**(沒 revert),但讀到的是 EOA 的空 storage,不是 MockUSDC 的。
+The functions **do execute** (nothing reverts), but what they read is the EOA's empty
+storage, not MockUSDC's.
 
-→ **我們的 delegate 不能依賴自己的 storage。**
-policy 位址要從 ENS 走出來、policy 合約要 stateless —— 現行設計正好吻合。
-如果哪天想在 delegate 裡存狀態,必須刻意規劃 EOA 的 storage layout。
+→ **Our delegate cannot rely on storage of its own.**
+The policy address comes out of ENS and the policy contract is stateless — the current
+design fits exactly. If state is ever wanted inside the delegate, the EOA's storage layout
+has to be planned deliberately.
 
-**成本:委派 + 撤銷各約 36,800 gas。**
+> **Refined during implementation.** The precise statement is that delegated code executes
+> in the *EOA's* storage, which is empty at first — not that it cannot use storage. Deliberate
+> planning is exactly what `LeashStorage`'s ERC-7201 namespace does, and `LeashAccount` keeps
+> per-wallet state there.
+
+**Cost: roughly 36,800 gas each for delegating and revoking.**
 
 ---
 
-## 二、`PermissionedRegistry` 完整 ABI(這就是 `LeashRegistry` 的參考實作)
+## 2. The complete `PermissionedRegistry` ABI (the reference implementation for
+##    `LeashRegistry`)
 
-**RootRegistry 與 ETHRegistry 的 selector 集合完全相同** —— 同一套實作。
-以下由 bytecode 抽 selector + openchain 簽章庫還原,**不是從文件抄的**。
+**RootRegistry and ETHRegistry have identical selector sets** — the same implementation.
+What follows was recovered by extracting selectors from the bytecode and resolving them
+against the openchain signature database, **not copied from documentation**.
 
-### 名稱操作
+### Name operations
 
-| 函式 | selector |
+| Function | Selector |
 |---|---|
 | `register(string,address,address,address,uint256,uint64)` | `0x85f3e643` |
 | `unregister(uint256)` | `0xa02b161e` |
@@ -324,17 +348,18 @@ policy 位址要從 ENS 走出來、policy 合約要 stateless —— 現行設�
 | `setParent(address,string)` | `0x5357263f` |
 | `setURI(string,address)` | `0x48688f95` |
 
-`register` 的第 5 個參數 `uint256` 是 **roleBitmap**,第 6 個是 expiry。
-這就是 `LeashRegistry` 發 `alpha.leash.eth` 這種子名的入口。
+`register`'s fifth parameter, a `uint256`, is the **roleBitmap**; the sixth is the expiry.
+This is the entry point through which `LeashRegistry` issues subnames like
+`alpha.leash.eth`.
 
-### 查詢
+### Queries
 
-| 函式 | selector | 說明 |
+| Function | Selector | Detail |
 |---|---|---|
 | `getSubregistry(string)` | `0x35af6216` | |
 | `getResolver(string)` | `0xe4ae7d77` | |
-| `getParent()` | `0x80f76021` | 回傳 (registry, label) |
-| **`findTokenId(string)`** | **`0x91b3c037`** | **見下方** |
+| `getParent()` | `0x80f76021` | returns (registry, label) |
+| **`findTokenId(string)`** | **`0x91b3c037`** | **see below** |
 | `findOwner(string)` | `0x63560a8e` | |
 | `findExpiry(string)` | `0x6f537c72` | |
 | `getTokenId(uint256)` | `0x14ff5ea3` | |
@@ -351,7 +376,7 @@ policy 位址要從 ENS 走出來、policy 合約要 stateless —— 現行設�
 
 ### Enhanced Access Control(EAC)
 
-| 函式 | selector |
+| Function | Selector |
 |---|---|
 | `roles(uint256,address)` | `0x5adf4724` |
 | `roleCount(uint256)` | `0x2f27fa24` |
@@ -364,82 +389,87 @@ policy 位址要從 ENS 走出來、policy 合約要 stateless —— 現行設�
 | `hasAssignees(uint256,uint256)` | `0x11b8e00a` |
 | `getAssigneeCount(uint256,uint256)` | `0x3634f911` |
 
-外加標準 ERC-1155(`balanceOf`、`balanceOfBatch`、`setApprovalForAll`、
+Plus the standard ERC-1155 surface (`balanceOf`, `balanceOfBatch`, `setApprovalForAll`,
 `isApprovedForAll`、`safeTransferFrom`、`safeBatchTransferFrom`、`ownerOf`)。
 
 ---
 
-## 三、`findTokenId(string)` 讓「解 log 撈 tokenId」的做法作廢
+## 3. `findTokenId(string)` makes "parse the logs for a tokenId" obsolete
 
 ```bash
 cast call $ETH_REGISTRY 'findTokenId(string)(uint256)' "leash"
 #  → 0xe5edd0e482c95985582112af99c7fa487b70360c42f108c45d55011300000000
-#  與從 TransferSingle log 解出來的完全一致
+#  exactly matches what the TransferSingle log decodes to
 ```
 
-**一行 view 就拿得到,不用解交易 receipt。** 本文件前段那套 log 解析法留著當備援
-(例如需要在同一筆交易裡取得),但日常查詢用 `findTokenId`。
+**One view call gets it; no receipt parsing needed.** The log-parsing approach earlier in
+this document stays as a fallback (when the value is needed within the same transaction, for
+instance), but routine queries use `findTokenId`.
 
-`findOwner(string)` / `findExpiry(string)` 同理,省掉「先算 tokenId 再查」兩步。
+`findOwner(string)` and `findExpiry(string)` work the same way, saving the two-step "compute
+the tokenId, then query".
 
 ---
 
-## 四、`leash.eth` 的角色配置(實測解碼)
+## 4. `leash.eth`'s role configuration (decoded from measurement)
 
 ```
-resource   = getResource(tokenId) = tokenId 本身
+resource   = getResource(tokenId) = the tokenId itself
 roles      = 0x1110000000000000000000000000000001100000
 bits       = [20, 24, 148, 152, 156]
 ```
 
-EAC 的規則是 **bit N 是角色本身,bit N+128 是該角色的 admin**:
+EAC's rule is that **bit N is the role itself and bit N+128 is that role's admin**:
 
-| bit | 意義 |
+| bit | Meaning |
 |---|---|
-| 20 | 基本角色(可 `setSubregistry`) |
-| 24 | 基本角色(可 `setResolver`) |
-| 148 | bit 20 的 admin |
-| 152 | bit 24 的 admin |
-| 156 | **bit 28 的 admin —— 但不持有 bit 28 本身** |
+| 20 | a base role (can `setSubregistry`) |
+| 24 | a base role (can `setResolver`) |
+| 148 | admin of bit 20 |
+| 152 | admin of bit 24 |
+| 156 | **admin of bit 28 — while not holding bit 28 itself** |
 
-也就是說:**owner 沒有角色 28,但可以把角色 28 授予任何人(包括自己)。**
+In other words: **the owner does not have role 28, but can grant role 28 to anyone,
+themselves included.**
 
-### 權限模擬(`cast call --from human`,不改狀態)
+### Permission simulation (`cast call --from human`, changing no state)
 
-| 動作 | 結果 |
+| Action | Result |
 |---|---|
 | `setResolver(tid, …)` | ✅ |
 | `setSubregistry(tid, …)` | ✅ |
-| `safeTransferFrom(human→agent)` | ✅ 可轉讓 |
-| `grantRoles(res, 1<<28, human)` | ✅ 可自授 |
+| `safeTransferFrom(human→agent)` | ✅ transferable |
+| `grantRoles(res, 1<<28, human)` | ✅ can self-grant |
 | `renew(tid, …)` | ❌ **REVERT** |
 | `unregister(tid)` | ❌ **REVERT** |
 
-**續約要走 `ETHRegistrar.renew(string,uint64,address,bytes32)`(`0x89d779c3`)並付款**,
-不能直接對 registry 呼叫。demo 期間不會遇到(到期日 1819875720 = 2027-09-02),
-但別在程式裡寫錯對象。
+**Renewal goes through `ETHRegistrar.renew(string,uint64,address,bytes32)` (`0x89d779c3`)
+and requires payment**; it cannot be called on the registry directly. It will not come up
+during the demo (the expiry is 1819875720 = 2027-09-02), but do not point the code at the
+wrong contract.
 
 ---
 
-## 五、Resolver 有兩種,別搞混
+## 5. There are two kinds of resolver; do not conflate them
 
-先前記錄的「ENSv2 resolver 只吃 ENSIP-10」需要細分 —— 兩種都存在:
+The earlier note that "ENSv2 resolvers accept ENSIP-10 only" needs refining — both kinds
+exist:
 
-### (a) 極簡型 —— 只有 ENSIP-10
+### (a) The minimal kind — ENSIP-10 only
 
-`nick.eth` 的 resolver `0xae66c62AcAE72098BdAc57d8E8AED53EF000b2Ba`:
+`nick.eth`'s resolver, `0xae66c62AcAE72098BdAc57d8E8AED53EF000b2Ba`:
 
 ```
-resolve(bytes,bytes)                  0x9061b923   ✅ 有
-addr(bytes32)                         0x3b3b57de   ❌ 沒有,直接呼叫 revert
-text(bytes32,string)                  0x59d1d43c   ❌ 沒有
+resolve(bytes,bytes)                  0x9061b923   ✅ present
+addr(bytes32)                         0x3b3b57de   ❌ absent; calling it reverts
+text(bytes32,string)                  0x59d1d43c   ❌ absent
 
 supportsInterface(0x9061b923) → true
 supportsInterface(0x3b3b57de) → false
 supportsInterface(0x59d1d43c) → false
 ```
 
-### (b) `PermissionedResolverImpl` `0x9eae5c27…365e` —— 兩者都有
+### (b) `PermissionedResolverImpl` `0x9eae5c27…365e` — it has both
 
 ```
 resolve(bytes,bytes)                  0x9061b923   ✅
@@ -451,23 +481,25 @@ setAddr / setText / setContenthash                 ✅
 multicall(bytes[])                    0xac9650d8   ✅
 ```
 
-而且是 **UUPS 可升級**(`upgradeToAndCall` `0x4f1ef286`、`proxiableUUID` `0x52d1902d`、
-`UPGRADE_INTERFACE_VERSION` `0xad3cb1cc`),並帶同一套 EAC 角色函式。
+It is also **UUPS-upgradeable** (`upgradeToAndCall` `0x4f1ef286`, `proxiableUUID`
+`0x52d1902d`, `UPGRADE_INTERFACE_VERSION` `0xad3cb1cc`) and carries the same set of EAC role
+functions.
 
-### 對我們的結論(不變)
+### Our conclusion (unchanged)
 
-**`LeashResolver` 只實作 `resolve(bytes,bytes)` 就夠。**
+**`LeashResolver` implementing `resolve(bytes,bytes)` alone is sufficient.**
 
-理由:UniversalResolverV2 走的是 ENSIP-10,而 `nick.eth` 這種只實作 ENSIP-10 的
-resolver 在鏈上能被正常解析 —— 已於 9/1 實測確認。legacy 介面是選配,不是必需。
+Why: UniversalResolverV2 goes through ENSIP-10, and a resolver like `nick.eth`'s that
+implements ENSIP-10 only resolves correctly on chain — confirmed by measurement on 9/1. The
+legacy interfaces are optional, not required.
 
 ---
 
-## 權限分離實測(2026-09-03)
+## Measuring the separation of authority (2026-09-03)
 
-三把 key,`cast call --from` 模擬(不改狀態):
+Three keys, simulated with `cast call --from` (changing no state):
 
-| 動作 | ADMIN | WALLET | AGENT |
+| Action | ADMIN | WALLET | AGENT |
 |---|---|---|---|
 | `setResolver(leashTokenId, …)` | ✅ | ❌ REVERT | ❌ REVERT |
 | `setSubregistry(leashTokenId, …)` | ✅ | ❌ REVERT | — |
@@ -479,9 +511,9 @@ roles(resource, WALLET) = 0
 roles(resource, AGENT)  = 0
 ```
 
-**這證明了架構的核心安全性質:** 被 7702 委派、且持有資金的 WALLET
-**在 ENS 上完全沒有權限**。就算 policy 寫錯、允許任意 target,
-agent 透過 account 呼叫 `ETHRegistry.setResolver` 也會 revert ——
-不是因為我們檢查了,而是因為那把 key 本來就沒有角色。
+**This demonstrates the architecture's core security property:** WALLET — 7702-delegated and
+holding the funds — **has no ENS authority whatsoever**. Even with a broken policy that
+permits an arbitrary target, an agent calling `ETHRegistry.setResolver` through the account
+reverts — not because we check, but because that key never had the role.
 
-**壞掉的 policy 的爆炸半徑被限制在「錢」,不會擴散到「控制權」。**
+**A broken policy's blast radius is bounded by the money and never spreads to control.**
