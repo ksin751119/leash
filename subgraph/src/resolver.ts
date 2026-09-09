@@ -1,5 +1,5 @@
 import { PolicyPointerSet } from "../generated/LeashResolver/LeashResolver";
-import { PolicyPointer } from "../generated/schema";
+import { ApprovedPolicy, PolicyPointer } from "../generated/schema";
 
 /// Half of question 3: where the pointer points. **Controlled by ADMIN.**
 ///
@@ -20,6 +20,13 @@ export function handlePolicyPointerSet(event: PolicyPointerSet): void {
   // record — which is exactly why the account re-checks `isApproved` on every spend
   // instead of trusting a snapshot like this one.
   p.approved = event.params.approved;
+  // `description` was declared on this entity and never written by the first version - a
+  // dead field, which is exactly the defect we fixed in `PolicyResolved.approved`. The
+  // description lives on `ApprovedPolicy` (it comes from a different contract), so copy it
+  // across if that policy has ever been approved. Null is the correct value when it has
+  // not: there is no approval record to describe.
+  const a = ApprovedPolicy.load(event.params.policy.toHexString());
+  p.description = a == null ? null : a.description;
   p.setBy = event.params.setBy;
   p.updatedAt = event.block.timestamp;
   p.save();

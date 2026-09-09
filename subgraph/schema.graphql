@@ -42,16 +42,42 @@ type AgentBudget @entity(immutable: false) {
   lastSpendTx: Bytes!
 }
 
-"""Question 2: whether this payee may receive right now, and how often it has been paid."""
+"""
+Question 2: whether this payee may receive right now, and how often it has been paid.
+
+**Keyed by (node, payee), not (node, token, payee), and that is forced on us.** The
+account's allow-list really is per-(node, token, payee), but the frozen
+`PayeeAllowed(node, payee, attestationHash)` and `PayeeRemoved(node, payee, by)` events
+carry **no token**, and they are the only authority for `allowed`. A per-token entity
+would therefore need a token it cannot know.
+
+The first version keyed by (node, token, payee) and used `token = 0x0` as a placeholder in
+the allow/remove handlers, while the spend handler used the real token. That produced **two
+rows for one payee that disagreed**: the placeholder row tracked `allowed` while the
+real-token row tracked the payment history and had `allowed` hardcoded true at creation and
+never revisited. After `removePayee`, the row an agent would naturally read still said
+`allowed: true` — a wrong answer in the permissive direction. The chain still blocked the
+spend (reason 6), so no money was at risk, but the agent's decision was wrong.
+
+**The residual imprecision, stated plainly:** if a payee is allowed for one token and not
+another under the same node, this entity cannot express the difference — the event does not
+carry it. An agent reading `allowed: true` may therefore be optimistic for a second token,
+and the account is what stops it. Fixing this properly means adding `token` to
+`PayeeAllowed`, which is a frozen-event change plus a redeploy; recorded in
+`docs/events.md` as a follow-up rather than done four days from the deadline.
+"""
 type Payee @entity(immutable: false) {
-  "<node>-<token>-<payee>"
+  "<node>-<payee>"
   id: ID!
   node: Bytes!
-  token: Bytes!
   payee: Bytes!
 
-  "Current state. PayeeAllowed sets true, PayeeRemoved sets false — the agent never has to pair and cancel events itself."
+  "The token most recently paid in. Null until a payment happens - allowance is not per-token here; see above."
+  lastToken: Bytes
+
+  "Current state, and the events are the only authority for it. PayeeAllowed sets true, PayeeRemoved sets false — the agent never has to pair and cancel events itself."
   allowed: Boolean!
+  "Across all tokens, for the reason above."
   paidCount: Int!
   paidTotal: BigInt!
   firstAllowedAt: BigInt!

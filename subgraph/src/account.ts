@@ -18,8 +18,10 @@ function budgetId(node: Bytes, token: Address): string {
   return node.toHexString() + "-" + token.toHexString();
 }
 
-function payeeId(node: Bytes, token: Address, payee: Address): string {
-  return node.toHexString() + "-" + token.toHexString() + "-" + payee.toHexString();
+/// Keyed by (node, payee) only — `PayeeAllowed` / `PayeeRemoved` carry no token, and they
+/// are the only authority for `allowed`. See the note on `Payee` in schema.graphql.
+function payeeId(node: Bytes, payee: Address): string {
+  return node.toHexString() + "-" + payee.toHexString();
 }
 
 /// Pre-computed remaining budget. **This is where "the arithmetic lives in the mapping,
@@ -55,20 +57,24 @@ export function handleSpendExecuted(event: SpendExecuted): void {
   b.save();
 
   // --- Question 2: this payee's running total ---
-  const pid = payeeId(node, token, event.params.payee);
+  const pid = payeeId(node, event.params.payee);
   let p = Payee.load(pid);
   if (p == null) {
     // PayeeAllowed should have fired first, but event ordering is not something to
-    // assume — create the record if it is missing.
+    // assume — create the record if it is missing. A spend that executed proves the
+    // payee was allowed at that moment, so `allowed = true` is sound *on creation*.
     p = new Payee(pid);
     p.node = node;
-    p.token = token;
     p.payee = event.params.payee;
     p.allowed = true;
     p.paidCount = 0;
     p.paidTotal = ZERO;
     p.firstAllowedAt = event.block.timestamp;
   }
+  // Deliberately NOT touching `p.allowed` on an existing row: PayeeAllowed and
+  // PayeeRemoved own that field. Setting it here would resurrect a removed payee in the
+  // agent's view every time an older spend was replayed during a reindex.
+  p.lastToken = token;
   p.paidCount = p.paidCount + 1;
   p.paidTotal = p.paidTotal.plus(event.params.amount);
   p.lastPaidAt = event.block.timestamp;
@@ -170,27 +176,15 @@ export function handleLeashed(event: Leashed): void {
   w.save();
 }
 
-/// The positive source for question 2. `PayeeAllowed` carries no token (the frozen
-/// schema has only node/payee/hash), so the id built here uses `token = 0x0` as a
-/// placeholder — see the note inside.
+/// The authority for question 2's `allowed`. `PayeeAllowed` carries no token (the frozen
+/// event is node/payee/hash only), which is why `Payee` is keyed by (node, payee) — see
+/// the note on that entity in schema.graphql.
 export function handlePayeeAllowed(event: PayeeAllowed): void {
-  // The frozen `PayeeAllowed(node, payee, attestationHash)` **has no token field**,
-  // while the account's allowlist is per-(node, token, payee). The event therefore
-  // cannot tell us which token was whitelisted.
-  //
-  // Handling: record it under a `token = 0x0` id, meaning "this node whitelisted this
-  // payee". When a payment actually happens, `handleSpendExecuted` creates the record
-  // carrying the real token and accumulates against it.
-  //
-  // This is an existing limitation of the frozen schema, not an oversight here — it is
-  // recorded in docs/events.md as a follow-up.
-  const zeroToken = Address.zero();
-  const pid = payeeId(event.params.node, zeroToken, event.params.payee);
+  const pid = payeeId(event.params.node, event.params.payee);
   let p = Payee.load(pid);
   if (p == null) {
     p = new Payee(pid);
     p.node = event.params.node;
-    p.token = zeroToken;
     p.payee = event.params.payee;
     p.paidCount = 0;
     p.paidTotal = ZERO;
@@ -201,8 +195,7 @@ export function handlePayeeAllowed(event: PayeeAllowed): void {
 }
 
 export function handlePayeeRemoved(event: PayeeRemoved): void {
-  const zeroToken = Address.zero();
-  const p = Payee.load(payeeId(event.params.node, zeroToken, event.params.payee));
+  const p = Payee.load(payeeId(event.params.node, event.params.payee));
   if (p == null) return;
   p.allowed = false;
   p.save();

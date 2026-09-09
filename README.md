@@ -136,6 +136,15 @@ the holder rather than belonging to them.
 
 ### The Graph
 
+**Live on Subgraph Studio, indexing real Sepolia events:**
+
+```
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.2
+```
+
+One query answers all four of the agent's questions; the copy-pasteable version and what it
+returns against the run above are in [`docs/deployments.md`](docs/deployments.md).
+
 The subgraph in [`subgraph/`](subgraph) indexes the control plane and every spend
 attempt, executed and blocked alike. Its eight entities are shaped by the four questions
 the agent actually asks, not by a generic data model — the arithmetic lives in the
@@ -145,6 +154,14 @@ get the sum wrong in its own favour.
 Blocked attempts are indexable because a policy violation is a **no-op plus an event**,
 never a revert. The chain discards a reverted transaction's logs, and the agent could
 then never answer *why was I blocked last time?*
+
+Deploying it found a defect that the tests could not: `Payee` was keyed by
+(node, token, payee) while `PayeeAllowed` and `PayeeRemoved` — the only authority for
+whether a payee is allowed — carry no token. That produced **two rows for one payee that
+disagreed**, and after a removal the row an agent would naturally read still said
+`allowed: true`. Wrong in the permissive direction. The chain still blocked the spend, so
+nothing was at risk, but the agent's decision was wrong. Now keyed by (node, payee), with
+the residual imprecision stated in the schema rather than papered over.
 
 ### World
 

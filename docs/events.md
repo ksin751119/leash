@@ -306,6 +306,24 @@ of the protocol, not an oversight of ours.
 | 2026-09-08 | the `action` field's range widened from reason codes 4-9 to 4-9 and 11 | a shared budget (11) is a widening too and needs an attestation |
 | 2026-09-08 | 🔒 **refrozen**. The contracts were deployed but the subgraph was not yet written — this batch requires redeploying `LeashRegistry` and `PolicyApprovals`, which costs something, but less than carrying a false security argument in front of judges | — |
 
+### One follow-up the subgraph deployment surfaced (2026-09-09)
+
+**`PayeeAllowed(node, payee, attestationHash)` and `PayeeRemoved(node, payee, by)` carry no
+`token`, while the account's allow-list is per-(node, token, payee).** These two events are
+the only authority for whether a payee is allowed, so a subgraph cannot key that state per
+token — it has to key `Payee` by (node, payee) and accept coarser granularity than the
+account enforces.
+
+The consequence, found by deploying the subgraph and querying it rather than by any test: an
+agent reading `allowed: true` may be optimistic for a *second* token under the same node.
+The account still blocks the spend (reason 6), so nothing is at risk — but the agent's own
+decision is wrong in the permissive direction.
+
+**Adding `token` to both events is the correct fix**, and it is a frozen-event change
+requiring a `LeashAccount` redeploy and a re-delegation. Recorded here rather than done four
+days from the deadline. The subgraph states the imprecision on the `Payee` entity instead of
+papering over it.
+
 > **Where this batch came from:** a code review of `a9f5051..c3c704e` on 2026-09-08, run
 > through `superpowers:requesting-code-review`, verdict `With fixes`.
 > Its two Critical findings — one key opening both locks, and a replayable attestation —

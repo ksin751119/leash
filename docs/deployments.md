@@ -252,8 +252,12 @@ attestation** — a dead man's switch that costs nothing to arm. `MAX_DURATION` 
 | 5 | **🎬 Act one** `spend(USDC, payee, 200)` | **AGENT** | [`0x64e40eeb…`](https://sepolia.etherscan.io/tx/0x64e40eebad9bc31dd9e9c929aad85acf72ec04180c1330e42dd8464b8b60711a) | 144,129 gas. `PolicyResolved` → `Transfer` → `SpendExecuted`. **Money moved** |
 | 6 | **🎬 Act two** `spend` 600 to a brand-new address | **AGENT** | [`0x66333f4a…`](https://sepolia.etherscan.io/tx/0x66333f4af0943cd5558c73328ea468bf5de87c17b8ab9c367a05d2691347aaf0) | 91,921 gas. **status = 1 (no revert)**, `SpendBlocked(reason=6)`, **no `Transfer`** |
 | 7 | **🎬 Act four** `LeashRegistry.revoke("vendors")` | ADMIN | [`0x60188de3…`](https://sepolia.etherscan.io/tx/0x60188de308c44320146d7ade93f62b300c75f9cb43b4a1c4635ba2856164ef17) | 39,083 gas. **One transaction halts the agent** |
-| 8 | AGENT retries the legitimate payment | AGENT | — | status = 1, but `resolvePolicy` returns `0x0` → reason code 3, **no money moved** |
-| 9 | Re-issue the subname → agent restored | ADMIN → AGENT | — | Payment succeeds; 300 USDC cumulative |
+| 8 | AGENT retries the legitimate payment | AGENT | [`0x82c015a7…`](https://sepolia.etherscan.io/tx/0x82c015a7d0af225bb9c739b6b54fa38642cb2acd1b730822ab324234793abcca) | status = 1, but `resolvePolicy` returns `0x0` → `SpendBlocked(reason=3)`, **no money moved** |
+| 9 | Re-issue the subname → agent restored | ADMIN → AGENT | [`0xaed86814…`](https://sepolia.etherscan.io/tx/0xaed868149f378d1aa5afb8c6c93aed664c811c9e8505df29988076e571283e85) | Payment succeeds; 300 USDC cumulative |
+
+> The transaction hashes for steps 8 and 9 were blank in this table until the subgraph was
+> deployed and indexed them (blocks 11664759 and 11664762). They had been recorded by hand
+> from a terminal session that only noted the outcomes.
 
 ### Three things that got onchain evidence for the first time here
 
@@ -283,6 +287,36 @@ never touched.** After the revocation both `getResolver` and `resolvePolicy` ret
 `0x0`, and the agent's legitimate payment — transaction successful — cannot move a cent.
 Re-issuing the subname restores it immediately, so the loop is repeatable and the demo
 does not burn itself out on one run.
+
+## The subgraph is live
+
+```
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.2
+```
+
+Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742
+(the wallet), with `hasIndexingErrors: false`. The four questions an agent asks each map to
+one entity — paste this into the endpoint above:
+
+```graphql
+{
+  agentBudgets  { remaining spent limit periodEnd }        # 1. how much is left
+  payees        { payee allowed paidCount paidTotal }      # 2. may I pay this payee
+  policyPointers{ policy approved description }            # 3. which policy, approved?
+  spends(where: { executed: false }, orderBy: blockNumber, orderDirection: desc) {
+    reasonName amount payee                                # 4. why was I blocked
+  }
+}
+```
+
+Against the run above that returns: 700 USDC remaining of 1000; the payee allowed with 2
+payments totalling 300 USDC; `StandardPolicy` approved with its `describe()` string; and the
+two blocked attempts, `PAYEE_NOT_ALLOWED` and `NO_POLICY`.
+
+**`LeashedWallet` proves the design reasoning held.** EIP-7702 delegation emits no log, so a
+subgraph has no factory event to trigger a template from. `LeashAccount` emits `Leashed` on
+the first `bindAgent` instead, and the subgraph indexed it — wallet
+`0x46c09255…8eba6` → impl `0x136b33c6…d9b83c`.
 
 ### ⚠️ Currently wired to `MockAttester`
 
