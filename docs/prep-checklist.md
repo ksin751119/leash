@@ -6,7 +6,7 @@
 > The moment 9/4 arrives, work can start immediately.
 >
 > How the grey areas were judged:
-> - ✅ Registering an ENS name = acquiring a resource (like buying a domain), **not** code
+> - ✅ Registering an ENS name = acquiring a resource (like buying a domain) , **not** code
 > - ✅ Installing npm packages and creating an empty project skeleton = environment setup
 > - ❌ Writing `.sol`, subgraph mappings, or frontend components = **wait for 9/4**
 >
@@ -19,10 +19,10 @@
 | # | Item | What it blocks | Status |
 |---|---|---|---|
 | 1 | The World Sandbox form | the whole World line | ✅ submitted (9/2) |
-| 2 | The World Developer Portal app | step 3 | ✅ `app_452654c9…1c00`, written into `.env` (9/2). **Note it is production (`is_staging: false`), not Staging** |
-| 3 | The Selfie Check feature flag | the whole World line | ✅ **enabled, and verified end to end** (9/7). Nobody ever answered the email, yet the flag had been on all along |
+| 2 | The World Developer Portal app | step 3 | ✅ `app_452654c9…1c00`, written into `.env` (9/2) . **Note it is production (`is_staging: false`) , not Staging** |
+| 3 | The Selfie Check feature flag | the whole World line | ✅ **enabled, and verified end to end** (9/7) . Nobody ever answered the email, yet the flag had been on all along |
 | 4 | ~~Install the Sandbox App~~ | — | ✅ **not needed; established** (9/7) — full verification succeeded with the production World App and a real selfie. The whole TestFlight / Firebase dependency is cut |
-| 5 | A The Graph Studio account and deploy key | deploying the subgraph | ✅ key verified (`graph auth` passes), CLI v0.98.1 (9/2) |
+| 5 | A The Graph Studio account and deploy key | deploying the subgraph | ✅ key verified (`graph auth` passes) , CLI v0.98.1 (9/2) |
 | 6 | Generate two keys | everything onchain | ✅ generated and written into `.env` (9/2) |
 | 7 | Claim Sepolia ETH | everything onchain | ✅ human 0.126 / agent 0.053 ETH (9/2) |
 | 8 | Mint MockUSDC | ENS registration and demo payments | ✅ 1000 USDC on each side (9/2) |
@@ -31,7 +31,7 @@
 | 11 | Close out PLAN.md's open questions | starting work on 9/4 | ✅ all four settled (9/2) |
 
 > **Closed 2026-09-07: the World line is no longer a blocker.** The flag is on, the team is
-> created (Albert Lin, a team of one), and no external approval is outstanding. What was
+> created (Albert Lin, a team of one) , and no external approval is outstanding. What was
 > written here — "the critical path is 1 → 3 → 4 → wait for World to reply" — is void: we
 > were never actually blocked; the product simply displays the status nowhere. The full
 > account is in `world-feedback.md` §6.
@@ -43,7 +43,7 @@
 ### Step 1 — the Sandbox access form ✅
 
 URL: https://forms.gle/mqbaiwMvX5MzmKdY8
-(Source: ETHGlobal's World prize page → Resources → Sandbox Access)
+ (Source: ETHGlobal's World prize page → Resources → Sandbox Access)
 
 Titled "World ID Sandbox Beta Access Request", with a single field: email.
 What it grants is **Firebase App Distribution** access.
@@ -64,7 +64,7 @@ What it grants is **Firebase App Distribution** access.
 4. Once created, copy the **`app_id`** from the app's settings page — a long string
    beginning with `app_`
 5. If the settings page also lists an **`rp_id`**, copy that too
-   (⚠️ **The v4 endpoint is wrong for Selfie Check** — Selfie Check currently runs World ID
+ (⚠️ **The v4 endpoint is wrong for Selfie Check** — Selfie Check currently runs World ID
    **3.0**, and the documentation says outright "World ID 4.0 support not yet available".
    v4 answers "This app has not been migrated to World ID 4.0. Please use the v2 verify
    endpoint". So use the **v2 endpoint, which takes an `app_id`**, not v4 with an `rp_id`.
@@ -74,7 +74,7 @@ What it grants is **Firebase App Distribution** access.
    app with `invalid_action` for every action, real or fake, because the app was created as a
    4.0 RP. Verification must go to **v4** with `protocol_version: "3.0"`, and the `rp_id` is
    needed after all. See `world/README.md`.
-6. Save both values into `.env` (already gitignored):
+6. Save both values into `.env` (already gitignored) :
 
 ```bash
 WORLD_APP_ID=app_xxxxxxxxxxxxxxxxxxxxxxxx
@@ -82,7 +82,7 @@ WORLD_RP_ID=rp_xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 **While there, check whether the sidebar has a "World ID Sandbox" entry** — Android tester
-access is handled there (submit the email of your Google Play account). Whether that entry
+access is handled there (submit the email of your Google Play account) . Whether that entry
 exists and how easy it is to find **goes into the feedback document**.
 
 ---
@@ -96,9 +96,9 @@ This gate appears three times in the documentation, always as a coloured Mintlif
 
 | Page | Their words |
 |---|---|
-| `world-id/idkit/credentials#selfie-check-beta` | 「Request access to enable Selfie Check (Beta) for your app.」 |
-| `world-id/credentials/11` | 「Selfie Check (Beta) is **access-gated**.」 |
-| `world-id/sandbox/testing-selfie-check` | 「must be enabled for your app **before you can test it**.」 |
+| `world-id/idkit/credentials#selfie-check-beta` | "Request access to enable Selfie Check (Beta) for your app." |
+| `world-id/credentials/11` | "Selfie Check (Beta) is **access-gated**." |
+| `world-id/sandbox/testing-selfie-check` | "must be enabled for your app **before you can test it**." |
 
 > 💡 Append `.md` to any `docs.world.org` URL to get the raw markdown, which can be grepped
 > directly. The `<Warning>` boxes on the rendered page are very easy to skim past.
@@ -116,7 +116,7 @@ on Sept 2 for Selfie Check (Beta) flag. app_id `app_xxx`. Anything else needed?"
 
 > ⚠️ **The documentation's iOS instructions are wrong.** It tells you to open a public
 > TestFlight link (`testflight.apple.com/join/VZEurhHe`) and says "no per-email invitation is
-> needed" — that link was closed as of 2026-09-02 ("not accepting new testers"), and a
+> needed" — that link was closed as of 2026-09-02 ("not accepting new testers") , and a
 > per-email invitation **is** in fact required. The correct entry point is in the Developer
 > Portal, which the documentation never mentions.
 
@@ -128,7 +128,7 @@ on Sept 2 for Selfie Check (Beta) flag. app_id `app_xxx`. Anything else needed?"
 4. On approval you receive an email and **World ID Sandbox appears in TestFlight on its own**
 
 The Android tab is in the same panel and works the same way (submit your Google Play
-account's email).
+account's email) .
 
 **Android — expect to wait**
 
@@ -144,7 +144,7 @@ account's email).
 > soon fails.
 
 **Once installed, run the cold flow once** (create an account → date of birth → invite code
-→ enrollment),
+→ enrollment) ,
 Record the friction at every step in the feedback document. This material cannot be
 reconstructed afterwards.
 
@@ -182,7 +182,7 @@ Unauthenticated and immediate. The response on 2026-09-07:
 > and the second one simply fails with the nullifier burned and **no way to reset it**.
 >
 > ⚠️ **The instruction that used to be here — "Portal → action settings → change max
-> verifications to 0 (unlimited)" — was wrong. No such setting exists anywhere in the
+> verifications to 0 (unlimited) " — was wrong. No such setting exists anywhere in the
 > Portal.** What is true is that `max_verifications` binds to the **action**, not to the
 > person, so **creating a fresh action resets it**. Do that before recording a video or
 > running a live demo.
@@ -202,7 +202,7 @@ Unauthenticated and immediate. The response on 2026-09-07:
 GRAPH_DEPLOY_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-5. Install the CLI globally (a tool, not project code):
+5. Install the CLI globally (a tool, not project code) :
 
 ```bash
 pnpm add -g @graphprotocol/graph-cli
@@ -212,7 +212,7 @@ graph --version
 **No review is required; connecting a wallet is enough.**
 
 > The prize requirement says "must consume live data (**Subgraph Studio** or The Graph
-> Market)" — **Studio qualifies**, so there is no need to publish to the decentralized
+> Market) " — **Studio qualifies**, so there is no need to publish to the decentralized
 > network and no need to buy GRT.
 
 The subgraph's `schema.graphql` and mappings are code; **write them on 9/4**.
@@ -233,7 +233,7 @@ The architecture needs these roles:
 
 > **Why ADMIN and WALLET must be two separate keys:** when LeashAccount makes an outbound
 > call, `msg.sender` *is* WALLET. If WALLET also held ENS roles, an agent would only have to
-> get the account to call `ETHRegistry.setResolver(...)` to borrow the wallet's authority and
+> get the account to call `ETHRegistry.setResolver (...) ` to borrow the wallet's authority and
 > rewrite its own policy. Separated, that path structurally does not exist — **a broken
 > policy can at most drain the funds and can never reach control.**
 
@@ -242,7 +242,7 @@ cast wallet new
 cast wallet new
 ```
 
-Save them into the tx-mcp `.env` (**already in .gitignore**; confirm once):
+Save them into the tx-mcp `.env` (**already in .gitignore**; confirm once) :
 
 ```bash
 ADMIN_PK=0x...
@@ -291,25 +291,25 @@ Registration fees on ENSv2 Sepolia are paid in **MockUSDC**, not ETH.
 address  0x768f42455a2d082e23ceef7d51e5787c82d67a39
 symbol   USDC
 decimals 6
-mint     mint(address,uint256)  =  0x40c10f19   ← no access control; any EOA can mint
+mint     mint (address,uint256) =  0x40c10f19   ← no access control; any EOA can mint
 ```
 
-Mint 1000 USDC to the human address (6 decimals, so `1000000000`):
+Mint 1000 USDC to the human address (6 decimals, so `1000000000`) :
 
 ```bash
 source .env
 export USDC=0x768f42455a2d082e23ceef7d51e5787c82d67a39
 
-cast send $USDC 'mint(address,uint256)' $ADMIN_ADDR 1000000000 \
+cast send $USDC 'mint (address,uint256) ' $ADMIN_ADDR 1000000000 \
   --private-key $ADMIN_PK --rpc-url $SEPOLIA_RPC
 
-cast call $USDC 'balanceOf(address)(uint256)' $ADMIN_ADDR --rpc-url $SEPOLIA_RPC
+cast call $USDC 'balanceOf (address) (uint256) ' $ADMIN_ADDR --rpc-url $SEPOLIA_RPC
 ```
 
 Mint some to the agent address too; the demo payments need it:
 
 ```bash
-cast send $USDC 'mint(address,uint256)' $AGENT_ADDR 1000000000 \
+cast send $USDC 'mint (address,uint256) ' $AGENT_ADDR 1000000000 \
   --private-key $ADMIN_PK --rpc-url $SEPOLIA_RPC
 ```
 
@@ -321,10 +321,10 @@ cast send $USDC 'mint(address,uint256)' $AGENT_ADDR 1000000000 \
 
 **Checked 2026-09-02: still unregistered. 8.000021 USDC for a year, premium 0.**
 
-At registration, pass **`address(0)` for both `subregistry` and `resolver`**.
+At registration, pass **`address (0) ` for both `subregistry` and `resolver`**.
 On 9/4, point them at our own contracts with `setSubregistry` / `setResolver` — which keeps
 "acquiring the name" (today, and not code) cleanly separate from "wiring it into the
-architecture" (9/4, and code).
+architecture" (9/4, and code) .
 
 #### Contracts and constants (all measured)
 
@@ -340,15 +340,15 @@ MIN_DURATION         86,400 s (1 day)
 ```
 
 Function signatures (verified by reversing the selectors; **secret and referrer are
-`bytes32`, not `uint256`**):
+`bytes32`, not `uint256`**) :
 
 ```
-isAvailable(string)                                                       0x965306aa
-getRegisterPrice(string,uint64,address)                                   0x61907b12
-makeCommitment(string,address,bytes32,address,address,uint64,bytes32)     0x1e966f07
-commit(bytes32)                                                           0xf14fcbc8
-register(string,address,bytes32,address,address,uint64,address,bytes32)   0xcff3e7c2
-renew(string,uint64,address,bytes32)                                      0x89d779c3
+isAvailable (string) 0x965306aa
+getRegisterPrice (string,uint64,address) 0x61907b12
+makeCommitment (string,address,bytes32,address,address,uint64,bytes32) 0x1e966f07
+commit (bytes32) 0xf14fcbc8
+register (string,address,bytes32,address,address,uint64,address,bytes32) 0xcff3e7c2
+renew (string,uint64,address,bytes32) 0x89d779c3
 ```
 
 #### 9-1. Set up the environment
@@ -368,14 +368,14 @@ export ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
 #### 9-2. Confirm once more that it is still free
 
 ```bash
-cast call $REGISTRAR 'isAvailable(string)(bool)' "$LABEL" --rpc-url $R
+cast call $REGISTRAR 'isAvailable (string) (bool) ' "$LABEL" --rpc-url $R
 # expect true
 ```
 
 #### 9-3. Check the price
 
 ```bash
-cast call $REGISTRAR 'getRegisterPrice(string,uint64,address)(uint256,uint256)' \
+cast call $REGISTRAR 'getRegisterPrice (string,uint64,address) (uint256,uint256) ' \
   "$LABEL" $DURATION $USDC --rpc-url $R
 # expect 8000021 (= 8.000021 USDC) and 0 (premium)
 ```
@@ -385,7 +385,7 @@ cast call $REGISTRAR 'getRegisterPrice(string,uint64,address)(uint256,uint256)' 
 Approve a little extra, so a small price movement does not cause a failure:
 
 ```bash
-cast send $USDC 'approve(address,uint256)' $REGISTRAR 20000000 \
+cast send $USDC 'approve (address,uint256) ' $REGISTRAR 20000000 \
   --private-key $ADMIN_PK --rpc-url $R
 ```
 
@@ -394,11 +394,11 @@ cast send $USDC 'approve(address,uint256)' $REGISTRAR 20000000 \
 **Save the secret** — step 9-7 needs the same value, and losing it means starting over.
 
 ```bash
-export SECRET=$(cast keccak "leash-ethonline-2026-$(date +%s)-$RANDOM")
+export SECRET=$ (cast keccak "leash-ethonline-2026-$ (date +%s) -$RANDOM")
 echo "SECRET=$SECRET"          # ← save into .env; do not close this terminal
 
-export COMMITMENT=$(cast call $REGISTRAR \
-  'makeCommitment(string,address,bytes32,address,address,uint64,bytes32)(bytes32)' \
+export COMMITMENT=$ (cast call $REGISTRAR \
+  'makeCommitment (string,address,bytes32,address,address,uint64,bytes32) (bytes32) ' \
   "$LABEL" $ADMIN_ADDR $SECRET $ZERO $ZERO $DURATION $ZERO32 \
   --rpc-url $R)
 echo "COMMITMENT=$COMMITMENT"
@@ -407,7 +407,7 @@ echo "COMMITMENT=$COMMITMENT"
 #### 9-6. Send the commit, then wait 60 seconds
 
 ```bash
-cast send $REGISTRAR 'commit(bytes32)' $COMMITMENT \
+cast send $REGISTRAR 'commit (bytes32) ' $COMMITMENT \
   --private-key $ADMIN_PK --rpc-url $R
 
 sleep 75      # the minimum is 60 s; a little margin
@@ -420,7 +420,7 @@ sleep 75      # the minimum is 60 s; a little margin
 
 ```bash
 cast send $REGISTRAR \
-  'register(string,address,bytes32,address,address,uint64,address,bytes32)' \
+  'register (string,address,bytes32,address,address,uint64,address,bytes32) ' \
   "$LABEL" $ADMIN_ADDR $SECRET $ZERO $ZERO $DURATION $USDC $ZERO32 \
   --private-key $ADMIN_PK --rpc-url $R
 ```
@@ -429,25 +429,25 @@ cast send $REGISTRAR \
 
 ```bash
 # should now be false
-cast call $REGISTRAR 'isAvailable(string)(bool)' "$LABEL" --rpc-url $R
+cast call $REGISTRAR 'isAvailable (string) (bool) ' "$LABEL" --rpc-url $R
 
 # both should be 0 for now - that is expected; they get wired on 9/4
-cast call $ETHREG 'getSubregistry(string)(address)' "$LABEL" --rpc-url $R
-cast call $ETHREG 'getResolver(string)(address)'    "$LABEL" --rpc-url $R
+cast call $ETHREG 'getSubregistry (string) (address) ' "$LABEL" --rpc-url $R
+cast call $ETHREG 'getResolver (string) (address) '    "$LABEL" --rpc-url $R
 ```
 
-**Find the tokenId and save it** — `setSubregistry(uint256,address)` and
-`setResolver(uint256,address)` both take a tokenId, not a string.
+**Find the tokenId and save it** — `setSubregistry (uint256,address) ` and
+`setResolver (uint256,address) ` both take a tokenId, not a string.
 
 An ENSv2 tokenId has a version mixed into it, so **do not compute the labelhash yourself**;
 read it from the registration transaction's ERC-1155 `TransferSingle` log:
 
 ```bash
 cast receipt <REGISTER_TX_HASH> --rpc-url $R --json \
-  | jq '.logs[] | select(.address|ascii_downcase == "'$ETHREG'") | .topics, .data'
+  | jq '.logs[] | select (.address|ascii_downcase == "'$ETHREG'") | .topics, .data'
 ```
 
-The `id` in `TransferSingle(address,address,address,uint256 id,uint256 value)` is the
+The `id` in `TransferSingle (address,address,address,uint256 id,uint256 value) ` is the
 tokenId. Save it into `.env`:
 
 ```bash
@@ -457,15 +457,15 @@ LEASH_TOKEN_ID=0x...
 Verify the owner:
 
 ```bash
-cast call $ETHREG 'ownerOf(uint256)(address)' $LEASH_TOKEN_ID --rpc-url $R
+cast call $ETHREG 'ownerOf (uint256) (address) ' $LEASH_TOKEN_ID --rpc-url $R
 # expect = $ADMIN_ADDR
 ```
 
 #### What to do on 9/4 (**not today — that would be code**)
 
 ```
-setResolver(tokenId, <our PermissionedResolver>)
-setSubregistry(tokenId, <our LeashRegistry>)
+setResolver (tokenId, <our PermissionedResolver>)
+setSubregistry (tokenId, <our LeashRegistry>)
 ```
 
 ---
@@ -501,7 +501,7 @@ All of the following was obtained on **2026-09-01 / 09-02** by hitting
 `https://ethereum-sepolia-rpc.publicnode.com` with `cast`, not by copying documentation:
 
 - `leash`'s availability, the 8.000021 USDC price, and premium 0
-- MIN/MAX commitment age、MIN duration
+- MIN/MAX commitment age, MIN duration
 - The exact signatures of six functions (reversing the selectors to settle `bytes32` vs
   `uint256`)
 - MockUSDC's symbol, decimals, and that `mint` has no access control

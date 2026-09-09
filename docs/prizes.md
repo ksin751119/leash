@@ -1,7 +1,7 @@
 # Prize requirements and how we meet them
 
 > Requirements taken from each sponsor's prize page for ETHGlobal ETHOnline 2026
-> (2026-09-01, rechecked 2026-09-07). A submission may target at most **3** partner prizes.
+> (2026-09-01, rechecked 2026-09-07) . A submission may target at most **3** partner prizes.
 >
 > ⚠️ **Rule found on 2026-09-07: multiple tracks from one sponsor count as a single partner
 > prize slot.**
@@ -21,7 +21,7 @@
 
 | Requirement | How we meet it |
 |---|---|
-| Must be built on **ENSv2 (Sepolia)** | ✅ we are on Sepolia anyway |
+| Must be built on **ENSv2 (Sepolia) ** | ✅ we are on Sepolia anyway |
 | **ENSv2 features central to the product, not a cosmetic add-on** | ⚠️ see below |
 | The demo must actually run; no hard-coded values | ✅ |
 | Open source plus a video or a live demo (both is better) | ✅ |
@@ -29,7 +29,7 @@
 
 The features it names: hierarchical registry, wildcard resolution, **Enhanced Access
 Control**,
-**Permissioned Resolvers**、record/namespace aliasing、subname ecosystems。
+**Permissioned Resolvers**, record/namespace aliasing, subname ecosystems.
 
 ### What counts as central rather than cosmetic
 
@@ -62,7 +62,7 @@ agent come from native ENSv2 features**.
 | Requirement | How we meet it |
 |---|---|
 | **Use The Graph as a load-bearing part** | ⚠️ see below |
-| Must consume **live data** (Subgraph Studio or The Graph Market); **no mocks or local data** | ✅ we index real events from our own contracts |
+| Must consume **live data** (Subgraph Studio or The Graph Market) ; **no mocks or local data** | ✅ we index real events from our own contracts |
 | **Do meaningful work with the data**: reasoning, decisions, automation or a natural-language interface | ✅ three of the four |
 | **Must be net-new work begun during hackathon** | ✅ Start from Scratch |
 | Open source, a clear README, a public repo, and a **2-4 minute video** | ✅ |
@@ -89,14 +89,14 @@ transactions and be blocked on chain.
 
 ### The other track (not chosen)
 
-**Track 1: Best Use of Composable or Standardized Graph Products**($5,000,1st/2nd/3rd)
+**Track 1: Best Use of Composable or Standardized Graph Products** ($5,000,1st/2nd/3rd)
 — it requires "composing two or more Graph products" or "building on a standardized
 schema".
 
 **Reassessed 2026-09-07:** since multiple tracks from one sponsor count as a single slot,
 **entering it costs no slot at all**. We still will not build anything specifically for it —
 if the main line finishes with time to spare, consider wiring in one more Graph product
-(the Token API, say) to qualify as composable. **Listed as a post-9/12 stretch goal and not
+ (the Token API, say) to qualify as composable. **Listed as a post-9/12 stretch goal and not
 scheduled.**
 
 ---
@@ -143,9 +143,9 @@ submitted.
 
 The feature-flag gate appears three times in the documentation:
 
-* `world-id/idkit/credentials#selfie-check-beta` — "[Request access](mailto:developers@toolsforhumanity.com) to enable Selfie Check (Beta) for your app." (**ETHGlobal's prize page links straight to this one**)
-* `world-id/credentials/11` — 「Selfie Check (Beta) is access-gated. To use it, request access so the feature flag can be enabled for your app.」
-* `world-id/sandbox/testing-selfie-check` — 「Selfie Check (Beta) must be enabled for your app before you can test it.」
+* `world-id/idkit/credentials#selfie-check-beta` — "[Request access] (mailto:developers@toolsforhumanity.com) to enable Selfie Check (Beta) for your app." (**ETHGlobal's prize page links straight to this one**)
+* `world-id/credentials/11` — "Selfie Check (Beta) is access-gated. To use it, request access so the feature flag can be enabled for your app."
+* `world-id/sandbox/testing-selfie-check` — "Selfie Check (Beta) must be enabled for your app before you can test it."
 
 All three are Mintlify `<Warning>` components, which render as coloured callout boxes and
 are easy to skim past. Appending `.md` to any docs.world.org URL returns the raw markdown.
@@ -166,7 +166,7 @@ workshop:
 **The feedback document is a quarter of the score, not a side assignment.**
 `world-feedback.md`'s priority moves up — it matters as much as the frontend, and we have
 real material (five days with no reply, three pages telling three different stories,
-misleading naming).
+misleading naming) .
 
 The 10% is answered by `PLAN.md`'s v2 sections: control/execution plane separation, and
 one-shot batch authorisation.
@@ -214,7 +214,7 @@ V3 and V4 proofs are both usable.
 
 ### Note
 
-World's other track, **AgentKit** ($3,500), says **Continuity only** and is out of reach.
+World's other track, **AgentKit** ($3,500) , says **Continuity only** and is out of reach.
 The workshop confirmed something further: **AgentKit only accepts Orb-verified World ID, and
 Selfie Check cannot be used to register on AgentBook** — so it would not connect even under
 From Scratch, and ruling it out was the right call. Selfie Check has no such restriction.
@@ -227,7 +227,7 @@ attached usually attract fewer entries.
 
 ## ❌ Ruled out: Hedera x402 · $6,000
 
-The most attractive prize on paper ($6,000, three fixed places at $2,000 each), but
+The most attractive prize on paper ($6,000, three fixed places at $2,000 each) , but
 **architecturally it does not connect**.
 
 Hedera's exact scheme is **not** the EVM's EIP-3009 but a native `TransferTransaction`.
@@ -246,7 +246,7 @@ contract account has no such key.**
 unconstrained account with the policy layer entirely out of the loop — the project would
 vanish from its own demo.
 
-(In theory Hedera's "contract ID as account key" mechanism might offer a path, but that is
+ (In theory Hedera's "contract ID as account key" mechanism might offer a path, but that is
 completely untrodden ground and not what a solo entrant should bet nine days on.)
 
 ### Two further points of friction
@@ -267,7 +267,7 @@ That submission just would not go to Hedera. Out of scope for now.
 ## ❌ Ruled out: Arc · $2,500 / $2,500 / $5,000 (all split evenly)
 
 Conceptually it fits well (Track 2, Best Agentic Economy, is exactly about autonomous agents
-transacting from USDC wallets), and Arc has EIP-7702 and USDC as gas. **But the cost
+transacting from USDC wallets) , and Arc has EIP-7702 and USDC as gas. **But the cost
 structure is wrong.**
 
 | Requirement | The problem |
