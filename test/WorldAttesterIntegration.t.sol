@@ -17,6 +17,7 @@ contract YesApprovals is IPolicyApprovals {
 contract WorldAttesterIntegrationTest is Test {
     uint256 constant SIGNER_PK = 0xA11CE;
     uint256 constant WALLET_PK = 0x8A11E7;
+    uint256 constant WRONG_PK = 0xBAD;
 
     WorldAttester att;
     LeashAccount impl;
@@ -39,7 +40,15 @@ contract WorldAttesterIntegrationTest is Test {
     }
 
     function _sign(bytes32 digest, uint64 deadline) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(SIGNER_PK, att.attestationHash(digest, deadline));
+        return _signWith(SIGNER_PK, digest, deadline);
+    }
+
+    function _signWith(uint256 pk, bytes32 digest, uint64 deadline)
+        internal
+        view
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, att.attestationHash(digest, deadline));
         return abi.encodePacked(deadline, r, s, v);
     }
 
@@ -91,6 +100,20 @@ contract WorldAttesterIntegrationTest is Test {
 
         vm.prank(address(0xDEAD));
         vm.expectRevert(LeashAccount.NotSelf.selector);
+        acct.allowPayee(node, TOKEN, PAYEE, 1, blob);
+    }
+
+    /// A well-shaped, correctly-packed 73-byte blob is not enough on its own — it has to
+    /// be signed by the RP signer specifically. This is the claim the file's name makes;
+    /// the other five tests exercise the wiring around it, but only this one pins the
+    /// signature check itself against a real (wrong) key.
+    function test_a_blob_signed_by_the_wrong_key_is_rejected() public {
+        uint64 dl = uint64(block.timestamp + 900);
+        bytes32 d = acct.payeeDigest(node, TOKEN, PAYEE, 1);
+        bytes memory blob = _signWith(WRONG_PK, d, dl);
+
+        vm.prank(wallet);
+        vm.expectRevert(LeashAccount.NotAttested.selector);
         acct.allowPayee(node, TOKEN, PAYEE, 1, blob);
     }
 
