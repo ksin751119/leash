@@ -27,15 +27,21 @@ const USDC = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const DAI = "0x0000000000000000000000000000000000000da1";
 const POLICY = "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b";
 
-/// `<node>-<payee>`, and the test spells it out rather than importing the helper so that
+// The wallet each mock event is emitted from. In a LeashAccount data source `event.address`
+// IS the delegated EOA, because delegated code emits from the EOA's own context.
+const WALLET = "0x46c09255377525b34b27ada1a8f0f5bbd0d8eba6";
+const WALLET2 = "0x00000000000000000000000000000000000000a2";
+
+/// `<wallet>-<node>-<payee>`, spelled out rather than importing the helper so that
 /// re-keying the entity breaks this test loudly instead of silently agreeing with itself.
-const PAYEE_ID = NODE + "-" + PAYEE;
+const PAYEE_ID = WALLET + "-" + NODE + "-" + PAYEE;
+const PAYEE_ID_W2 = WALLET2 + "-" + NODE + "-" + PAYEE;
 
 function b32(hex: string): Bytes {
   return Bytes.fromHexString(hex);
 }
 
-function payeeAllowed(node: string, payee: string, block: i32): PayeeAllowed {
+function payeeAllowed(node: string, payee: string, block: i32, wallet: string = WALLET): PayeeAllowed {
   const e = changetype<PayeeAllowed>(newMockEvent());
   e.parameters = new Array();
   e.parameters.push(new ethereum.EventParam("node", ethereum.Value.fromFixedBytes(b32(node))));
@@ -45,12 +51,13 @@ function payeeAllowed(node: string, payee: string, block: i32): PayeeAllowed {
   e.parameters.push(
     new ethereum.EventParam("attestationHash", ethereum.Value.fromFixedBytes(b32(NODE)))
   );
+  e.address = Address.fromString(wallet);
   e.block.number = BigInt.fromI32(block);
   e.block.timestamp = BigInt.fromI32(block * 12);
   return e;
 }
 
-function payeeRemoved(node: string, payee: string, block: i32): PayeeRemoved {
+function payeeRemoved(node: string, payee: string, block: i32, wallet: string = WALLET): PayeeRemoved {
   const e = changetype<PayeeRemoved>(newMockEvent());
   e.parameters = new Array();
   e.parameters.push(new ethereum.EventParam("node", ethereum.Value.fromFixedBytes(b32(node))));
@@ -60,12 +67,13 @@ function payeeRemoved(node: string, payee: string, block: i32): PayeeRemoved {
   e.parameters.push(
     new ethereum.EventParam("by", ethereum.Value.fromAddress(Address.fromString(AGENT)))
   );
+  e.address = Address.fromString(wallet);
   e.block.number = BigInt.fromI32(block);
   e.block.timestamp = BigInt.fromI32(block * 12);
   return e;
 }
 
-function spendExecuted(payee: string, token: string, amount: i32, block: i32): SpendExecuted {
+function spendExecuted(payee: string, token: string, amount: i32, block: i32, wallet: string = WALLET): SpendExecuted {
   const e = changetype<SpendExecuted>(newMockEvent());
   e.parameters = new Array();
   e.parameters.push(new ethereum.EventParam("node", ethereum.Value.fromFixedBytes(b32(NODE))));
@@ -93,12 +101,13 @@ function spendExecuted(payee: string, token: string, amount: i32, block: i32): S
   e.parameters.push(
     new ethereum.EventParam("periodEnd", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(86400)))
   );
+  e.address = Address.fromString(wallet);
   e.block.number = BigInt.fromI32(block);
   e.block.timestamp = BigInt.fromI32(block * 12);
   return e;
 }
 
-function spendBlocked(payee: string, token: string, amount: i32, reason: i32, block: i32): SpendBlocked {
+function spendBlocked(payee: string, token: string, amount: i32, reason: i32, block: i32, wallet: string = WALLET): SpendBlocked {
   const e = changetype<SpendBlocked>(newMockEvent());
   e.parameters = new Array();
   e.parameters.push(new ethereum.EventParam("node", ethereum.Value.fromFixedBytes(b32(NODE))));
@@ -126,6 +135,7 @@ function spendBlocked(payee: string, token: string, amount: i32, reason: i32, bl
   e.parameters.push(
     new ethereum.EventParam("limit", ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(1000)))
   );
+  e.address = Address.fromString(wallet);
   e.block.number = BigInt.fromI32(block);
   e.block.timestamp = BigInt.fromI32(block * 12);
   return e;
@@ -214,5 +224,41 @@ describe("Payee — the defect the deployment found, now pinned", () => {
   test("removing an unknown payee creates nothing", () => {
     handlePayeeRemoved(payeeRemoved(NODE, PAYEE, 100));
     assert.entityCount("Payee", 0);
+  });
+
+  /// 🔴 **Two wallets, the same ENS node, and they must not share a row.**
+  ///
+  /// `payees` and `spent` live in the delegated EOA's own storage, so two wallets that
+  /// bind an agent to the same node have entirely separate allow-lists and ledgers
+  /// onchain. Keying by node alone merged them — invisible today because the demo has one
+  /// wallet, and silently wrong the moment there are two. Code review flagged it as a
+  /// note; it is a defect of the same shape as the one above, so it is fixed and pinned.
+  ///
+  /// Drop the wallet from `payeeId` and this test fails with 1 row instead of 2.
+  test("two wallets under the same node keep separate rows", () => {
+    handlePayeeAllowed(payeeAllowed(NODE, PAYEE, 100, WALLET));
+    handleSpendExecuted(spendExecuted(PAYEE, USDC, 200, 101, WALLET));
+
+    handlePayeeAllowed(payeeAllowed(NODE, PAYEE, 102, WALLET2));
+    handlePayeeRemoved(payeeRemoved(NODE, PAYEE, 103, WALLET2));
+
+    assert.entityCount("Payee", 2);
+    // Wallet 1 is unaffected by wallet 2's removal, and keeps its own history.
+    assert.fieldEquals("Payee", PAYEE_ID, "allowed", "true");
+    assert.fieldEquals("Payee", PAYEE_ID, "paidTotal", "200");
+    // Wallet 2 removed the payee and never paid it.
+    assert.fieldEquals("Payee", PAYEE_ID_W2, "allowed", "false");
+    assert.fieldEquals("Payee", PAYEE_ID_W2, "paidTotal", "0");
+  });
+
+  /// The same collision, on the number the agent trusts most: question 1's budget.
+  /// `spent` is per-EOA storage, so two wallets must not aggregate into one budget row.
+  test("two wallets under the same node keep separate budgets", () => {
+    handleSpendExecuted(spendExecuted(PAYEE, USDC, 200, 100, WALLET));
+    handleSpendExecuted(spendExecuted(PAYEE, USDC, 700, 101, WALLET2));
+
+    assert.entityCount("AgentBudget", 2);
+    assert.fieldEquals("AgentBudget", WALLET + "-" + NODE + "-" + USDC, "spent", "200");
+    assert.fieldEquals("AgentBudget", WALLET2 + "-" + NODE + "-" + USDC, "spent", "700");
   });
 });

@@ -25,8 +25,10 @@
 
 """Question 1: how much this (node, token) has left this period. Overwritten on every SpendExecuted."""
 type AgentBudget @entity(immutable: false) {
-  "<node>-<token>"
+  "<wallet>-<node>-<token>"
   id: ID!
+  "The delegated EOA. Part of the id because `spent` and `rules` live in that EOA's own storage - two wallets under the same node have separate budgets onchain."
+  wallet: Bytes!
   node: Bytes!
   token: Bytes!
 
@@ -67,8 +69,10 @@ and the account is what stops it. Fixing this properly means adding `token` to
 `docs/events.md` as a follow-up rather than done four days from the deadline.
 """
 type Payee @entity(immutable: false) {
-  "<node>-<payee>"
+  "<wallet>-<node>-<payee>"
   id: ID!
+  "The delegated EOA. Part of the id for the same reason as on AgentBudget: `payees` is per-EOA storage."
+  wallet: Bytes!
   node: Bytes!
   payee: Bytes!
 
@@ -157,7 +161,7 @@ type Spend @entity(immutable: true) {
 
 """One agent's binding state."""
 type Agent @entity(immutable: false) {
-  "agent address"
+  "<wallet>-<agent>. The agent address alone is not unique: `bindings` is per-EOA storage, so the same agent address can be bound by two different wallets."
   id: ID!
   agent: Bytes!
   node: Bytes!

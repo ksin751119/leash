@@ -14,14 +14,25 @@ import { reasonName } from "./reason";
 
 const ZERO = BigInt.fromI32(0);
 
-function budgetId(node: Bytes, token: Address): string {
-  return node.toHexString() + "-" + token.toHexString();
+/// **The wallet is part of every id that mirrors per-EOA storage.** `bindings`, `rules`,
+/// `payees` and `spent` all live in the delegated EOA's own storage (see `LeashStorage`),
+/// so two wallets binding an agent to the *same* ENS node have entirely separate budgets,
+/// allow-lists and ledgers onchain. Keying these entities by node alone merged them into
+/// one row — invisible with one wallet, silently wrong with two, which is the same shape
+/// as the `Payee` defect the deployment found. In a LeashAccount data source
+/// `event.address` **is** the wallet, because delegated code emits from the EOA.
+function budgetId(wallet: Address, node: Bytes, token: Address): string {
+  return wallet.toHexString() + "-" + node.toHexString() + "-" + token.toHexString();
 }
 
 /// Keyed by (node, payee) only — `PayeeAllowed` / `PayeeRemoved` carry no token, and they
 /// are the only authority for `allowed`. See the note on `Payee` in schema.graphql.
-function payeeId(node: Bytes, payee: Address): string {
-  return node.toHexString() + "-" + payee.toHexString();
+function payeeId(wallet: Address, node: Bytes, payee: Address): string {
+  return wallet.toHexString() + "-" + node.toHexString() + "-" + payee.toHexString();
+}
+
+function agentId(wallet: Address, agent: Address): string {
+  return wallet.toHexString() + "-" + agent.toHexString();
 }
 
 /// Pre-computed remaining budget. **This is where "the arithmetic lives in the mapping,
@@ -41,10 +52,11 @@ export function handleSpendExecuted(event: SpendExecuted): void {
   const token = event.params.token;
 
   // --- Question 1: budget snapshot ---
-  const bid = budgetId(node, token);
+  const bid = budgetId(event.address, node, token);
   let b = AgentBudget.load(bid);
   if (b == null) {
     b = new AgentBudget(bid);
+    b.wallet = event.address;
     b.node = node;
     b.token = token;
   }
@@ -57,13 +69,14 @@ export function handleSpendExecuted(event: SpendExecuted): void {
   b.save();
 
   // --- Question 2: this payee's running total ---
-  const pid = payeeId(node, event.params.payee);
+  const pid = payeeId(event.address, node, event.params.payee);
   let p = Payee.load(pid);
   if (p == null) {
     // PayeeAllowed should have fired first, but event ordering is not something to
     // assume — create the record if it is missing. A spend that executed proves the
     // payee was allowed at that moment, so `allowed = true` is sound *on creation*.
     p = new Payee(pid);
+    p.wallet = event.address;
     p.node = node;
     p.payee = event.params.payee;
     p.allowed = true;
@@ -94,7 +107,7 @@ export function handleSpendExecuted(event: SpendExecuted): void {
     event.params.payee, token, event.params.amount, true, 0, event.params.policy,
     event.params.spentAfter, event.params.limit, event.block.number, event.block.timestamp);
 
-  bumpAgent(event.params.agent, true);
+  bumpAgent(event.address, event.params.agent, true);
 }
 
 /// **A blocked attempt has to leave a record.** The whole design chose no-op + event
@@ -107,7 +120,7 @@ export function handleSpendBlocked(event: SpendBlocked): void {
     event.params.reason, event.params.policy,
     event.params.spentSoFar, event.params.limit, event.block.number, event.block.timestamp);
 
-  bumpAgent(event.params.agent, false);
+  bumpAgent(event.address, event.params.agent, false);
 }
 
 function recordSpend(
@@ -133,8 +146,8 @@ function recordSpend(
   s.save();
 }
 
-function bumpAgent(agent: Address, executed: boolean): void {
-  const a = Agent.load(agent.toHexString());
+function bumpAgent(wallet: Address, agent: Address, executed: boolean): void {
+  const a = Agent.load(agentId(wallet, agent));
   if (a == null) return; // AgentBound was not indexed (bound before startBlock) — do not fabricate one
   if (executed) a.spendCount = a.spendCount + 1;
   else a.blockedCount = a.blockedCount + 1;
@@ -142,7 +155,7 @@ function bumpAgent(agent: Address, executed: boolean): void {
 }
 
 export function handleAgentBound(event: AgentBound): void {
-  const id = event.params.agent.toHexString();
+  const id = agentId(event.address, event.params.agent);
   let a = Agent.load(id);
   if (a == null) {
     a = new Agent(id);
@@ -158,7 +171,7 @@ export function handleAgentBound(event: AgentBound): void {
 }
 
 export function handleAgentRevoked(event: AgentRevoked): void {
-  const a = Agent.load(event.params.agent.toHexString());
+  const a = Agent.load(agentId(event.address, event.params.agent));
   if (a == null) return;
   a.revoked = true;
   a.save();
@@ -190,10 +203,11 @@ export function handleLeashed(event: Leashed): void {
 /// event is node/payee/hash only), which is why `Payee` is keyed by (node, payee) — see
 /// the note on that entity in schema.graphql.
 export function handlePayeeAllowed(event: PayeeAllowed): void {
-  const pid = payeeId(event.params.node, event.params.payee);
+  const pid = payeeId(event.address, event.params.node, event.params.payee);
   let p = Payee.load(pid);
   if (p == null) {
     p = new Payee(pid);
+    p.wallet = event.address;
     p.node = event.params.node;
     p.payee = event.params.payee;
     p.paidCount = 0;
@@ -205,7 +219,7 @@ export function handlePayeeAllowed(event: PayeeAllowed): void {
 }
 
 export function handlePayeeRemoved(event: PayeeRemoved): void {
-  const p = Payee.load(payeeId(event.params.node, event.params.payee));
+  const p = Payee.load(payeeId(event.address, event.params.node, event.params.payee));
   if (p == null) return;
   p.allowed = false;
   p.save();
@@ -215,10 +229,11 @@ export function handlePayeeRemoved(event: PayeeRemoved): void {
 /// yet" is queryable. Otherwise the agent's very first decision would read null and
 /// have no idea how much it may spend.
 export function handleLimitRaised(event: LimitRaised): void {
-  const bid = budgetId(event.params.node, event.params.token);
+  const bid = budgetId(event.address, event.params.node, event.params.token);
   let b = AgentBudget.load(bid);
   if (b == null) {
     b = new AgentBudget(bid);
+    b.wallet = event.address;
     b.node = event.params.node;
     b.token = event.params.token;
     b.spent = ZERO;
