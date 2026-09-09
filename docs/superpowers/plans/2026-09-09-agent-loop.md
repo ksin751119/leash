@@ -1168,7 +1168,7 @@ const intents = [{ id: "a", token: TOKEN, payee: PAYEE, amount: "5000000", note:
 
 const okSnap = () => ({
   ok: true,
-  block: { subgraph: 1, chain: 1, lag: 0 },
+  block: { subgraph: 11667861, chain: 11667863, lag: 2 },
   agent: { address: "0xaa", revoked: false },
   subname: { label: "vendors", live: true },
   policy: { address: "0xbb", approved: true },
@@ -1219,10 +1219,13 @@ test("a predicted block is not sent", () => {
 });
 
 test("the tick counter and the source block land in the state", () => {
+  // subgraph, chain and lag are all distinct here so a swap between subgraphBlock and
+  // chainBlock in advance() cannot hide behind equal fixture values.
   const { state } = advance(initialState(), okSnap(), intents, NOW);
   assert.equal(state.tick, 1);
-  assert.equal(state.source.subgraphBlock, 1);
-  assert.equal(state.source.lagBlocks, 0);
+  assert.equal(state.source.subgraphBlock, 11667861);
+  assert.equal(state.source.chainBlock, 11667863);
+  assert.equal(state.source.lagBlocks, 2);
 });
 ```
 
@@ -1390,31 +1393,39 @@ async function tick() {
   }
 }
 
-for (const v of ["AGENT_PK", "SEPOLIA_RPC", "WALLET_ADDR", "AGENT_ADDR", "LEASH_NODE"]) {
-  if (!process.env[v]) {
-    console.error(`${v} is not set. Extract single variables; never source .env wholesale.`);
-    process.exit(1);
+// Everything below only runs when this file is executed directly (`node loop.mjs`), never
+// on import. Without this guard, importing advance/initialState from loop.test.mjs would
+// also run the env-var check (killing the test process via process.exit) and start the
+// HTTP server - the pure half would no longer be testable without a chain, which is the
+// whole reason it was split out.
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+if (isMain) {
+  for (const v of ["AGENT_PK", "SEPOLIA_RPC", "WALLET_ADDR", "AGENT_ADDR", "LEASH_NODE"]) {
+    if (!process.env[v]) {
+      console.error(`${v} is not set. Extract single variables; never source .env wholesale.`);
+      process.exit(1);
+    }
   }
-}
-intents = JSON.parse(await readFile(new URL("./intents.json", import.meta.url), "utf8"));
+  intents = JSON.parse(await readFile(new URL("./intents.json", import.meta.url), "utf8"));
 
-createServer(async (req, res) => {
-  const json = (code, body) => {
-    res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(body, null, 2));
-  };
-  if (req.method === "GET" && req.url === "/api/agent/state") return json(200, publicState());
-  if (req.method === "POST" && req.url === "/api/agent/tick") {
-    await tick();
-    return json(200, publicState());
-  }
-  json(404, { error: "not found" });
-}).listen(PORT, () => {
-  console.log(`agent loop on http://localhost:${PORT}  (tick ${TICK_MS}ms)`);
-  console.log(`  state: curl -s localhost:${PORT}/api/agent/state | jq`);
-  tick();
-  setInterval(tick, TICK_MS);
-});
+  createServer(async (req, res) => {
+    const json = (code, body) => {
+      res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify(body, null, 2));
+    };
+    if (req.method === "GET" && req.url === "/api/agent/state") return json(200, publicState());
+    if (req.method === "POST" && req.url === "/api/agent/tick") {
+      await tick();
+      return json(200, publicState());
+    }
+    json(404, { error: "not found" });
+  }).listen(PORT, () => {
+    console.log(`agent loop on http://localhost:${PORT}  (tick ${TICK_MS}ms)`);
+    console.log(`  state: curl -s localhost:${PORT}/api/agent/state | jq`);
+    tick();
+    setInterval(tick, TICK_MS);
+  });
+}
 ```
 
 - [ ] **Step 5: Run the tests and watch them pass**
@@ -1427,8 +1438,8 @@ Expected: PASS, 7 tests.
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass and `all 13 codes agree`. The count is **42 tests across five
-files** — reason 4, decide 16, subgraph 11, send 9, loop 7 (reason and subgraph grew in
+Expected: all suites pass and `all 13 codes agree`. The count is **48 tests across five
+files** — reason 4, decide 16, subgraph 12, send 9, loop 7 (reason and subgraph grew in
 their fix rounds). If your total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.

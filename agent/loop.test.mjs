@@ -10,7 +10,7 @@ const intents = [{ id: "a", token: TOKEN, payee: PAYEE, amount: "5000000", note:
 
 const okSnap = () => ({
   ok: true,
-  block: { subgraph: 1, chain: 1, lag: 0 },
+  block: { subgraph: 11667861, chain: 11667863, lag: 2 },
   agent: { address: "0xaa", revoked: false },
   subname: { label: "vendors", live: true },
   policy: { address: "0xbb", approved: true },
@@ -61,8 +61,11 @@ test("a predicted block is not sent", () => {
 });
 
 test("the tick counter and the source block land in the state", () => {
+  // subgraph, chain and lag are all distinct here so a swap between subgraphBlock and
+  // chainBlock in advance() cannot hide behind equal fixture values.
   const { state } = advance(initialState(), okSnap(), intents, NOW);
   assert.equal(state.tick, 1);
-  assert.equal(state.source.subgraphBlock, 1);
-  assert.equal(state.source.lagBlocks, 0);
+  assert.equal(state.source.subgraphBlock, 11667861);
+  assert.equal(state.source.chainBlock, 11667863);
+  assert.equal(state.source.lagBlocks, 2);
 });
