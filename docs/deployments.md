@@ -413,6 +413,22 @@ correctly rejects a malformed or missing attestation and would accept a well-for
 from `SIGNER` — not yet that a live Selfie Check produced that signature end to end. The first
 live proof of that full chain will be the demo.
 
+**The three actions, and which scan each is for.** Every action allows exactly one
+verification, cannot be reset, and cannot be raised — so a scan is a consumable and there are
+three of them. Created and verified via `precheck` (which consumes nothing) on 2026-09-09;
+all three came back `status: active`, `max_verifications: 1`, `enable_face_check: true`,
+`can_user_verify: yes`.
+
+| Action | Action id | Reserved for | Spent |
+|---|---|---|---|
+| `expand-policy-demo1` | `action_1f91e0b88227d9c86c276c28d30c3324` | first live run / rehearsal | no |
+| `expand-policy-demo2` | `action_e7e06eb49915d9225abcb5d01a7ec166` | recording the video | no |
+| `expand-policy-demo3` | `action_ffa11f8425f2d2e4bd7fa9c114df710e` | live judging, spare | no |
+
+`expand-policy` itself was consumed on 2026-09-07 and is dead. Update the Spent column as
+each is used — a scan that is already gone is the one fact that is expensive to rediscover,
+because rediscovering it means a failed verification in front of an audience.
+
 Two more limits worth restating rather than letting the good news above imply past them:
 
 - **`MockAttester` is still deployed and still used**, by `PolicyApprovals.approve` and
