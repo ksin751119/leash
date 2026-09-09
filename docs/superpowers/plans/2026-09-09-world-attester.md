@@ -882,6 +882,13 @@ Expected: `@noble/curves` at 2.x in `dependencies`, and
 //   2. @noble/curves returns `format: "recovered"` as [recovery(1) ‖ r(32) ‖ s(32)] —
 //      recovery FIRST, valued 0 or 1 — while the blob wants r ‖ s ‖ v with v = 27 + recovery.
 // crosscheck.mjs exists for exactly these.
+//
+// 🚫 This file computes the EIP-712 hash in JavaScript and must keep doing so. Do NOT
+// "simplify" it by fetching the hash from the chain — not via eth_call to
+// attestationHash(), not from a cached response, not for one field. Every Solidity test
+// signs whatever att.attestationHash() returned, so no test in this repo can catch an
+// encoding that is wrong the same way on both sides. This independent reimplementation is
+// the only thing that can, and it stops being able to the moment it asks the contract.
 
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
