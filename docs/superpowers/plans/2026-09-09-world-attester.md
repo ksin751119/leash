@@ -1360,17 +1360,46 @@ the wrong argument and every attestation the server signs will be rejected oncha
 
 - [ ] **Step 5: Re-delegate WALLET — requires explicit human authorisation**
 
+**First snapshot the wallet's state, so survival is measured rather than asserted.** All
+three calls are `view` and need no key. `LENS` is not in `.env`; the deployed `LeashLens` is
+`0xB6eB4C26AF866057920f7AB6fAFf69A914067B83`.
+
 ```bash
-cast send $WALLET_ADDR --auth <new impl> --private-key $WALLET_PK --rpc-url $SEPOLIA_RPC
-cast call $LENS 'delegateOf(address)(bool,address)' $WALLET_ADDR --rpc-url $SEPOLIA_RPC
+RPC="$(get SEPOLIA_RPC)"; W="$(get WALLET_ADDR)"; A="$(get AGENT_ADDR)"
+LENS=0xB6eB4C26AF866057920f7AB6fAFf69A914067B83
+USDC="$(get MOCK_USDC)"
+NODE=$(cast call "$W" 'nodeFor(string)(bytes32)' vendors --rpc-url "$RPC")
+
+before_binding=$(cast call "$W" 'bindingOf(address)(bytes32,string,bool)' "$A" --rpc-url "$RPC")
+before_rule=$(cast call "$W" 'ruleOf(bytes32,address)((bool,uint256,uint256,uint64,uint16,uint16,uint32))' "$NODE" "$USDC" --rpc-url "$RPC")
+printf 'binding: %s\nrule: %s\n' "$before_binding" "$before_rule"
 ```
 
-Expected: `delegateOf` returns `(true, <new impl>)`.
+Then re-delegate, and read the same two back:
 
-**The wallet's existing state survives.** The ERC-7201 slot derives from
+```bash
+cast send "$W" --auth <new impl> --private-key "$(get WALLET_PK)" --rpc-url "$RPC"
+cast call "$LENS" 'delegateOf(address)(bool,address)' "$W" --rpc-url "$RPC"
+
+after_binding=$(cast call "$W" 'bindingOf(address)(bytes32,string,bool)' "$A" --rpc-url "$RPC")
+after_rule=$(cast call "$W" 'ruleOf(bytes32,address)((bool,uint256,uint256,uint64,uint16,uint16,uint32))' "$NODE" "$USDC" --rpc-url "$RPC")
+[ "$before_binding" = "$after_binding" ] && [ "$before_rule" = "$after_rule" ] \
+  && echo "state survived re-delegation" || echo "STATE CHANGED - stop and investigate"
+```
+
+Expected: `delegateOf` returns `(true, <new impl>)`, and `state survived re-delegation`.
+
+**Why it survives, and why that is worth measuring.** The ERC-7201 slot derives from
 `keccak256("leash.account.v1")`, the layout is unchanged and the EOA is the same, so
 `bindings`, `rules`, `payees` and `spent` are all still there. No per-wallet setup is
-repeated, and `bindAgent` would revert `AlreadyBound` — which is correct.
+repeated, and `bindAgent` would revert `AlreadyBound` — which is correct. That argument is
+sound, but it is an argument: if the layout had drifted, or the slot constant had been
+recomputed from a different string, the wallet would come back blank and the demo would
+discover it live. Two `view` calls settle it beforehand.
+
+`$WALLET_PK` appears here because **the wallet signs its own EIP-7702 authorization** — this
+is the one command in the plan that needs it, it is run by a human, and it must never be put
+in a script.
 
 Old attestations cannot be replayed, because every `LeashAccount` digest includes `SELF`,
 the impl's own deploy address, and that changed.
