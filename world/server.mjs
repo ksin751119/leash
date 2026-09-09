@@ -13,6 +13,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { randomBytes } from "node:crypto";
+import { signAttestation } from "./attest.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -139,6 +140,69 @@ const server = createServer(async (req, res) => {
       // nullifier_hash is the anonymous identity of "this person". AttesterGate will need
       // to remember it, so it can tell whether the same person is reusing one face scan.
       return json(res, r.status, { http_status: r.status, ...body });
+    }
+
+    // Sprint item 11: verify a Selfie Check proof, then sign an attestation for exactly
+    // the digest that proof was bound to.
+    //
+    // `signal = digest` is the security property, not a convenience: one face scan
+    // authorises one widening, and an intercepted proof cannot be moved to another. That
+    // was the documented intention in IAttester from day one; here it becomes real.
+    if (req.method === "POST" && req.url === "/api/attest") {
+      const { digest, proof, action } = await readBody(req);
+      if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
+        return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
+      }
+      if (!proof) return json(res, 400, { error: "missing proof" });
+      if (!process.env.WORLD_RP_SIGNER_PK) {
+        return json(res, 500, { error: "WORLD_RP_SIGNER_PK not set" });
+      }
+      if (!process.env.WORLD_ATTESTER) {
+        return json(res, 500, { error: "WORLD_ATTESTER not set" });
+      }
+
+      const payload = {
+        protocol_version: "3.0",
+        nonce: "0x" + randomBytes(16).toString("hex"),
+        action: action ?? ACTION,
+        environment: "production",
+        responses: [
+          {
+            identifier: proof.credential_type ?? proof.verification_level,
+            signal_hash: proof.signal_hash ?? hashSignal(digest),
+            merkle_root: proof.merkle_root,
+            nullifier: proof.nullifier_hash,
+            proof: proof.proof,
+          },
+        ],
+      };
+
+      const r = await fetch(VERIFY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await r.json().catch(() => ({ error: "non-JSON response" }));
+      console.log("← HTTP", r.status, JSON.stringify(body));
+
+      // Sign nothing unless World said yes. This is the only gate between a proof and a
+      // signature the chain will accept.
+      if (r.status !== 200) return json(res, r.status, { http_status: r.status, ...body });
+
+      const deadline = Math.floor(Date.now() / 1000) + 900; // 15 minutes
+      const { attestation } = signAttestation({
+        digest,
+        deadline,
+        chainId: 11155111,
+        verifyingContract: process.env.WORLD_ATTESTER,
+        privKeyHex: process.env.WORLD_RP_SIGNER_PK,
+      });
+
+      return json(res, 200, {
+        attestation,
+        deadline,
+        nullifier: proof.nullifier_hash,
+      });
     }
 
     json(res, 404, { error: "not found" });
