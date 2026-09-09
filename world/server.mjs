@@ -6,8 +6,8 @@
 //
 // Why verification has to happen on the backend: a proof "looking successful" in the
 // frontend means nothing, because the frontend can be modified. What counts is World's
-// server saying yes, and that response is what will later become the EIP-712 content
-// AttesterGate signs.
+// server saying yes, and only then does /api/attest (below) sign the EIP-712 attestation
+// that WorldAttester verifies onchain.
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -34,10 +34,11 @@ const RP_ID = process.env.WORLD_RP_ID || "rp_ef35d4e2d4f1a031";
 const VERIFY_URL = `https://developer.worldcoin.org/api/v4/verify/${RP_ID}`;
 
 // hashSignal is imported from attest.mjs (shared with buildVerifyPayload's own use of it
-// for /api/attest); the comment there documents the shift and the 2026-09-07 measurement.
-// When this is wired to AttesterGate, the signal becomes the EIP-712 payload hash of the
-// widening in question — so one face scan can only loosen that one rule, and an
-// intercepted proof cannot be replayed anywhere else.
+// for /api/attest); the comment there documents the shift, the 2026-09-07 measurement,
+// and the two-branch domain rule it has to match. The signal is the digest of the
+// widening in question, and WorldAttester's EIP-712 struct binds to it — so one face scan
+// can only loosen that one rule, and an intercepted proof cannot be replayed anywhere
+// else.
 
 const json = (res, code, body) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -119,8 +120,10 @@ const server = createServer(async (req, res) => {
       const body = await r.json().catch(() => ({ error: "non-JSON response" }));
       console.log("← HTTP", r.status, JSON.stringify(body));
 
-      // nullifier_hash is the anonymous identity of "this person". AttesterGate will need
-      // to remember it, so it can tell whether the same person is reusing one face scan.
+      // nullifier_hash is the anonymous identity of "this person" for this action.
+      // Neither this harness nor WorldAttester records it — WorldAttester only checks a
+      // signature. Anything that wants to detect the same person reusing a scan across
+      // separate widenings would have to persist this itself; nothing does yet.
       return json(res, r.status, { http_status: r.status, ...body });
     }
 

@@ -79,6 +79,12 @@ const envCases = [
   ["WORLD_RP_SIGNER_PK missing", { ...fullEnv, WORLD_RP_SIGNER_PK: undefined }, true],
   ["WORLD_ATTESTER missing", { ...fullEnv, WORLD_ATTESTER: undefined }, true],
   ["WORLD_ACTION missing", { ...fullEnv, WORLD_ACTION: undefined }, true],
+  // fix round 4 (I3): a WORLD_ATTESTER that is present but not a real address. buf() in
+  // attest.mjs truncates malformed hex rather than throwing, so without this check a
+  // too-short or non-hex value would silently mis-encode the domain separator instead of
+  // failing loudly here.
+  ["WORLD_ATTESTER too short", { ...fullEnv, WORLD_ATTESTER: "0x1234" }, true],
+  ["WORLD_ATTESTER not hex", { ...fullEnv, WORLD_ATTESTER: "nope" }, true],
 ];
 
 for (const [label, env, wantError] of envCases) {

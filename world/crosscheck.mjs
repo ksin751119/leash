@@ -69,9 +69,15 @@ for (const [digest, deadline] of cases) {
 // with @noble's [recovery ‖ r ‖ s] mistakenly packed as r ‖ s ‖ v is still exactly 73
 // bytes, so a length check cannot see the bug at all. Only ecrecover can.
 if (process.env.SIGNER_PK) {
+  // Deliberately NOT cases[3][1] (1800000900 = 2027-01-15): that deadline is fine for the
+  // hash-agreement cases above, which must stay deterministic, but `verify` below checks
+  // `block.timestamp > deadline` and would start failing on that date for a reason that
+  // has nothing to do with the encoding — a time bomb. A signature check only needs "in
+  // the future right now", so compute it fresh instead.
+  const deadline = Math.floor(Date.now() / 1000) + 900;
   const { attestation } = signAttestation({
     digest: cases[3][0],
-    deadline: cases[3][1],
+    deadline,
     chainId: CHAIN_ID,
     verifyingContract: ATTESTER,
     privKeyHex: process.env.SIGNER_PK,

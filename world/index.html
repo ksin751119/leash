@@ -98,11 +98,16 @@
   // — a second verify call against an already-consumed proof does not add safety, it
   // burns the one shot this scan bought. So the signal alone decides the path before any
   // network call is made.
-  async function handleVerify(proof) {
+  // `signal` is passed in rather than re-read from the input here, so IDKit.init's
+  // `signal` (below) and this function's use of it are guaranteed to be the same
+  // trimmed string — trimmed once, at the one place a scan starts, not separately in
+  // each consumer. A trailing newline or space (a live risk: Step 6 of the attester plan
+  // has the operator paste $DIGEST out of a shell) would otherwise bind IDKit's proof to
+  // the untrimmed signal while the server hashes the trimmed one, silently diverging the
+  // binding C1 depends on — or IDKit throws first.
+  async function handleVerify(proof, signal) {
     $("out").hidden = false;
     show($("proof"), JSON.stringify(proof, null, 2));
-
-    const signal = $("signal").value;
 
     if (isDigest(signal)) {
       show($("pathBadge"), "/api/attest — attestation path", "badge attest");
@@ -112,7 +117,7 @@
       const res = await fetch("/api/attest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ digest: signal.trim(), proof }),
+        body: JSON.stringify({ digest: signal, proof }),
       });
       const body = await res.json();
       if (res.ok) {
@@ -145,12 +150,16 @@
   }
 
   $("go").addEventListener("click", () => {
+    // Trimmed once, here, and threaded into both IDKit.init's `signal` and
+    // handleVerify — see handleVerify's comment for why trimming separately in each
+    // consumer is exactly the bug this avoids.
+    const signal = $("signal").value.trim();
     IDKit.init({
       app_id: APP_ID,
       action: ACTION,
-      signal: $("signal").value,
+      signal,
       verification_level: $("level").value,
-      handleVerify,
+      handleVerify: (proof) => handleVerify(proof, signal),
       onSuccess: () => show($("result"), $("result").textContent + "\n\n✅ World App accepted it too."),
     });
     IDKit.open();

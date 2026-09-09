@@ -112,7 +112,9 @@ Baselines to check against — one per branch:
 
 **The nullifier is deterministic.** The same person plus the same action gives the same
 `nullifier_hash`, identical across attempts (measured twice, `0x04a2cce3…` both times).
-That is the anonymous identity `AttesterGate` records.
+That is the anonymous identity a replay-protection layer would need to persist — neither
+this harness nor `WorldAttester` records it today; `WorldAttester` only checks a
+signature.
 
 **A 500 from this backend surfaces in World App as "Verification Declined."** It looks like
 World rejecting you; it is your own server crashing. The phone can show success while the
@@ -133,12 +135,14 @@ cryptographic credential type.
 
 ---
 
-## The one thing to change when wiring `AttesterGate`
+## What's still missing: nullifier-based replay detection
 
-Right now `signal` is a test string. In production it becomes **the EIP-712 payload hash of
-the widening in question** — so one face scan can only loosen that one rule, and an
-intercepted proof cannot be replayed anywhere else. The `nullifier_hash` in the response is
-that person's anonymous identity, and `AttesterGate` has to remember it to block reuse.
+Everything under "the Signal field is also the switch," above, is real today: a digest
+signal routes to `/api/attest`, which signs an EIP-712 attestation `WorldAttester` verifies
+onchain, so one face scan can only loosen the one rule its digest names. What isn't built:
+nothing here persists `nullifier_hash`, so nothing can yet distinguish "the same person
+reusing a scan across two separate widenings" from "two different people" (see
+`nullifier_hash is deterministic`, above).
 
 The full account, with every suggested fix, is in
 [`../docs/world-feedback.md`](../docs/world-feedback.md) — the feedback document the prize

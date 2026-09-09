@@ -182,9 +182,21 @@ export function buildVerifyPayload({ digest, proof, action }) {
 /// a missing environment variable. Returning `null` here is what lets the caller use the
 /// fallback-free `process.env.WORLD_ACTION` (never the module-level `ACTION` constant)
 /// once this passes.
+///
+/// `WORLD_ATTESTER`'s shape is checked too, not just its presence, because `buf()` (this
+/// file's `Buffer.from(hex, "hex")` helper, used in `domainSeparator`) truncates a
+/// malformed hex string rather than throwing. A value that is the right shape but the
+/// wrong contract still passes this check — that failure mode is deploy-tracking, not
+/// something a format check can catch — but a value that is *not even a 20-byte address*
+/// (too short, mixed in non-hex characters, a copy-paste of the wrong env var) would
+/// otherwise silently mis-encode the EIP-712 domain separator and produce a `signal_hash`-
+/// shaped wrong answer with no error anywhere.
 export function checkAttestEnv(env) {
   if (!env.WORLD_RP_SIGNER_PK) return "WORLD_RP_SIGNER_PK not set";
   if (!env.WORLD_ATTESTER) return "WORLD_ATTESTER not set";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(env.WORLD_ATTESTER)) {
+    return `WORLD_ATTESTER is not a 20-byte address (0x + 40 hex chars): ${env.WORLD_ATTESTER}`;
+  }
   if (!env.WORLD_ACTION) {
     return (
       'WORLD_ACTION not set: the built-in default ("expand-policy") was already consumed ' +

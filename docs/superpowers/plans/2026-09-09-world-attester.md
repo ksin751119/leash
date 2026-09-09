@@ -1066,9 +1066,17 @@ export function buildVerifyPayload({ digest, proof, action }) {
 /// a missing environment variable. Returning `null` here is what lets the caller use the
 /// fallback-free `process.env.WORLD_ACTION` (never the module-level `ACTION` constant)
 /// once this passes.
+///
+/// `WORLD_ATTESTER`'s shape is checked too, not just its presence, because `buf()` (this
+/// file's `Buffer.from(hex, "hex")` helper, used in `domainSeparator`) truncates a
+/// malformed hex string rather than throwing. A too-short or non-hex value would
+/// otherwise silently mis-encode the EIP-712 domain separator with no error anywhere.
 export function checkAttestEnv(env) {
   if (!env.WORLD_RP_SIGNER_PK) return "WORLD_RP_SIGNER_PK not set";
   if (!env.WORLD_ATTESTER) return "WORLD_ATTESTER not set";
+  if (!/^0x[0-9a-fA-F]{40}$/.test(env.WORLD_ATTESTER)) {
+    return `WORLD_ATTESTER is not a 20-byte address (0x + 40 hex chars): ${env.WORLD_ATTESTER}`;
+  }
   if (!env.WORLD_ACTION) {
     return (
       'WORLD_ACTION not set: the built-in default ("expand-policy") was already consumed ' +
@@ -1157,9 +1165,14 @@ for (const [digest, deadline] of cases) {
 // with @noble's [recovery ‖ r ‖ s] mistakenly packed as r ‖ s ‖ v is still exactly 73
 // bytes, so a length check cannot see the bug at all. Only ecrecover can.
 if (process.env.SIGNER_PK) {
+  // Deliberately NOT cases[3][1] (1800000900 = 2027-01-15): fine for the hash-agreement
+  // cases above, which must stay deterministic, but `verify` below checks
+  // `block.timestamp > deadline` and would start failing on that date for a reason
+  // unrelated to the encoding — a time bomb. Compute a fresh near-future deadline instead.
+  const deadline = Math.floor(Date.now() / 1000) + 900;
   const { attestation } = signAttestation({
     digest: cases[3][0],
-    deadline: cases[3][1],
+    deadline,
     chainId: CHAIN_ID,
     verifyingContract: ATTESTER,
     privKeyHex: process.env.SIGNER_PK,
@@ -1335,6 +1348,10 @@ const envCases = [
   ["WORLD_RP_SIGNER_PK missing", { ...fullEnv, WORLD_RP_SIGNER_PK: undefined }, true],
   ["WORLD_ATTESTER missing", { ...fullEnv, WORLD_ATTESTER: undefined }, true],
   ["WORLD_ACTION missing", { ...fullEnv, WORLD_ACTION: undefined }, true],
+  // fix round 4 (I3): present but not a real address — buf() truncates malformed hex
+  // rather than throwing, so this has to be checked explicitly or it fails silently.
+  ["WORLD_ATTESTER too short", { ...fullEnv, WORLD_ATTESTER: "0x1234" }, true],
+  ["WORLD_ATTESTER not hex", { ...fullEnv, WORLD_ATTESTER: "nope" }, true],
 ];
 for (const [label, env, wantError] of envCases) {
   const err = checkAttestEnv(env);
