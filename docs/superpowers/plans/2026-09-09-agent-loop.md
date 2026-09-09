@@ -1365,6 +1365,34 @@ test("a wrong-length hash is rejected", () => {
   assert.ok(result.error, "a value of the wrong length must be rejected");
 });
 
+// A scheme-less RPC URL is a real key leak, not tidying: send.mjs's redactUrls matches
+// /https?:\/\/\S+/, so it catches "https://host/KEY" but not a bare "host/KEY" - and an RPC
+// URL commonly carries an API key in its path. Requiring the scheme closes the hole at the
+// source. The custom hint (validateEnvVar's fifth argument) must reach the caller, so
+// someone who pastes a scheme-less URL learns why it was refused, not just that it was -
+// and the rejected value itself must NOT be echoed back (the sixth argument, showValue:
+// false), or the very error explaining the leak risk would leak the key.
+test("a scheme-less RPC URL is rejected, explains why, and does not echo the key back", () => {
+  const hint = "A scheme-less URL cannot be safely redacted if it ever reaches an error message or log line, and an RPC URL commonly carries an API key in its path.";
+  const result = validateEnvVar(
+    "SEPOLIA_RPC",
+    "eth-sepolia.g.example.com/v2/SUPERSECRETKEY123",
+    /^https:\/\//,
+    "an https:// RPC URL",
+    hint,
+    false,
+  );
+  assert.ok(result.error, "a scheme-less URL must be rejected");
+  assert.match(result.error, /redacted/, "the error must explain the redaction risk, not just refuse silently");
+  assert.ok(!result.error.includes("SUPERSECRETKEY123"), "the rejected value must not be echoed into its own rejection message");
+});
+
+test("an https:// RPC URL is accepted", () => {
+  const result = validateEnvVar("SEPOLIA_RPC", "https://eth-sepolia.example.com/v2/KEY", /^https:\/\//, "an https:// RPC URL");
+  assert.equal(result.error, undefined);
+  assert.equal(result.value, "https://eth-sepolia.example.com/v2/KEY");
+});
+
 // A non-string id defeats both C1 guards: validateIntents' `seen` Set and advance()'s
 // `queued` Set key on the raw id (SameValueZero), while the record store keys on its string
 // coercion. [{id: 1}, {id: "1"}] would otherwise pass duplicate-checking here (1 !== "1" to
@@ -1503,14 +1531,26 @@ export function validateIntents(intents) {
 // trailing whitespace) and then checks shape, so a genuinely malformed value (surrounding
 // quotes, wrong length) is refused by name. Returns the trimmed value or an error string;
 // never exits itself, so it is testable without a process to kill.
-export function validateEnvVar(name, rawValue, pattern, label) {
+export function validateEnvVar(
+  name,
+  rawValue,
+  pattern,
+  label,
+  hint = "Check for stray quotes or a trailing CR from .env extraction.",
+  showValue = true,
+) {
   if (!rawValue) {
     return { error: `${name} is not set. Extract single variables; never source .env wholesale.` };
   }
   const trimmed = rawValue.trim();
   if (pattern && !pattern.test(trimmed)) {
+    // showValue is false for a value that can carry a secret (SEPOLIA_RPC): the point of
+    // this whole check is that a scheme-less RPC URL cannot be safely redacted, so echoing
+    // it back into the very error explaining that would defeat the purpose - even though
+    // this only reaches the operator's own terminal, not an HTTP response.
+    const got = showValue ? ` (got ${JSON.stringify(rawValue)})` : "";
     return {
-      error: `${name} is not shaped like ${label} (got ${JSON.stringify(rawValue)}). Check for stray quotes or a trailing CR from .env extraction.`,
+      error: `${name} is not shaped like ${label}${got}. ${hint}`,
     };
   }
   return { value: trimmed };
@@ -1754,14 +1794,30 @@ const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const envChecks = [
     ["AGENT_PK", null, null],
-    ["SEPOLIA_RPC", RPC_RE, "an https:// RPC URL"],
+    // A scheme-less RPC URL is a real key leak, not tidying: redactUrls matches
+    // /https?:\/\/\S+/, so it catches "https://host/KEY" but not "host/KEY" - and
+    // send.mjs's err.cause/details/metaMessages surfacing (T4 Minor 2) means an RPC
+    // failure's error text, which commonly repeats the request URL, can carry the API key
+    // an RPC URL's path commonly holds straight into lastAction.error, the console, and the
+    // JSON response. Requiring the scheme closes the hole at the source, rather than trying
+    // to widen the redaction regex to guess at bare hostnames - that direction ends in
+    // over-redacting ordinary text.
+    [
+      "SEPOLIA_RPC",
+      RPC_RE,
+      "an https:// RPC URL",
+      "A scheme-less URL cannot be safely redacted if it ever reaches an error message or log line, and an RPC URL commonly carries an API key in its path.",
+      false, // showValue: never echo the value being rejected for exactly that reason
+    ],
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
   ];
   const envValues = {};
-  for (const [name, pattern, label] of envChecks) {
-    const result = validateEnvVar(name, process.env[name], pattern, label);
+  for (const [name, pattern, label, hint, showValue] of envChecks) {
+    // hint/showValue are undefined for entries with fewer elements, which is exactly when
+    // validateEnvVar's own default parameters should apply.
+    const result = validateEnvVar(name, process.env[name], pattern, label, hint, showValue);
     if (result.error) {
       console.error(result.error);
       process.exit(1);
@@ -1826,19 +1882,19 @@ if (isMain) {
 - [ ] **Step 5: Run the tests and watch them pass**
 
 Run: `cd agent && node --test loop.test.mjs`
-Expected: PASS, 26 tests.
+Expected: PASS, 28 tests.
 
 - [ ] **Step 6: Run every check together**
 
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass and `all 13 codes agree`. The count is **70 tests across five
-files** — reason 4, decide 17, subgraph 14, send 9, loop 26 (reason and subgraph grew in
-their fix rounds; loop grew 7→10→20→26 fixing the timeout duplicate-payment path, then the
-final review's C1/I2/I7 wave, then the re-review's non-string/`__proto__` id and `routePath`
-tests; decide grew 16→17 for I5's `will-pass` explain; subgraph grew 12→14 for I3's
-`remaining`/`node`). If your
+Expected: all suites pass and `all 13 codes agree`. The count is **72 tests across five
+files** — reason 4, decide 17, subgraph 14, send 9, loop 28 (reason and subgraph grew in
+their fix rounds; loop grew 7→10→20→26→28 fixing the timeout duplicate-payment path, then
+the final review's C1/I2/I7 wave, then the re-review's non-string/`__proto__` id and
+`routePath` tests, then the SEPOLIA_RPC key-leak fix; decide grew 16→17 for I5's `will-pass`
+explain; subgraph grew 12→14 for I3's `remaining`/`node`). If your
 total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.

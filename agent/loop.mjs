@@ -86,14 +86,20 @@ export function validateEnvVar(
   pattern,
   label,
   hint = "Check for stray quotes or a trailing CR from .env extraction.",
+  showValue = true,
 ) {
   if (!rawValue) {
     return { error: `${name} is not set. Extract single variables; never source .env wholesale.` };
   }
   const trimmed = rawValue.trim();
   if (pattern && !pattern.test(trimmed)) {
+    // showValue is false for a value that can carry a secret (SEPOLIA_RPC): the point of
+    // this whole check is that a scheme-less RPC URL cannot be safely redacted, so echoing
+    // it back into the very error explaining that would defeat the purpose - even though
+    // this only reaches the operator's own terminal, not an HTTP response.
+    const got = showValue ? ` (got ${JSON.stringify(rawValue)})` : "";
     return {
-      error: `${name} is not shaped like ${label} (got ${JSON.stringify(rawValue)}). ${hint}`,
+      error: `${name} is not shaped like ${label}${got}. ${hint}`,
     };
   }
   return { value: trimmed };
@@ -350,16 +356,17 @@ if (isMain) {
       RPC_RE,
       "an https:// RPC URL",
       "A scheme-less URL cannot be safely redacted if it ever reaches an error message or log line, and an RPC URL commonly carries an API key in its path.",
+      false, // showValue: never echo the value being rejected for exactly that reason
     ],
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
   ];
   const envValues = {};
-  for (const [name, pattern, label, hint] of envChecks) {
-    // hint is undefined for entries with no fourth element, which is exactly when
-    // validateEnvVar's own default parameter should apply.
-    const result = validateEnvVar(name, process.env[name], pattern, label, hint);
+  for (const [name, pattern, label, hint, showValue] of envChecks) {
+    // hint/showValue are undefined for entries with fewer elements, which is exactly when
+    // validateEnvVar's own default parameters should apply.
+    const result = validateEnvVar(name, process.env[name], pattern, label, hint, showValue);
     if (result.error) {
       console.error(result.error);
       process.exit(1);

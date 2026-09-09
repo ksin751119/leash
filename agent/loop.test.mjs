@@ -188,6 +188,34 @@ test("a wrong-length hash is rejected", () => {
   assert.ok(result.error, "a value of the wrong length must be rejected");
 });
 
+// A scheme-less RPC URL is a real key leak, not tidying: send.mjs's redactUrls matches
+// /https?:\/\/\S+/, so it catches "https://host/KEY" but not a bare "host/KEY" - and an RPC
+// URL commonly carries an API key in its path. Requiring the scheme closes the hole at the
+// source. The custom hint (validateEnvVar's fifth argument) must reach the caller, so
+// someone who pastes a scheme-less URL learns why it was refused, not just that it was -
+// and the rejected value itself must NOT be echoed back (the sixth argument, showValue:
+// false), or the very error explaining the leak risk would leak the key.
+test("a scheme-less RPC URL is rejected, explains why, and does not echo the key back", () => {
+  const hint = "A scheme-less URL cannot be safely redacted if it ever reaches an error message or log line, and an RPC URL commonly carries an API key in its path.";
+  const result = validateEnvVar(
+    "SEPOLIA_RPC",
+    "eth-sepolia.g.example.com/v2/SUPERSECRETKEY123",
+    /^https:\/\//,
+    "an https:// RPC URL",
+    hint,
+    false,
+  );
+  assert.ok(result.error, "a scheme-less URL must be rejected");
+  assert.match(result.error, /redacted/, "the error must explain the redaction risk, not just refuse silently");
+  assert.ok(!result.error.includes("SUPERSECRETKEY123"), "the rejected value must not be echoed into its own rejection message");
+});
+
+test("an https:// RPC URL is accepted", () => {
+  const result = validateEnvVar("SEPOLIA_RPC", "https://eth-sepolia.example.com/v2/KEY", /^https:\/\//, "an https:// RPC URL");
+  assert.equal(result.error, undefined);
+  assert.equal(result.value, "https://eth-sepolia.example.com/v2/KEY");
+});
+
 // A non-string id defeats both C1 guards: validateIntents' `seen` Set and advance()'s
 // `queued` Set key on the raw id (SameValueZero), while the record store keys on its string
 // coercion. [{id: 1}, {id: "1"}] would otherwise pass duplicate-checking here (1 !== "1" to
