@@ -202,12 +202,17 @@ contract WorldAttesterTest is Test {
         assertTrue(_contains(att.describe(), "offchain"));
     }
 
-    /// The anchor for the JS cross-check in Task 4. If the encoding ever changes, this
-    /// constant is what says so.
-    function test_attestationHash_matches_a_recorded_value() public view {
-        bytes32 h = att.attestationHash(bytes32(0), 0);
-        assertEq(h, att.attestationHash(bytes32(0), 0)); // deterministic
-        assertTrue(h != bytes32(0));
+    /// Both inputs must reach the hash. If either did not, a signature would cover less
+    /// than it appears to — and the two tests above that swap a deadline or a digest would
+    /// be passing for the wrong reason.
+    ///
+    /// The encoding itself is anchored in Task 4 Step 5, by comparing against a
+    /// locally-deployed copy of this contract. Not by a constant pasted here: a constant
+    /// computed the same wrong way twice agrees with itself.
+    function test_attestationHash_depends_on_both_inputs() public view {
+        bytes32 base = att.attestationHash(digest, 1000);
+        assertTrue(att.attestationHash(digest, 1001) != base, "deadline must reach the hash");
+        assertTrue(att.attestationHash(keccak256("other"), 1000) != base, "digest must reach the hash");
     }
 
     function _slice(bytes memory b, uint256 len) private pure returns (bytes memory out) {
@@ -883,7 +888,9 @@ const u64be = (n) => {
   return b;
 };
 
-const u256 = (n) => word(buf(BigInt(n).toString(16).padStart(2, "0").replace(/^(.(?:..)*)$/, "0$1")));
+/// A uint256 as a 32-byte ABI word. `padStart(64, "0")` guarantees both an even number of
+/// hex characters and exactly 32 bytes, so no odd-length special case is needed.
+const u256 = (n) => Buffer.from(BigInt(n).toString(16).padStart(64, "0"), "hex");
 
 const DOMAIN_TYPEHASH = keccak(
   Buffer.from("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
@@ -931,40 +938,42 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
 //
 // Usage: WORLD_ATTESTER=0x… SEPOLIA_RPC=… node crosscheck.mjs
 
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { attestationHash, signAttestation } from "./attest.mjs";
 
 const RPC = process.env.SEPOLIA_RPC;
 const ATTESTER = process.env.WORLD_ATTESTER;
-const CHAIN_ID = 11155111;
 if (!RPC || !ATTESTER) {
   console.error("need SEPOLIA_RPC and WORLD_ATTESTER");
   process.exit(1);
 }
 
+/// Read the chain id from the RPC rather than hardcoding Sepolia's. The EIP-712 domain
+/// binds it, so a hardcoded value would make this script compare a Sepolia-domain hash
+/// against an anvil-domain one and always mismatch — and the local check in Task 4 Step 5
+/// is exactly where it runs against anvil first.
+async function rpc(method, params) {
+  const r = await fetch(RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(JSON.stringify(j.error));
+  return j.result;
+}
+const CHAIN_ID = Number(await rpc("eth_chainId", []));
+console.log(`chain id ${CHAIN_ID}, attester ${ATTESTER}`);
+
 // attestationHash(bytes32,uint64) — selector computed rather than pasted.
-import { keccak_256 } from "@noble/hashes/sha3.js";
 const selector =
   "0x" +
   Buffer.from(keccak_256(Buffer.from("attestationHash(bytes32,uint64)"))).toString("hex").slice(0, 8);
 
 async function onchain(digest, deadline) {
   const data =
-    selector +
-    digest.replace(/^0x/, "") +
-    BigInt(deadline).toString(16).padStart(64, "0");
-  const r = await fetch(RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_call",
-      params: [{ to: ATTESTER, data }, "latest"],
-    }),
-  });
-  const j = await r.json();
-  if (j.error) throw new Error(JSON.stringify(j.error));
-  return j.result;
+    selector + digest.replace(/^0x/, "") + BigInt(deadline).toString(16).padStart(64, "0");
+  return rpc("eth_call", [{ to: ATTESTER, data }, "latest"]);
 }
 
 const cases = [
@@ -1094,19 +1103,15 @@ forge create src/WorldAttester.sol:WorldAttester \
 Take the deployed address, then — note anvil's chain id is 31337, not Sepolia's:
 
 ```bash
-cd world
-SEPOLIA_RPC=http://127.0.0.1:8545 WORLD_ATTESTER=<address> \
-  node -e "
-import('./attest.mjs').then(async (m) => {
-  const a = process.env.WORLD_ATTESTER;
-  const h = m.attestationHash({digest:'0x'+'00'.repeat(32), deadline:0, chainId:31337, verifyingContract:a});
-  console.log('js   ', h);
-});"
+cd world && SEPOLIA_RPC=http://127.0.0.1:8545 WORLD_ATTESTER=<address> node crosscheck.mjs
 ```
 
-Compare against `cast call <address> 'attestationHash(bytes32,uint64)(bytes32)' 0x0000...0000 0 --rpc-url http://127.0.0.1:8545`.
+Expected: `chain id 31337`, four `ok` lines, and `all cross-checks agree`. The script reads
+the chain id from the RPC, so the same script is what runs against Sepolia in Task 5 — no
+separate local variant to drift out of sync.
 
-Expected: identical. If not, the fault is one of the two ⚠️ items in `attest.mjs`'s header — check the 32-byte padding of `deadline` first.
+If it mismatches, the fault is one of the two ⚠️ items in `attest.mjs`'s header. Check the
+32-byte padding of `deadline` first.
 
 Then kill anvil: `kill %1`
 
