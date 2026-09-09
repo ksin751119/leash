@@ -1,4 +1,4 @@
-// Guards two properties of /api/attest's trust boundary, both pure functions of
+// Guards three properties of /api/attest's trust boundary, all pure functions of
 // attest.mjs's own code so they can be checked without starting the server, touching the
 // network, or deploying anything:
 //
@@ -8,12 +8,26 @@
 //      module-level ACTION default (a consumed action, see server.mjs) can never reach
 //      World from /api/attest silently.
 //
-// Kept in one file rather than split, since both are "does /api/attest trust something
-// it must not" checks over the same two functions' worth of code, and a single `node
-// check-payload-binding.mjs` is the whole story for this endpoint's config/trust boundary.
+//   3. (fix round 3) hashSignal must hash a 0x-prefixed hex string as its DECODED BYTES,
+//      not as a UTF-8 string — mirroring IDKit's own hashToField, which is not our
+//      choice to make (see hashSignal's docstring in attest.mjs). Getting this backwards
+//      is the highest-stakes bug this file guards: it means /api/attest can never
+//      succeed on the digest path, and every failed attempt spends the action's single
+//      face scan. Unlike the round 1/2 checks, this one's expected values are computed
+//      independently of hashSignal — inline from raw bytes, or hardcoded from a value
+//      measured directly against IDKit's bundle / the world/README.md baseline — because
+//      a check that calls hashSignal to compute its own expected value would agree with
+//      hashSignal no matter how wrong it is. That is exactly how this bug shipped past
+//      round 1's check in the first place.
+//
+// Kept in one file rather than split, since all three are "does /api/attest trust or
+// compute something it must not" checks over attest.mjs's exports, and a single `node
+// check-payload-binding.mjs` is the whole story for this endpoint's config/trust/hashing
+// boundary.
 //
 // Usage: node check-payload-binding.mjs
 
+import { keccak_256 } from "@noble/hashes/sha3.js";
 import { buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
 
 const digest = "0x" + "42".repeat(32);
@@ -80,6 +94,48 @@ const actionErr = checkAttestEnv({ ...fullEnv, WORLD_ACTION: undefined });
 const namesTheVar = typeof actionErr === "string" && actionErr.includes("WORLD_ACTION");
 console.log(`${namesTheVar ? "ok  " : "FAIL"}  the WORLD_ACTION error names the variable`);
 if (!namesTheVar) bad++;
+
+// --- hashSignal domain correctness (fix round 3) ---
+//
+// Every "want" below is computed WITHOUT calling hashSignal, so this cannot pass merely
+// by agreeing with itself the way the round-1 signal_hash check (necessarily) does when
+// pinning buildVerifyPayload's *sourcing* rather than hashSignal's own correctness.
+const toSignalHash = (bytes) => {
+  const h = BigInt("0x" + Buffer.from(keccak_256(bytes)).toString("hex")) >> 8n;
+  return "0x" + h.toString(16).padStart(64, "0");
+};
+
+const hashCases = [
+  [
+    "a zero digest is decoded as 32 raw bytes, not UTF-8",
+    "0x" + "00".repeat(32),
+    toSignalHash(Buffer.alloc(32)), // computed inline from raw bytes
+  ],
+  [
+    "a real digest is decoded as 32 raw bytes (measured against IDKit's own bundle)",
+    "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121",
+    "0x001387de0eeedc698d3e7d0be5def31c0ab49050cab7858a488ceac06df7fcf3", // hardcoded, measured
+  ],
+  [
+    "the empty string still takes the UTF-8 branch (world/README.md baseline)",
+    "",
+    "0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4", // hardcoded baseline
+  ],
+  [
+    "a plain (non-hex) string still takes the UTF-8 branch",
+    "widen:vendors.acme.eth:5000",
+    toSignalHash(Buffer.from("widen:vendors.acme.eth:5000", "utf8")), // computed inline
+  ],
+];
+
+for (const [label, signal, want] of hashCases) {
+  const got = hashSignal(signal);
+  const ok = got === want;
+  console.log(`${ok ? "ok  " : "FAIL"}  hashSignal: ${label}`);
+  console.log(`      want ${want}`);
+  console.log(`      got  ${got}`);
+  if (!ok) bad++;
+}
 
 console.log(bad === 0 ? "\nall checks agree" : `\n${bad} MISMATCH`);
 process.exit(bad === 0 ? 0 : 1);

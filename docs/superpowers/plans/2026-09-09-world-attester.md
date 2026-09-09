@@ -983,17 +983,28 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
 }
 
 /**
- * World ID's signal hash: keccak256(signal) shifted right by 8 bits.
- * The shift is because a proof has to land inside the field in the SNARK system, and
- * keccak's 256 bits would overflow it.
+ * World ID's signal hash: keccak256 of the signal's ENCODED BYTES, shifted right by 8
+ * bits. The shift is because a proof has to land inside the field in the SNARK system,
+ * and keccak's 256 bits would overflow it.
  *
  * @dev **Measured on 2026-09-07: the proof IDKit returns contains no `signal_hash`.**
  *      So this is not a fallback path, it is the only path — the backend has to compute
  *      it. Note you cannot use node's built-in `crypto.createHash("sha3-256")` — SHA3 and
  *      keccak256 pad differently, produce different values, and World will refuse it.
+ *
+ * @dev 🔴 **"encoded bytes" is two branches, not one, and this is not our choice to
+ *      make** — it mirrors `hashToField` in `@worldcoin/idkit-standalone@2.2.5`: a
+ *      `0x`-prefixed hex string (a digest, always) is **decoded to raw bytes** before
+ *      hashing; anything else is **UTF-8-encoded** first. Hashing a hex string's
+ *      *characters* as UTF-8 instead — the obvious one-branch implementation — produces
+ *      a `signal_hash` that can never match the one baked into the proof: World refuses
+ *      `/api/attest` on every call on the digest path, and each failed attempt spends
+ *      the action's single face scan for nothing. See `world/README.md` for the
+ *      per-branch known-answer baselines this must satisfy.
  */
 export function hashSignal(signal) {
-  const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
+  const bytes = /^0x[0-9a-fA-F]*$/.test(signal) ? buf(signal) : Buffer.from(signal, "utf8");
+  const h = BigInt("0x" + Buffer.from(keccak_256(bytes)).toString("hex")) >> 8n;
   return "0x" + h.toString(16).padStart(64, "0");
 }
 
@@ -1340,6 +1351,59 @@ if (!namesTheVar) bad++;
 Mutation-check it: temporarily remove the `if (!env.WORLD_ACTION) { ... }` block from
 `checkAttestEnv`, run `node check-payload-binding.mjs`, confirm the `WORLD_ACTION missing`
 and `names the variable` lines print `FAIL` with exit code 1, then revert.
+
+- [ ] **Step 4d: Pin `hashSignal`'s two-branch domain against IDKit, not against itself
+  (final whole-branch review)**
+
+The highest-stakes defect found in this plan: `hashSignal` originally UTF-8-encoded
+whatever string it was given, including a `0x`-prefixed digest. IDKit's own
+`hashToField` (`@worldcoin/idkit-standalone@2.2.5`) decodes a `0x`-prefixed hex string to
+raw bytes instead — so the two never agreed on the digest path, `/api/attest` could never
+succeed, and every failed attempt spent the action's single face scan. Nothing in Step 4b
+or 4c could catch this: they assert properties of `buildVerifyPayload` and
+`checkAttestEnv` against `hashSignal`'s own output, which agrees with itself no matter
+how wrong the hashing domain is. Extend `check-payload-binding.mjs` with assertions whose
+expected values are computed *without* calling `hashSignal`:
+
+```js
+import { keccak_256 } from "@noble/hashes/sha3.js";
+// ... existing imports and checks above, unchanged ...
+
+const toSignalHash = (bytes) => {
+  const h = BigInt("0x" + Buffer.from(keccak_256(bytes)).toString("hex")) >> 8n;
+  return "0x" + h.toString(16).padStart(64, "0");
+};
+
+const hashCases = [
+  ["a zero digest is decoded as 32 raw bytes, not UTF-8", "0x" + "00".repeat(32), toSignalHash(Buffer.alloc(32))],
+  [
+    "a real digest is decoded as 32 raw bytes (measured against IDKit's own bundle)",
+    "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121",
+    "0x001387de0eeedc698d3e7d0be5def31c0ab49050cab7858a488ceac06df7fcf3", // hardcoded, measured
+  ],
+  [
+    "the empty string still takes the UTF-8 branch (world/README.md baseline)",
+    "",
+    "0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4", // hardcoded baseline
+  ],
+  [
+    "a plain (non-hex) string still takes the UTF-8 branch",
+    "widen:vendors.acme.eth:5000",
+    toSignalHash(Buffer.from("widen:vendors.acme.eth:5000", "utf8")),
+  ],
+];
+for (const [label, signal, want] of hashCases) {
+  const ok = hashSignal(signal) === want;
+  console.log(`${ok ? "ok  " : "FAIL"}  hashSignal: ${label}`);
+  if (!ok) bad++;
+}
+```
+
+Mutation-check it: temporarily revert `hashSignal` to the always-UTF-8 form
+(`keccak_256(signal)` on the raw string, no branch), run `node check-payload-binding.mjs`,
+confirm the two digest cases print `FAIL` while the two string cases stay `ok`, then
+revert. This is the one mutation in this plan a reader must not skip — it is the only
+thing standing between this plan and rebuilding the exact bug it just fixed.
 
 - [ ] **Step 5: Verify the JS hash against the contract, locally first**
 

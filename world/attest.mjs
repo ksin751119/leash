@@ -76,9 +76,9 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
 }
 
 /**
- * World ID's signal hash: keccak256(signal) shifted right by 8 bits.
- * The shift is because a proof has to land inside the field in the SNARK system, and
- * keccak's 256 bits would overflow it.
+ * World ID's signal hash: keccak256 of the signal's ENCODED BYTES, shifted right by 8
+ * bits. The shift is because a proof has to land inside the field in the SNARK system,
+ * and keccak's 256 bits would overflow it.
  *
  * @dev **Measured on 2026-09-07: the proof IDKit returns contains no `signal_hash`.**
  *      So this is not a fallback path, it is the only path — the backend has to compute
@@ -88,9 +88,39 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
  *
  *      Note you cannot use node's built-in `crypto.createHash("sha3-256")` — SHA3 and
  *      keccak256 pad differently, produce different values, and World will refuse it.
+ *
+ * @dev 🔴 **"encoded bytes" is two branches, not one, and this is not our choice to
+ *      make** — it mirrors `hashToField` in `@worldcoin/idkit-standalone@2.2.5`, the
+ *      bundle the page actually loads:
+ *      ```js
+ *      function hashToField(input) {
+ *        if (Bytes_exports.validate(input) || Hex_exports.validate(input)) return hashEncodedBytes(input);
+ *        return hashString(input);
+ *      }
+ *      function hashString(input) { return hashEncodedBytes(Buffer.from(input)); }
+ *      ```
+ *      A `0x`-prefixed hex string (digests, always) is **decoded to raw bytes** before
+ *      hashing; anything else is **UTF-8-encoded** first. Getting this wrong — hashing
+ *      the 66-character digest *string* as UTF-8, as an earlier version of this function
+ *      did — produces a `signal_hash` that can never match the one baked into the proof.
+ *      World then refuses `/api/attest` on every call on the digest path, silently
+ *      spending the action's one verification for nothing. Measured, for
+ *      `digest = 0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121`:
+ *        wrong (utf8 of the 66-char string): 0x007cd56968e2972a1ea1a04ec5e7232b5e7e482109e6dcb24532d904171f6260
+ *        right (keccak of 32 raw bytes):     0x001387de0eeedc698d3e7d0be5def31c0ab49050cab7858a488ceac06df7fcf3
+ *
+ *      The regex below is deliberately *stricter* than IDKit's `Hex.validate`, which
+ *      (non-strict by default) would also accept malformed hex like `0xnothex`. For every
+ *      real digest the two agree; being stricter here only ever fails safe.
+ *
+ *      The string branch must not move: `world/README.md` documents
+ *      `hashSignal("") == 0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`,
+ *      and `/api/verify`'s plain-string signals (e.g. `"widen:vendors.acme.eth:5000"`,
+ *      used on 2026-09-07's end-to-end run) rely on it.
  */
 export function hashSignal(signal) {
-  const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
+  const bytes = /^0x[0-9a-fA-F]*$/.test(signal) ? buf(signal) : Buffer.from(signal, "utf8");
+  const h = BigInt("0x" + Buffer.from(keccak_256(bytes)).toString("hex")) >> 8n;
   return "0x" + h.toString(16).padStart(64, "0");
 }
 

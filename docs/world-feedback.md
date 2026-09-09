@@ -688,6 +688,52 @@ scoped to the action, not to the person.** Creating a fresh action resets it. Th
 we will do before recording our demo. It works, but it means the nullifier changes, so
 anything the integration persisted against the old nullifier is orphaned.
 
+### 7.7 `signal_hash` has two hashing branches depending on the signal's shape, and §7.3 only documented one
+
+*Logged 2026-09-09, found while extending our own backend past the string signal we used
+for the 2026-09-07 end-to-end run.*
+
+§7.3 above states the derivation as `keccak256(signal) >> 8`, as if `signal` were hashed
+the same way regardless of its shape. It is not, and the docs never say so. Reading
+`@worldcoin/idkit-standalone@2.2.5`'s own bundle (the version the sandbox page actually
+loads), the real rule is:
+
+```js
+function hashToField(input) {
+  if (Bytes_exports.validate(input) || Hex_exports.validate(input)) return hashEncodedBytes(input);
+  return hashString(input);
+}
+function hashString(input) { return hashEncodedBytes(Buffer.from(input)); }
+```
+
+A `0x`-prefixed hex string is hashed as its **decoded bytes**; every other string is
+**UTF-8-encoded** first. Our first signal was a plain string
+(`"widen:vendors.acme.eth:5000"`), which takes the UTF-8 branch either way and cannot
+reveal the second one exists. The moment we switched to a 32-byte digest as the
+signal — the shape our actual security property needs, since binding the proof to a
+specific onchain digest is the whole point of the signal — the one-branch
+implementation silently produced a different hash on every call:
+
+```
+digest = 0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121
+wrong (utf8 of the 66-char string): 0x007cd56968e2972a1ea1a04ec5e7232b5e7e482109e6dcb24532d904171f6260
+right (keccak of 32 raw bytes):     0x001387de0eeedc698d3e7d0be5def31c0ab49050cab7858a488ceac06df7fcf3
+```
+
+**Why this is worse than the original §7.3 finding, not just an addendum to it:** a
+mismatched `signal_hash` is not a slow failure or a confusing error message — it is
+`/api/attest`'s *entire* success condition. World checks `signal_hash` as a public input
+against the proof, so every call fails the same way, and every failed call is a wasted
+attempt against `max_verifications: 1` (§6.3). A relying party who chooses a digest or
+any other `0x`-prefixed value as their signal — which is the natural choice for any
+integration binding a proof to onchain state, not only ours — hits this on the very first
+real call, with no indication that hashing, rather than the proof itself, is the cause.
+
+**Suggested fix:** state the two-branch rule explicitly next to the derivation in §7.3's
+location in the real docs, with a known-answer test for *each* branch — a plain string and
+a `0x`-prefixed one — not only the empty-string baseline already given. The empty string
+happens to take the UTF-8 branch, so on its own it documents only half the rule.
+
 ---
 
 ## Summary
@@ -731,7 +777,9 @@ the pattern the credential gate needs and does not have.
    works** — `nullifier_hash` must be renamed and two fields must be dropped. (§7.2)
 5. **`signal_hash` must be computed by the relying party, undocumented**, and the obvious
    implementation (`sha3-256`) is silently wrong. It also fails *late*: everything works
-   until you use a real signal. (§7.3)
+   until you use a real signal — and the derivation itself has a second, undocumented
+   branch that only a `0x`-prefixed signal (e.g. a digest) reveals: hex is hashed as
+   decoded bytes, everything else as UTF-8. (§7.3, §7.7)
 6. **A relying-party 500 is reported to the user as "Verification Declined"**, sending you
    to investigate World instead of your own stack trace — and the phone and the browser can
    disagree about whether the same verification succeeded. (§7.4)

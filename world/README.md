@@ -87,12 +87,28 @@ v2 never tells you to try v4.
 
 ### Two more measured conclusions
 
-**IDKit does not send `signal_hash`; the backend has to compute it.**
-`keccak256(signal) >> 8` (the shift keeps the value inside the SNARK's field).
+**IDKit does not send `signal_hash`; the backend has to compute it, and the rule has two
+branches, not one.** `keccak256(bytes) >> 8` (the shift keeps the value inside the SNARK's
+field) — but **which bytes** depends on the signal's shape, mirroring `hashToField` in
+`@worldcoin/idkit-standalone@2.2.5`: a `0x`-prefixed hex string (a digest, always) is
+**decoded to raw bytes** first; anything else is **UTF-8-encoded** first. Hashing a hex
+string's *characters* as UTF-8 instead of its decoded bytes — the obvious one-branch
+implementation — produces a `signal_hash` that can never match the one baked into the
+proof, so World refuses every call on that path and each failed attempt spends the
+action's single verification for nothing. This is silent the same way the missing
+`signal_hash` itself is: a plain-string signal (e.g. `"widen:vendors.acme.eth:5000"`, used
+in the 2026-09-07 end-to-end run below) takes the UTF-8 branch either way and never
+reveals the bug.
+
 **Do not use node's built-in `crypto.createHash("sha3-256")`** — SHA3 and keccak256 pad
-differently, produce different values, and World refuses the result. A baseline to check
-against: `signal_hash("")` must equal
-`0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`.
+differently, produce different values, and World refuses the result.
+
+Baselines to check against — one per branch:
+- UTF-8 branch: `signal_hash("")` must equal
+  `0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4`.
+- Hex/bytes branch: `signal_hash("0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121")`
+  must equal `0x001387de0eeedc698d3e7d0be5def31c0ab49050cab7858a488ceac06df7fcf3` — measured
+  directly against IDKit's own bundle, not derived from our own implementation.
 
 **The nullifier is deterministic.** The same person plus the same action gives the same
 `nullifier_hash`, identical across attempts (measured twice, `0x04a2cce3…` both times).
