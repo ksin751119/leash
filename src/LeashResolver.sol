@@ -7,8 +7,9 @@ import { IPolicyApprovals } from "./IPolicyApprovals.sol";
 /// @title LeashResolver — hangs a policy address under an ENS name
 /// @notice Each agent is an ENS name (`vendors.acme.eth`), and that name's resolver
 ///         record holds which policy the agent must satisfy. `LeashAccount` walks this
-///         resolution before every payment; if it does not resolve, that is reason code 3
-///         and no money moves.
+///         resolution before every agent-initiated payment; if it does not resolve, that is
+///         reason code 3 and no money moves. (The wallet's own key is not constrained by
+///         any of this — see the notes on `LeashAccount`.)
 ///
 /// @dev **Only ENSIP-10 `resolve(bytes,bytes)` is implemented.** That is not laziness, it
 ///      is what measurement showed: the minimal resolvers on ENSv2 Sepolia (the one

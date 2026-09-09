@@ -31,6 +31,8 @@ redeployed" below)
 EIP-7702, and its code then executes in the wallet's own storage — so "deployed" and
 "a wallet is using it" are two different facts.
 
+Four things checked onchain immediately after deployment:
+
 ```
 impl code size                              12,858 bytes
 ETH_REGISTRY()                              0xBDC85dD5…F0E2   ← matches the table above
@@ -122,8 +124,12 @@ Our own three-hop walk was correct throughout — it stops at hop two, returns
 a revocation, that same command still printed a policy address.
 
 **The fix: leave `leash.eth` without a resolver.** Resolution is then *forced* through our
-registry, with no side road. A revoked name now behaves identically to one that never
-existed, in both paths.
+registry, with no side road.
+
+The measurement above is of a name that was never issued. A *revoked* name should behave
+identically, because `revoke` clears `resolver` and `expiry` so `getResolver` returns the
+same `0x0` — and the fallback now fails on the parent, whatever the child. That is a
+derivation from the two facts, not a third measurement.
 
 The first deployment's addresses and transactions remain on chain (blocks
 11661370–11661383) and are no longer used.
@@ -180,9 +186,20 @@ hop3  resolve(dns, addr(node))              = 0x…88f2bff031bb4cf2beaa28d47ada5
 ```
 
 **Remove ENS and hop three has no answer, so no agent-initiated spend can pass (reason
-code 3).** To see it, point the first hop at `0x0` — that is
-`ETHRegistry.setSubregistry(leash.eth, 0x0)`, the heavy revocation lever — and run the
-same four commands.
+code 3).**
+
+To see that yourself, run the fork test — it does exactly this against a live fork of
+Sepolia, with no transaction and nothing to undo:
+
+```bash
+SEPOLIA_RPC=$R forge test --match-test test_removing_the_ens_subtree_stops_resolution -vv
+```
+
+It mocks hop one to `0x0` and asserts `resolvePolicy` returns `address(0)`.
+
+> The onchain equivalent is `ETHRegistry.setSubregistry(leash.eth, 0x0)` — the heavy
+> revocation lever. **It needs the ADMIN key and it halts every agent at once**, so it is
+> not part of the paste-and-run recipe above. Use the fork test.
 
 > ⚠️ **Do not call this "the only spending path".** EIP-7702 constrains only calls *to*
 > the delegated EOA; the wallet's private key can still sign `USDC.transfer` directly.
@@ -240,8 +257,8 @@ attestation** — a dead man's switch that costs nothing to arm. `MAX_DURATION` 
 
 ### Three things that got onchain evidence for the first time here
 
-**The evidence of a block is that money did not move, not that the transaction went
-red.** Step 6 **succeeded** (`status = 1`), yet USDC emitted no `Transfer`, the `WALLET`
+**The evidence of a policy violation is that money did not move, not that the
+transaction went red.** Step 6 **succeeded** (`status = 1`), yet USDC emitted no `Transfer`, the `WALLET`
 balance did not change, and `spentInCurrentPeriod` was never incremented. Decoding the
 `SpendBlocked` data:
 

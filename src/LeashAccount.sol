@@ -8,9 +8,10 @@ import { IPolicy, SpendContext } from "./IPolicy.sol";
 import { Reason } from "./Reason.sol";
 
 /// @title LeashAccount — the agent's only spending path
-/// @notice An EIP-7702 delegate implementation. Before any transfer, the delegated EOA
-///         must: authorise the agent → walk three ENS hops to a policy → check it against
-///         the approval list → pass the policy.
+/// @notice An EIP-7702 delegate implementation. Before any **agent-initiated** transfer,
+///         the delegated EOA must: authorise the agent → walk three ENS hops to a policy →
+///         check it against the approval list → pass the policy. (The wallet's own key is
+///         not constrained — see below.)
 ///
 /// @dev **Do not call it "the only spending path".** EIP-7702 constrains only calls *to*
 ///      that EOA; the WALLET private key can still sign `USDC.transfer` directly, and the
@@ -422,7 +423,7 @@ contract LeashAccount {
         // `cur.epoch` would misread the irrelevant noise of "epoch has been bumped before"
         // as a widening.
         // `_isTighterIgnoringEpoch` returns false for any old rule that is currently
-        // disabled ("it was already off, there is nothing stricter to be"), so the first
+        // disabled ("already off, nothing stricter it could become"), so the first
         // enable (or a re-enable) always lands in !tighterOrEqual and `LimitRaised` is
         // emitted alongside `TokenAllowed` — which is exactly right for "open a token with
         // no cap": both events belong.
@@ -514,7 +515,7 @@ contract LeashAccount {
         returns (bool)
     {
         if (old_.allowed && !new_.allowed) return true; // switching it off is always stricter
-        if (!old_.allowed) return false; // already off; there is nothing stricter to be
+        if (!old_.allowed) return false; // already off; nothing stricter it could become
         // `period` and `epoch` must not move: changing `period` changes the bucket and
         // zeroes the running total — so "lower the cap" would actually increase what can be
         // spent. Wiping the ledger goes only through setRule, which needs an attestation.
@@ -932,6 +933,13 @@ contract LeashAccount {
     ///      policy is broken, not "the policy said no"). **A policy that can burn all the
     ///      gas is a DoS switch**, so the cap is deliberate; a return length other than 32
     ///      fails closed just the same.
+    ///
+    ///      The `raw > type(uint8).max` clamp is load-bearing and **fails open without
+    ///      it**: a policy returning 256 truncates to 0, which is `Reason.OK`, and the
+    ///      transfer executes. A mutation sweep found exactly that — deleting the clamp
+    ///      left every test green — so it is now pinned by
+    ///      `test_policy_return_over_uint8_max_is_clamped_to_policy_failed`, which fails
+    ///      when the clamp is removed.
     function _askPolicy(address policy, SpendContext memory ctx) private returns (uint8) {
         (bool ok, bytes memory ret) =
             policy.call{ gas: POLICY_GAS }(abi.encodeCall(IPolicy.check, (ctx)));

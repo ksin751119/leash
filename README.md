@@ -22,9 +22,10 @@ particular payment makes sense*. A settings table cannot answer that.
 
 **Express the permission as code, and enforce it onchain.**
 
-Every agent is bound to a **policy contract**. Before any transfer, the wallet resolves
-that policy's address **through ENS**, checks it against a **human-approved list**, and
-asks it one question. If the answer is not `OK`, no money moves.
+Every agent is bound to a **policy contract**. Before any agent-initiated transfer, the
+wallet resolves that policy's address **through ENS**, checks it against a
+**human-approved list**, and asks it one question. If the answer is not `OK`, no money
+moves.
 
 The agent has no way around this, because the check happens inside its own execution
 path rather than beside it.
@@ -70,7 +71,7 @@ hop at `0x0` and the same walk returns nothing, which is exactly what stops a pa
 | Key | Holds | Can do | Deliberately cannot |
 |---|---|---|---|
 | **ADMIN** | `leash.eth`, ENS roles | Repoint policies, issue and revoke agent subnames | **Approve a new policy** — that needs an attestation, and the attester is `immutable` |
-| **WALLET** | The money; delegated to `LeashAccount` | Pay (every payment goes through the policy) | Touch ENS — its role bitmap is `0`, not by a check but because it never had one |
+| **WALLET** | The money; delegated to `LeashAccount` | Pay — every **agent-initiated** payment goes through the policy; the wallet's own key is not constrained (see above) | Touch ENS — its role bitmap is `0`, not by a check but because it never had one |
 | **AGENT** | Nothing | Initiate a spend request | Hold funds or permissions; it is only a `msg.sender` the policy recognises |
 
 A broken policy can at most drain the wallet. It cannot reach the control plane,
@@ -83,7 +84,8 @@ because the wallet has no control-plane authority to lend it.
 | Issue a new agent subname | — | ✅ |
 | Raise a limit, allow a token or payee | ✅ | ✅ |
 | Restore a revoked agent | ✅ | ✅ |
-| **Revoke an agent, tighten a rule, remove a payee** | ✅ | ❌ |
+| **Tighten a rule, remove a payee** | ✅ | ❌ |
+| **Revoke or unbind an agent** | self **or that agent** | ❌ |
 | **Pause the whole wallet** | any bound agent | ❌ |
 
 Expansion is two-of-two: the wallet itself **and** a human. Reduction is free, because
@@ -93,6 +95,15 @@ face before pulling the brake.
 `PolicyApprovals.revoke` goes further and is callable by **anyone**. Revoking only ever
 makes the system stricter; gating the brake is how you help an attacker at the worst
 possible moment.
+
+> ⚠️ **The Attestation column above describes what the contracts require, and today only
+> half of it is really guarding.** The deployed system is wired to
+> [`MockAttester`](src/MockAttester.sol), which returns `true` for **any** input. So of
+> the two conditions behind "expansion needs a human", `msg.sender == address(this)` is
+> real and enforced, while the attestation half is a mock. Selfie Check was verified
+> end-to-end offchain (see the World section), so `WorldAttester` is buildable — it is not
+> deployed, and **nothing about World ID is enforced onchain yet**. `describe()` says so
+> on the mock itself, so a UI reading it cannot pretend otherwise.
 
 ## Four ways to stop an agent
 
@@ -138,8 +149,19 @@ then never answer *why was I blocked last time?*
 ### World
 
 Selfie Check gates privilege **expansion** only: raising a limit, whitelisting a payee,
-issuing a new agent. Reduction is never gated — see the asymmetry above. Verified
-end-to-end on 2026-09-08.
+issuing a new agent. Reduction is never gated — see the asymmetry above.
+
+Verified end-to-end on **2026-09-07** with the production World App and a real selfie —
+no Sandbox App was needed, because Sandbox exists to simulate the Orb and Selfie Check
+does not use one. That verification is **offchain**: the backend in `world/` receives the
+proof and verifies it against World's v4 endpoint. The onchain `IAttester` is still the
+mock — see the callout above.
+
+One limit worth stating rather than glossing: **a proof cannot prove it came from Selfie
+Check.** A successful verification returns `credential_type: "device"`, identical to the
+deprecated `deviceLegacy`. "A real human's face was checked" lives only in the app's
+`enable_face_check` setting, not in the proof. Leash's human-in-the-loop guarantee is
+therefore a configuration-level guarantee, not a cryptographic one.
 
 The feedback document the prize asks for is
 [`docs/world-feedback.md`](docs/world-feedback.md). It is a dated running log written as
@@ -149,8 +171,11 @@ the product able to say so.
 
 ## Tests
 
-170 unit and fuzz tests, plus 3 fork tests against live Sepolia (skipped when
-`SEPOLIA_RPC` is unset, reported as SKIPPED rather than PASSED).
+170 unit and fuzz tests, plus 3 fork tests against live Sepolia. The fork tests call
+`vm.skip` in `setUp` when `SEPOLIA_RPC` is unset, so `forge test` prints
+`170 passed, 0 failed, 1 skipped (171 total)` — one skip for the suite, not three. They
+are reported as SKIPPED rather than quietly PASSED, which is the point of using
+`vm.skip` over a bare `return`.
 
 ```bash
 git clone --recurse-submodules https://github.com/ksin751119/leash
@@ -169,8 +194,9 @@ is guarded" turned out to be different claims.
 
 | | |
 |---|---|
+| [`docs/architecture.md`](docs/architecture.md) | **Start here.** What is enforced, by what, and what is not claimed |
 | [`docs/deployments.md`](docs/deployments.md) | Addresses, transactions, and a verification recipe you can paste |
-| [`docs/PLAN.md`](docs/PLAN.md) | Architecture, key model, demo script *(Chinese)* |
+| [`docs/PLAN.md`](docs/PLAN.md) | The full working document, including every overturned decision *(Chinese)* |
 | [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** *(Chinese)* |
 | [`docs/world-feedback.md`](docs/world-feedback.md) | Developer feedback for the World track |
 | [`docs/ensv2-sepolia.md`](docs/ensv2-sepolia.md) | Onchain measurements of live ENSv2 *(Chinese)* |
@@ -178,9 +204,9 @@ is guarded" turned out to be different claims.
 
 ## Start from Scratch
 
-Documents under `docs/` written before the event covers planning, prize requirements,
-and onchain probing of ENSv2's existing contracts on Sepolia. No project code predates
-it.
+What exists under `docs/` from before the event is planning, prize requirements, and
+onchain probing of ENSv2's already-deployed contracts on Sepolia. No project code
+predates the event.
 
 **Every line under `src/`, `test/`, `script/` and `subgraph/` was written from scratch
 starting 2026-09-05.** The commit history is the record, and it is cross-checked by
