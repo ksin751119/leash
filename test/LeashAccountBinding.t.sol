@@ -300,10 +300,13 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
-    /// `LeashAccount` exposes no public `restoreDigest()`, so the test recomputes it from
-    /// `_consumeAttestation`'s formula — the same purpose as the replay tests in
-    /// `LeashRegistry.t.sol` taking a ready-made digest from `reg.renewDigest(...)`, except
-    /// there is no getter to borrow here.
+    /// `LeashAccount` does expose a public `restoreDigest()` (see
+    /// `test/LeashAccountDigests.t.sol`), but this test deliberately recomputes the digest
+    /// independently from `_consumeAttestation`'s formula instead of calling it. Calling
+    /// `restoreDigest()` here would compare the getter to itself and prove nothing; an
+    /// independent reconstruction is the stronger test, in the same spirit as the replay
+    /// tests in `LeashRegistry.t.sol` — except those borrow a ready-made digest from
+    /// `reg.renewDigest(...)`, while this one is rebuilt from scratch on purpose.
     function _restoreDigest(address agent, bytes32 node, string memory label, uint256 nonce)
         private
         view
