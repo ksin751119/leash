@@ -37,6 +37,10 @@ contract DeployWorldAttester is Script {
         console.log("WorldAttester   ", address(att));
         console.log("LeashAccount    ", address(impl));
         console.log("  SIGNER        ", att.SIGNER());
+        // Printed so the impl-to-attester linkage lands in the deploy log: Step 4 asserts
+        // this equals what the server has in WORLD_ATTESTER, which is the only check that
+        // catches a stale-but-valid address before a face scan is spent on it.
+        console.log("  impl ATTESTER ", address(impl.ATTESTER()));
         console.log("");
         console.log("Next, and WALLET signs it itself - do NOT put this key in a script:");
         console.log("  cast send $WALLET_ADDR --auth <impl> --private-key $WALLET_PK ...");

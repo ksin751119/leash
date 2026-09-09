@@ -1549,6 +1549,7 @@ contract DeployWorldAttester is Script {
         console.log("WorldAttester   ", address(att));
         console.log("LeashAccount    ", address(impl));
         console.log("  SIGNER        ", att.SIGNER());
+        console.log("  impl ATTESTER ", address(impl.ATTESTER()));
         console.log("");
         console.log("Next, and WALLET signs it itself - do NOT put this key in a script:");
         console.log("  cast send $WALLET_ADDR --auth <impl> --private-key $WALLET_PK ...");
@@ -1611,6 +1612,26 @@ cast call "$(get WORLD_ATTESTER)" 'SIGNER()(address)' --rpc-url "$(get SEPOLIA_R
 
 Expected: `0x85b89D21DB13f220601430d48244B2AE06120969`. A mismatch means the constructor got
 the wrong argument and every attestation the server signs will be rejected onchain.
+
+**And assert the wallet actually trusts the attester the server is signing for.** This is the
+one check that catches a *stale but valid* `WORLD_ATTESTER` — a previous deployment carries
+the same `SIGNER`, so the check above passes and all four hash cases pass, and the mismatch
+would first appear as `NotAttested` at `allowPayee` with the face scan already spent. Also
+key-free and view-only; `ATTESTER()` is an immutable in the delegate's code, so this reads
+through the 7702 wallet:
+
+```bash
+W="$(get WALLET_ADDR)"; RPC="$(get SEPOLIA_RPC)"
+onchain=$(cast call "$W" 'ATTESTER()(address)' --rpc-url "$RPC")
+configured="$(get WORLD_ATTESTER)"
+[ "${onchain,,}" = "${configured,,}" ] \
+  && echo "wallet trusts the configured attester" \
+  || echo "MISMATCH: wallet trusts $onchain, server signs for $configured"
+```
+
+Run this **after** Step 5's re-delegation as well as here — before re-delegation it still
+reports the old `MockAttester` (`0x268990a91B0727E80d38d5ED4Ab10d8889754124`), which is
+correct and expected, not a failure.
 
 **Do not proceed past this step on a mismatch.** Everything downstream fails identically and uninformatively if the two implementations disagree.
 
