@@ -11,9 +11,8 @@
 
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { keccak_256 } from "@noble/hashes/sha3";
 import { randomBytes } from "node:crypto";
-import { signAttestation } from "./attest.mjs";
+import { signAttestation, buildVerifyPayload, hashSignal } from "./attest.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -34,28 +33,11 @@ const RP_ID = process.env.WORLD_RP_ID || "rp_ef35d4e2d4f1a031";
 // takes an `rp_id`. A 3.0 proof has to be wrapped as a `VerifyV4LegacyProofRequest`.
 const VERIFY_URL = `https://developer.worldcoin.org/api/v4/verify/${RP_ID}`;
 
-/**
- * World ID's signal hash: keccak256(signal) shifted right by 8 bits.
- * The shift is because a proof has to land inside the field in the SNARK system, and
- * keccak's 256 bits would overflow it.
- *
- * @dev **Measured on 2026-09-07: the proof IDKit returns contains no `signal_hash`.**
- *      So this is not a fallback path, it is the only path — the backend has to compute
- *      it. That is exactly where the first run fell over: `@noble/hashes` was not
- *      installed → 500 → World App displayed "Verification Declined", which looks like
- *      World rejecting you when in fact your own backend has crashed.
- *
- *      Note you cannot use node's built-in `crypto.createHash("sha3-256")` — SHA3 and
- *      keccak256 pad differently, produce different values, and World will refuse it.
- *
- *      When this is wired to AttesterGate, the signal becomes the EIP-712 payload hash of
- *      the widening in question — so one face scan can only loosen that one rule, and an
- *      intercepted proof cannot be replayed anywhere else.
- */
-function hashSignal(signal) {
-  const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
-  return "0x" + h.toString(16).padStart(64, "0");
-}
+// hashSignal is imported from attest.mjs (shared with buildVerifyPayload's own use of it
+// for /api/attest); the comment there documents the shift and the 2026-09-07 measurement.
+// When this is wired to AttesterGate, the signal becomes the EIP-712 payload hash of the
+// widening in question — so one face scan can only loosen that one rule, and an
+// intercepted proof cannot be replayed anywhere else.
 
 const json = (res, code, body) => {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -148,8 +130,14 @@ const server = createServer(async (req, res) => {
     // `signal = digest` is the security property, not a convenience: one face scan
     // authorises one widening, and an intercepted proof cannot be moved to another. That
     // was the documented intention in IAttester from day one; here it becomes real.
+    //
+    // `/api/attest` is raw JSON with no trusted caller, so `proof` (and the rest of the
+    // body) is attacker-controlled. `signal_hash` and `action` are therefore pinned inside
+    // buildVerifyPayload — from `digest` and the server's own `ACTION`, never from the
+    // request body — rather than trusted from the caller. See buildVerifyPayload's
+    // docstring in attest.mjs for the two attacks that closes.
     if (req.method === "POST" && req.url === "/api/attest") {
-      const { digest, proof, action } = await readBody(req);
+      const { digest, proof } = await readBody(req);
       if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
         return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
       }
@@ -161,21 +149,7 @@ const server = createServer(async (req, res) => {
         return json(res, 500, { error: "WORLD_ATTESTER not set" });
       }
 
-      const payload = {
-        protocol_version: "3.0",
-        nonce: "0x" + randomBytes(16).toString("hex"),
-        action: action ?? ACTION,
-        environment: "production",
-        responses: [
-          {
-            identifier: proof.credential_type ?? proof.verification_level,
-            signal_hash: proof.signal_hash ?? hashSignal(digest),
-            merkle_root: proof.merkle_root,
-            nullifier: proof.nullifier_hash,
-            proof: proof.proof,
-          },
-        ],
-      };
+      const payload = buildVerifyPayload({ digest, proof, action: ACTION });
 
       const r = await fetch(VERIFY_URL, {
         method: "POST",

@@ -884,10 +884,10 @@ a phone."
 - Modify: `world/package.json` — add `@noble/curves`
 
 **Interfaces:**
-- Consumes: `WorldAttester.attestationHash(bytes32,uint64)` (Task 1); the existing `hashSignal`, `json` and `readBody` helpers in `server.mjs`; `WORLD_RP_SIGNER_PK` from the environment.
+- Consumes: `WorldAttester.attestationHash(bytes32,uint64)` (Task 1); the existing `json` and `readBody` helpers in `server.mjs`; `WORLD_RP_SIGNER_PK` from the environment.
 - Produces:
-  - `attest.mjs`: `attestationHash({ digest, deadline, chainId, verifyingContract }) -> "0x…"` and `signAttestation({ digest, deadline, chainId, verifyingContract, privKeyHex }) -> { attestation, hash }`
-  - `POST /api/attest` accepting `{ digest, proof, action }` and returning `{ attestation, deadline, nullifier }`
+  - `attest.mjs`: `attestationHash({ digest, deadline, chainId, verifyingContract }) -> "0x…"`, `signAttestation({ digest, deadline, chainId, verifyingContract, privKeyHex }) -> { attestation, hash }`, `hashSignal(signal) -> "0x…"`, and `buildVerifyPayload({ digest, proof, action }) -> payload` (moved here from `server.mjs`, and made the one place `signal_hash`/`action` are computed, so both `/api/verify`'s and `/api/attest`'s callers get it from the same source)
+  - `POST /api/attest` accepting `{ digest, proof }` (note: **not** `action` — see Step 4) and returning `{ attestation, deadline, nullifier }`
 
 - [ ] **Step 1: Install the dependencies**
 
@@ -981,7 +981,67 @@ export function signAttestation({ digest, deadline, chainId, verifyingContract, 
     attestation: hex(Buffer.concat([u64be(deadline), r, s, Buffer.from([v])])), // 73 bytes
   };
 }
+
+/**
+ * World ID's signal hash: keccak256(signal) shifted right by 8 bits.
+ * The shift is because a proof has to land inside the field in the SNARK system, and
+ * keccak's 256 bits would overflow it.
+ *
+ * @dev **Measured on 2026-09-07: the proof IDKit returns contains no `signal_hash`.**
+ *      So this is not a fallback path, it is the only path — the backend has to compute
+ *      it. Note you cannot use node's built-in `crypto.createHash("sha3-256")` — SHA3 and
+ *      keccak256 pad differently, produce different values, and World will refuse it.
+ */
+export function hashSignal(signal) {
+  const h = BigInt("0x" + Buffer.from(keccak_256(signal)).toString("hex")) >> 8n;
+  return "0x" + h.toString(16).padStart(64, "0");
+}
+
+/// Builds the v4-legacy verify payload that `/api/attest` sends to World, and signs only
+/// if World answers 200.
+///
+/// `signal_hash` and `action` are computed here from `digest` and the caller-supplied
+/// `action`, and **never** read from `proof` — even though a real IDKit proof has no
+/// `signal_hash` or `action` field of its own.
+///
+/// **Why `signal_hash` cannot come from the caller:** `/api/attest` is raw JSON with no
+/// trusted caller, so `proof` is attacker-controlled. One face scan is supposed to
+/// authorise exactly one widening, because World binds the proof to
+/// `signal_hash = hash(digest)`. If this function read `proof.signal_hash` instead of
+/// recomputing it, an attacker who captured one genuine proof P — a real scan that
+/// approved digest D1, carrying its own signal_hash S — could POST
+/// `{ digest: D2, proof: { ...P, signal_hash: S } }`. World verifies P happily, because S
+/// is exactly what's baked into it, and the server would then sign an attestation for D2,
+/// a widening no human's face ever approved.
+///
+/// **Why `action` cannot come from the caller either:** a proof is bound to the action it
+/// was generated for, and this app mints a fresh action per demo because
+/// `max_verifications` is 1 per action and cannot be raised (`expand-policy` itself was
+/// already consumed on 2026-09-07). If `action` came from the request body, a face scan
+/// made for an already-retired action would still buy a widening today — quietly breaking
+/// "every widening needs a real, current face scan." Pinning `action` to the value the
+/// server passes in (its own configured `ACTION`, never the request body's) closes that
+/// path the same way `signal_hash` does.
+export function buildVerifyPayload({ digest, proof, action }) {
+  return {
+    protocol_version: "3.0",
+    nonce: "0x" + randomBytes(16).toString("hex"),
+    action,
+    environment: "production",
+    responses: [
+      {
+        identifier: proof.credential_type ?? proof.verification_level,
+        signal_hash: hashSignal(digest),
+        merkle_root: proof.merkle_root,
+        nullifier: proof.nullifier_hash,
+        proof: proof.proof,
+      },
+    ],
+  };
+}
 ```
+
+Add `import { randomBytes } from "node:crypto";` alongside the other imports at the top of `attest.mjs` for `buildVerifyPayload`'s nonce.
 
 - [ ] **Step 3: Write `world/crosscheck.mjs`**
 
@@ -1102,8 +1162,19 @@ Insert immediately after the `/api/verify` block closes (currently line 142), be
     // `signal = digest` is the security property, not a convenience: one face scan
     // authorises one widening, and an intercepted proof cannot be moved to another. That
     // was the documented intention in IAttester from day one; here it becomes real.
+    //
+    // `/api/attest` is raw JSON with no trusted caller, so `proof` (and the rest of the
+    // body) is attacker-controlled. `signal_hash` and `action` are therefore pinned inside
+    // buildVerifyPayload — from `digest` and the server's own `ACTION`, never from the
+    // request body — rather than trusted from the caller. See buildVerifyPayload's
+    // docstring in attest.mjs for the two attacks that closes: a captured proof's own
+    // signal_hash moving the same face scan to a different digest, and a proof from an
+    // already-retired action (this app mints a fresh one per demo, since
+    // max_verifications is 1 and cannot be raised) still buying a widening today. Note the
+    // deliberate absence of `action` in the destructure below — the request body's
+    // `action` field, if a caller sends one, is never read.
     if (req.method === "POST" && req.url === "/api/attest") {
-      const { digest, proof, action } = await readBody(req);
+      const { digest, proof } = await readBody(req);
       if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
         return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
       }
@@ -1115,21 +1186,7 @@ Insert immediately after the `/api/verify` block closes (currently line 142), be
         return json(res, 500, { error: "WORLD_ATTESTER not set" });
       }
 
-      const payload = {
-        protocol_version: "3.0",
-        nonce: "0x" + randomBytes(16).toString("hex"),
-        action: action ?? ACTION,
-        environment: "production",
-        responses: [
-          {
-            identifier: proof.credential_type ?? proof.verification_level,
-            signal_hash: proof.signal_hash ?? hashSignal(digest),
-            merkle_root: proof.merkle_root,
-            nullifier: proof.nullifier_hash,
-            proof: proof.proof,
-          },
-        ],
-      };
+      const payload = buildVerifyPayload({ digest, proof, action: ACTION });
 
       const r = await fetch(VERIFY_URL, {
         method: "POST",
@@ -1160,11 +1217,56 @@ Insert immediately after the `/api/verify` block closes (currently line 142), be
     }
 ```
 
-Add the import at the top, beside the existing `@noble/hashes` import:
+Add the import at the top, beside the existing `@noble/hashes` import (and drop the old local
+`hashSignal` definition — it now lives in `attest.mjs`, shared with `buildVerifyPayload`):
 
 ```js
-import { signAttestation } from "./attest.mjs";
+import { signAttestation, buildVerifyPayload, hashSignal } from "./attest.mjs";
 ```
+
+- [ ] **Step 4b: Add `world/check-payload-binding.mjs` and mutation-check it**
+
+A one-off Critical from review round 1: the code above originally read
+`signal_hash: proof.signal_hash ?? hashSignal(digest)` and `action: action ?? ACTION`,
+trusting two attacker-controlled fields that are the entire binding between a face scan
+and the digest/action it approved. Fixed by moving payload construction into
+`buildVerifyPayload` (Step 2) and never reading either field from the caller. This step
+proves the fix and guards against it regressing, without touching World's live API:
+
+```js
+// Guards the property fixed in review round 1: buildVerifyPayload must never let a
+// caller-supplied `proof.signal_hash` or `proof.action` leak into the payload /api/attest
+// sends to World. Pure — no network, no chain, no anvil.
+import { buildVerifyPayload, hashSignal } from "./attest.mjs";
+
+const digest = "0x" + "42".repeat(32);
+const serverAction = "expand-policy";
+const hostileProof = {
+  credential_type: "device",
+  signal_hash: "0x" + "de".repeat(32),
+  action: "old-retired-action",
+  merkle_root: "0x" + "11".repeat(32),
+  nullifier_hash: "0x" + "22".repeat(32),
+  proof: "0x" + "33".repeat(8),
+};
+const payload = buildVerifyPayload({ digest, proof: hostileProof, action: serverAction });
+
+let bad = 0;
+const signalOk = payload.responses[0].signal_hash === hashSignal(digest);
+console.log(`${signalOk ? "ok  " : "FAIL"}  signal_hash is hashSignal(digest), not proof.signal_hash`);
+if (!signalOk) bad++;
+const actionOk = payload.action === serverAction;
+console.log(`${actionOk ? "ok  " : "FAIL"}  action is the server's configured action, not proof.action`);
+if (!actionOk) bad++;
+console.log(bad === 0 ? "\nall checks agree" : `\n${bad} MISMATCH`);
+process.exit(bad === 0 ? 0 : 1);
+```
+
+Mutation-check it: temporarily change `buildVerifyPayload` back to
+`signal_hash: proof.signal_hash ?? hashSignal(digest)` and
+`action: proof.action ?? action`, run `node check-payload-binding.mjs`, confirm both lines
+print `FAIL` and the exit code is 1, then revert. If the mutated version still prints
+`all checks agree`, the check is vacuous — fix the check, not the code.
 
 - [ ] **Step 5: Verify the JS hash against the contract, locally first**
 
