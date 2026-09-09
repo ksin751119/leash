@@ -855,13 +855,19 @@ a phone."
   - `attest.mjs`: `attestationHash({ digest, deadline, chainId, verifyingContract }) -> "0x…"` and `signAttestation({ digest, deadline, chainId, verifyingContract, privKeyHex }) -> { attestation, hash }`
   - `POST /api/attest` accepting `{ digest, proof, action }` and returning `{ attestation, deadline, nullifier }`
 
-- [ ] **Step 1: Install the dependency**
+- [ ] **Step 1: Install the dependencies**
+
+**This worktree is a fresh checkout, so `world/node_modules` does not exist yet** — nothing
+in `world/` runs until it does, including the existing `@noble/hashes` import at the top of
+`server.mjs`. The install below brings in both: npm installs everything in `package.json`
+plus the package you name.
 
 ```bash
 cd world && npm i @noble/curves@2
 ```
 
-Expected: `@noble/curves` at 2.x in `dependencies`.
+Expected: `@noble/curves` at 2.x in `dependencies`, and
+`node -e "import('@noble/hashes/sha3.js').then(()=>console.log('ok'))"` prints `ok`.
 
 - [ ] **Step 2: Write `world/attest.mjs`**
 
