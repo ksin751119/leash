@@ -1795,3 +1795,34 @@ Two options:
 
 Task 5 needs a human at two steps regardless of choice: the broadcast, and the
 re-delegation.
+
+---
+
+## Post-Execution: revoke-bypass fix (found on this branch)
+
+Not part of the original plan above — recorded here because this branch is where it was
+found and fixed.
+
+`restoreAgent` was correctly gated on an attestation, but `revokeAgent` → `unbindAgent` →
+`bindAgent` restored a revoked agent to fully active with **no attestation at all**:
+`unbindAgent` deleted the binding (clearing `node` back to zero), so `bindAgent`'s
+`AlreadyBound` guard — the guard `bindAgent`'s own comment names as the defense against
+exactly this "rebind for free after a revocation" attack — never fired. The bypass needs
+the WALLET key (`bindAgent` is `onlySelf`), so it is not agent privilege escalation, but it
+defeats the point of attesting widenings: the wallet key alone should not be sufficient to
+undo a revocation.
+
+Fix: `unbindAgent` now refuses to unbind a binding that is currently `revoked`, reverting
+with a new `RevokedNeedsRestore()` error. No storage layout change — the decision uses the
+existing `revoked` flag that `revokeAgent` already keeps set. The only route out of
+`revoked` is now `restoreAgent`, which is attested. Refusing costs nothing in capability:
+a revoked agent is already powerless (`spend` blocks it at step 2b), so this only forfeits
+storage cleanup on that one binding.
+
+New regression tests in `test/LeashAccountBinding.t.sol`: `unbindAgent` reverts on a
+revoked binding; the full `revoke → unbind → bind` sequence can no longer reach an active
+binding; `restoreAgent` with a valid attestation still restores a revoked agent. The
+pre-existing mis-binding remedy (`test_a_mis_binding_is_correctable_for_free` — bind,
+unbind, rebind, no revocation involved) is untouched. `README.md`'s "Restore a revoked
+agent" row is now true as written; a paragraph was added below the widening/reduction
+table explaining the one exception to "unbind is free".

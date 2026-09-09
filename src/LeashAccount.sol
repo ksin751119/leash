@@ -138,6 +138,7 @@ contract LeashAccount {
     error NodeLabelMismatch(bytes32 expected, bytes32 got);
     error AlreadyBound();
     error NotBoundAgent();
+    error RevokedNeedsRestore();
     error NotSelfOrAgent();
     error NotTighter();
     error Reentrant();
@@ -220,8 +221,12 @@ contract LeashAccount {
         LeashStorage.AgentBinding storage b = $.bindings[agent];
         // Revert if it already exists: otherwise "rebind for free after a revocation"
         // would sidestep what the frozen document says about reason code 2 (restoring
-        // requires a face scan). The remedy for a wrong bind is `unbindAgent` then
-        // `bindAgent` — both of which are reductions.
+        // requires a face scan). This guard alone is not sufficient against that attack —
+        // `unbindAgent` also has to refuse a revoked binding, since it would otherwise
+        // delete `node` and quietly reopen this branch. See `unbindAgent`. With both
+        // guards in place, the only remedy left through this path is "bound to the wrong
+        // name" — `unbindAgent` then `bindAgent`, both reductions — on an agent that was
+        // never revoked.
         if (b.node != bytes32(0)) revert AlreadyBound();
 
         b.node = node;
@@ -246,13 +251,27 @@ contract LeashAccount {
         }
     }
 
-    /// @notice Unbinds completely. **A reduction, entirely free.**
+    /// @notice Unbinds completely. **A reduction, entirely free — unless the binding is
+    ///         revoked, in which case it is refused.**
     /// @dev This is the remedy for "bound to the wrong name". Once unbound the agent can do
     ///      nothing, and it can be `bindAgent`-ed again to the correct name — at no point
     ///      in between does it hold more authority than before.
+    ///
+    ///      A revoked binding is the one case this must refuse: deleting it would clear
+    ///      `node` back to zero, and `bindAgent`'s `AlreadyBound` guard only fires while
+    ///      `node` is non-zero. `revoke → unbind → bind` would then restore full authority
+    ///      to a revoked agent with no attestation at all, defeating the reason-code-2
+    ///      requirement that restoring needs a face scan. Refusing costs nothing in
+    ///      capability: a revoked agent is already powerless (`spend` reaches step 2b and
+    ///      emits `SpendBlocked(AGENT_REVOKED)`), so this only forfeits storage cleanup,
+    ///      never a capability. The only route out of `revoked` is `restoreAgent`, which is
+    ///      attested. The legitimate use of this function — correcting a mis-binding on an
+    ///      agent that was never revoked — is unaffected.
     function unbindAgent(address agent) external {
         _requireSelfOrAgent(agent);
-        delete LeashStorage.layout().bindings[agent];
+        LeashStorage.AccountStorage storage $ = LeashStorage.layout();
+        if ($.bindings[agent].revoked) revert RevokedNeedsRestore();
+        delete $.bindings[agent];
         emit AgentRevoked(agent, msg.sender);
     }
 

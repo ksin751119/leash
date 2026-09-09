@@ -92,6 +92,15 @@ Expansion is two-of-two: the wallet itself **and** a human. Reduction is free, b
 when something has gone wrong nobody should have to find their phone and scan their
 face before pulling the brake.
 
+One exception to "unbind is free": `unbindAgent` refuses a binding that is currently
+revoked (`RevokedNeedsRestore`), rather than deleting it for free. Deleting a revoked
+binding would clear its `node` back to zero, and `bindAgent`'s guard against rebinding
+an existing agent only fires while `node` is non-zero — so a free delete would let
+`revoke → unbind → bind` rebuild full authority with no attestation, sidestepping the
+"Restore a revoked agent" row above entirely. Refusing costs nothing in capability: a
+revoked agent is already powerless, so this only forfeits storage cleanup. The one route
+out of `revoked` stays `restoreAgent`, attested as the table says.
+
 `PolicyApprovals.revoke` goes further and is callable by **anyone**. Revoking only ever
 makes the system stricter; gating the brake is how you help an attacker at the worst
 possible moment.

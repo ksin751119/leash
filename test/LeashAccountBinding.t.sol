@@ -337,6 +337,73 @@ contract LeashAccountBindingTest is Test {
         vm.stopPrank();
     }
 
+    // --- 🔒 revoke-bypass regression: unbindAgent must refuse a revoked binding ---
+
+    /// `unbindAgent` must refuse a revoked binding. Deleting it would clear `node` back to
+    /// zero, and `bindAgent`'s `AlreadyBound` guard only fires while `node` is non-zero —
+    /// so allowing this delete would let `revoke → unbind → bind` restore full authority
+    /// with no attestation at all.
+    function test_unbind_reverts_on_a_revoked_binding() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+
+        vm.expectRevert(LeashAccount.RevokedNeedsRestore.selector);
+        acct.unbindAgent(AGENT);
+        vm.stopPrank();
+    }
+
+    /// The full old bypass — revoke, unbind, bind — can no longer reach an active binding.
+    /// `unbindAgent` reverts before `node` is ever cleared, so `bindAgent` still sees a
+    /// non-zero `node` and still reverts with `AlreadyBound`; the binding is left exactly
+    /// where `revokeAgent` put it.
+    function test_revoke_unbind_bind_no_longer_restores_authority_for_free() public {
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+
+        vm.expectRevert(LeashAccount.RevokedNeedsRestore.selector);
+        acct.unbindAgent(AGENT);
+
+        vm.expectRevert(LeashAccount.AlreadyBound.selector);
+        acct.bindAgent(AGENT, NODE, LABEL);
+
+        (bytes32 n, string memory l, bool revoked) = acct.bindingOf(AGENT);
+        assertEq(n, NODE, "binding untouched by the blocked bypass");
+        assertEq(l, LABEL);
+        assertTrue(revoked, "still revoked, never restored");
+        vm.stopPrank();
+    }
+
+    /// The legitimate route out of `revoked` is untouched by the new guard: a valid
+    /// attestation still restores the agent. Mirrors the success half of
+    /// `test_restore_requires_an_attestation`, kept as its own test so the mutation check
+    /// on the new `unbindAgent` guard has a dedicated "restore still works" witness.
+    function test_restore_with_valid_attestation_still_works_after_the_fix() public {
+        bytes32 d = _restoreDigest(AGENT, NODE, LABEL, 1);
+
+        vm.startPrank(wallet);
+        acct.bindAgent(AGENT, NODE, LABEL);
+        acct.revokeAgent(AGENT);
+
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+        (bytes32 n, string memory l, bool revoked) = acct.bindingOf(AGENT);
+        assertEq(n, NODE);
+        assertEq(l, LABEL);
+        assertFalse(revoked, "restored via a valid attestation");
+
+        // Sanity: the digest this attestation consumed is the one for this exact
+        // (agent, node, label, nonce) tuple — replaying it must now fail.
+        vm.expectRevert(abi.encodeWithSelector(LeashAccount.AttestationReused.selector, d));
+        acct.restoreAgent(AGENT, NODE, LABEL, 1, ATT);
+        vm.stopPrank();
+    }
+
+    /// Bind → unbind with **no** revocation in between must still work for free — the
+    /// mis-binding remedy this guard must not break. Already covered end-to-end by
+    /// `test_a_mis_binding_is_correctable_for_free` above (bind, unbind, rebind, all
+    /// without ever calling `revokeAgent`), so no duplicate test is added here.
+
     // --- reductions are always available ---
 
     /// An agent can revoke itself — a reduction should have no gate.
