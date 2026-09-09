@@ -1,95 +1,105 @@
-# LeashAccount 設計 —— 強制執行的 EIP-7702 帳戶
+# LeashAccount design — the EIP-7702 account that enforces
 
-**日期:** 2026-09-08
-**Sprint 項目:** 7a(取代原本的「合約錢包」版本,直接做 7702 delegate)
-**狀態:** 已核准,待實作
-
----
-
-## 這份東西要解決什麼
-
-前面五份合約各自做完了自己的事,但**沒有任何東西強制它們被使用**:
-
-- `StandardPolicy` 會判斷,但沒有人一定要問它
-- `LeashResolver` 解得出 policy 位址,但沒有人一定要去解
-- `PolicyApprovals` 記著哪些 policy 被批准過,但沒有人一定要比對
-- `LeashRegistry` 能撤銷子名,但撤銷了不影響任何實際的花費
-
-`LeashAccount` 是 **agent 的唯一花費路徑**。它把上面四件事變成付款的前置條件,
-而且是在 agent 自己的執行流程裡發生的 —— **agent 沒有繞過的選項,
-因為檢查不是在它之外,而是在它之內。**
-
-拿掉 ENS,第 4 步解不出 policy,任何 agent 發起的花費都過不了(理由碼 3)。
-
-> ⚠️ **不要說成「唯一的花費路徑」。那句話是假的,而且評審一問就破。**
-> EIP-7702 只約束**打到那個 EOA 的呼叫**。WALLET 私鑰照樣可以直接簽
-> `to = USDC, data = transfer(任何人, 餘額)`,policy 那條路徑根本不會執行。
->
-> 這既是邊界也是**逃生口**:錢包持有者永遠拿得回自己的錢,不會被自己設的
-> policy 鎖死。誠實講出來比被問倒好,而且這個版本的故事更站得住。
->
-> **要有一條測試把這個邊界釘住:** WALLET 直簽的轉帳成功、且**不發** `SpendExecuted`。
+**Date:** 2026-09-08
+**Sprint item:** 7a (replacing the original "contract wallet" version; a 7702 delegate directly)
+**Status:** approved, awaiting implementation
 
 ---
 
-## 決策紀錄
+## What this exists to solve
 
-實作前先寫下八個已定案的分岔,免得日後被當成「隨手選的」。
-(1–4 來自 brainstorming,5–8 來自第一輪 review。)
+The five contracts before this each do their own job, but **nothing forces any of them to be
+used**:
 
-| # | 決定 | 否決的選項 | 理由 |
+- `StandardPolicy` can judge, but nobody has to ask it
+- `LeashResolver` can resolve a policy address, but nobody has to resolve one
+- `PolicyApprovals` records which policies were approved, but nobody has to check
+- `LeashRegistry` can revoke a subname, but revoking affects no actual spending
+
+`LeashAccount` is **the agent's only spending path**. It turns those four things into
+preconditions for payment, inside the agent's own execution flow — **the agent has no option
+to bypass them, because the check is not outside it but within it.**
+
+Remove ENS, step 4 resolves no policy, and no agent-initiated spend can pass (reason code 3).
+
+> ⚠️ **Do not phrase this as "the only spending path". That sentence is false, and it
+> collapses under the first question a judge asks.**
+> EIP-7702 constrains only **calls to that EOA**. The WALLET private key can still sign
+> `to = USDC, data = transfer(anyone, balance)` directly, and the policy path never executes.
+>
+> This is both the boundary and the **escape hatch**: the wallet's owner can always retrieve
+> their own funds and can never be locked out by a policy they installed. Saying so is better
+> than being caught out, and the story is stronger this way.
+>
+> **A test must pin this boundary:** a WALLET-signed transfer succeeds and emits **no**
+> `SpendExecuted`.
+
+---
+
+## Decision record
+
+Eight settled forks in the road, written down before implementation so they are not later
+taken for arbitrary choices. (1-4 came from brainstorming, 5-8 from the first round of
+review.)
+
+| # | Decision | Rejected alternatives | Why |
 |---|---|---|---|
-| 1 | **直接做 7702 delegate**,不做獨立合約錢包 | 合約錢包(sprint 原案)、一份 bytecode 兩用 | 7702 的故事是「既有 EOA 直接被 policy 管,不用搬錢」。工具鏈風險 09-03 已實測解除 |
-| 2 | **沒有 `initialize()`**,全域設定寫成 `immutable` | `initialize()` 限 `msg.sender == address(this)` | 沒有初始化動作 = 沒有搶跑面。而且 impl 位址本身就代表整套控制面,`delegateOf` 一個呼叫就問得完 |
-| 3 | **「受哪個 ENS 名字管」由 WALLET 自己綁** | 由 ADMIN 綁 | 威脅模型是「agent 被入侵」,不是「錢包持有者害自己」。WALLET 只能在**已被真人核准過的規則集**之間選 |
-| 4 | **解析從 `ETH_REGISTRY` 開始**(三跳) | 從 RootRegistry 走四跳、resolver 位址寫死 | 三跳是「保留全部三層撤銷」的最短路徑。四跳多的那一跳買不到撤銷能力;寫死 resolver 會讓 ENS 變成裝飾 |
-| 5 | **擴權是「兩個都要」:`msg.sender == address(this)` **且** attestation** | 只要 attestation(初版) | 見下方 C1 —— 只要 attestation 的話,被入侵的 agent 配上 `MockAttester` 一步就能自己擴權 |
-| 6 | **`unpause` 只要 `address(this)`,不要 attestation** | 要 attestation(初版) | 凍結文件把理由碼 10 列為「ADMIN 的日常操作」。而且任何 agent 都能免費 `pause`,若 `unpause` 要刷臉,被入侵的 agent 可以反覆逼人刷臉(DoS) |
-| 7 | **不做獨立的 `AttesterGate` 合約** | 照凍結文件第四節做一份 | attestation 的消費者只有兩個(`LeashAccount`、`PolicyApprovals`),各自內嵌一段驗證比多一層轉發簡單。**這是對凍結文件的偏離,必須記在變更紀錄裡** |
-| 8 | **`setRule`(要 attestation)+ `tightenRule`(只要 `address(this)`)** | 六個各自獨立的 raise/lower 函式 | `TokenRule` 有五個可調欄位,配對式的函式會漏掉 window 和 period。`tightenRule` 要求**每一個欄位都弱單調收緊**,把「更嚴」變成可檢查的斷言 |
+| 1 | **A 7702 delegate directly**, not a separate contract wallet | a contract wallet (the sprint's original plan), one bytecode serving both | 7702's story is "an existing EOA governed by the policy, with no funds to move". The toolchain risk was cleared by measurement on 09-03 |
+| 2 | **No `initialize()`**; the global configuration is `immutable` | `initialize()` restricted to `msg.sender == address(this)` | No initialisation step means nothing to front-run. And the impl address itself denotes the whole control plane, so `delegateOf` answers it in one call |
+| 3 | **WALLET binds which ENS name governs it** | ADMIN binds it | The threat model is "the agent is compromised", not "the wallet's owner harms themselves". WALLET can only choose among **rulesets a human already approved** |
+| 4 | **Resolution starts at `ETH_REGISTRY`** (three hops) | four hops from RootRegistry; hardcoding the resolver address | Three hops is the shortest path that preserves all three revocation layers. The fourth hop buys no revocation capability, and hardcoding the resolver would make ENS decorative |
+| 5 | **Widening is two-of-two: `msg.sender == address(this)` **and** an attestation** | attestation only (the first version) | See C1 below — with attestation alone, a compromised agent plus `MockAttester` can widen its own authority in one step |
+| 6 | **`unpause` needs only `address(this)`, no attestation** | requiring an attestation (the first version) | The frozen document lists reason code 10 as "an ADMIN's routine operation". And any agent can `pause` for free, so if `unpause` cost a face scan, a compromised agent could force repeated scans (a DoS) |
+| 7 | **No standalone `AttesterGate` contract** | building one per section 4 of the frozen document | There are only two consumers of an attestation (`LeashAccount`, `PolicyApprovals`), and embedding the verification in each is simpler than another layer of forwarding. **This is a deviation from the frozen document and must be recorded in its change log** |
+| 8 | **`setRule` (needs an attestation) + `tightenRule` (needs only `address(this)`)** | six separate raise/lower functions | `TokenRule` has five tunable fields, and paired functions would leave the window and period uncovered. `tightenRule` requires **every field to be weakly monotonically tightened**, turning "stricter" into a checkable assertion |
+### Two old notes overturned by measurement on a local anvil, 09-08
 
-### 09-08 用本機 anvil 實測推翻的兩條舊筆記
+`docs/ensv2-sepolia.md` recorded two 7702 "traps", **both of them misreadings** (the delegate
+at the time was `MockUSDC`, an ERC-20 with no matching functions):
 
-`docs/ensv2-sepolia.md` 原本記著兩個 7702「陷阱」,**都是誤讀**
-(當時委派的對象是 `MockUSDC`,一個沒有對應函式的 ERC-20):
-
-| 舊筆記 | 實測結果 |
+| The old note | What measurement showed |
 |---|---|
-| 交易的 `to` 不可是被委派的 EOA 本身 | ❌ 錯。`to = EOA` **就是**呼叫 delegate 函式的正常方式 |
-| delegate 必須 stateless | ❌ 錯。delegate **可以有 storage**,存在 **EOA 自己**的 storage 上。兩個 EOA 共用一份 impl,storage 完全獨立 |
+| The transaction's `to` must not be the delegated EOA itself | ❌ wrong. `to = EOA` **is** the normal way to call a delegate's functions |
+| A delegate must be stateless | ❌ wrong. A delegate **may have storage**, held in the **EOA's own** storage. Two EOAs sharing one impl have entirely independent storage |
 
-**這對設計是好消息:** 每個錢包有自己的允許清單與預算,不需要在 impl 裡開 mapping。
+**This is good news for the design:** each wallet has its own allow-list and budget, with no
+mapping needed in the impl.
 
-而 spike 找到一個**真的**漏洞:
+> ⚠️ **The first row is over-corrected, and this spec says so later** (see the `receive()`
+> section): the old note is *correct* for empty calldata and wrong only for calldata with a
+> matching selector. The two cases have to be stated separately.
 
-> 🔴 委派後 EOA 的 storage 是空的,**任何人都能搶先呼叫 `initialize` 把自己設成 admin。**
+And the spike found a **real** hole:
 
-決定 2 就是為了消滅這個攻擊面。
+> 🔴 After delegation the EOA's storage is empty, so **anyone can call `initialize` first and
+> set themselves as admin.**
+
+Decision 2 exists to eliminate that attack surface.
 
 ---
+## Architecture
 
-## 架構
-
-### 一份 impl,零個實例狀態
+### One impl, zero per-instance state
 
 ```solidity
 contract LeashAccount {
-    // 烙在 bytecode 裡。沒有 initialize,沒有搶跑面。
-    address          immutable ETH_REGISTRY;  // ENSv2 的 .eth registry,解析起點
+    // Burned into the bytecode. No initialize, so nothing to front-run.
+    address          immutable ETH_REGISTRY;  // ENSv2's .eth registry; where resolution starts
     IPolicyApprovals immutable APPROVALS;
     IAttester        immutable ATTESTER;
 
-    string constant PARENT_LABEL = "leash";   // ETH_REGISTRY 底下我們那個名字
+    string constant PARENT_LABEL = "leash";   // our name under ETH_REGISTRY
 }
 ```
 
-換控制面的方式是**部署新的 impl 再重新委派** —— 而重新委派本身就是錢包持有者
-手上的逃生口,不需要另外設計一個。
+Changing the control plane means **deploying a new impl and redelegating** — and redelegating
+is itself the escape hatch in the wallet holder's hands, so no separate mechanism is needed.
 
-### Storage:ERC-7201 具名槽位(必要,不是講究)
+### Storage: an ERC-7201 namespaced slot (necessary, not fastidious)
 
-委派的程式碼跑在 **EOA 自己的 storage** 上。如果這個 EOA 之後改委派給
-**另一份佈局不同的 impl**,舊資料會被誤讀成新意義 —— 預算被讀成 admin 位址那種災難。
+Delegated code executes against the **EOA's own storage**. If that EOA later redelegates to
+**a different impl with a different layout**, the old data gets reinterpreted under the new
+meaning — the kind of disaster where a budget reads back as an admin address.
 
 ```solidity
 /// @custom:storage-location erc7201:leash.account.v1
@@ -100,472 +110,530 @@ struct AccountStorage {
     mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
     mapping(bytes32 digest => bool) usedAttestations;
     bool paused;
-    bool entered;              // 重入鎖
+    bool entered;              // the reentrancy lock
 }
 
-// ERC-7201:keccak256(abi.encode(uint256(keccak256("leash.account.v1")) - 1)) & ~bytes32(uint256(0xff))
-// 09-08 算出的值,實作時要用測試把它釘住(算錯就是所有狀態都跑到別的槽位)
+// ERC-7201: keccak256(abi.encode(uint256(keccak256("leash.account.v1")) - 1)) & ~bytes32(uint256(0xff))
+// Computed 09-08; pin it with a test during implementation (get it wrong and every piece of
+// state lands in a different slot)
 bytes32 private constant SLOT =
     0x9e007e5c5750cc23875b31a9093bc96547487e271abecbfffde0d1fe2245b800;
 ```
 
-版本號寫在字串裡(`v1`),換佈局就換字串,舊槽位永遠不會被誤讀。
+The version lives inside the string (`v1`); change the layout, change the string, and the old
+slot can never be misread.
 
 ```solidity
 struct AgentBinding {
-    bytes32 node;      // namehash("<label>.leash.eth"),resolver 讀記錄用
-    string  label;     // "vendors",走 LeashRegistry.getResolver(label) 用
+    bytes32 node;      // namehash("<label>.leash.eth"), for reading resolver records
+    string  label;     // "vendors", for LeashRegistry.getResolver(label)
     bool    revoked;
 }
 
 struct TokenRule {
     bool    allowed;
-    uint256 txLimit;      // 0 = 不限
-    uint256 periodLimit;  // 0 = 不限
-    uint64  period;       // 週期長度(秒)。0 視為不設週期
-    uint16  windowStart;  // UTC 當日分鐘數
-    uint16  windowEnd;    // start == end 表示全天
-    uint32  epoch;        // 只增不減。**任何改動 period 的操作都要 +1** —— 見下
+    uint256 txLimit;      // 0 = unlimited
+    uint256 periodLimit;  // 0 = unlimited
+    uint64  period;       // period length in seconds. 0 means no period
+    uint16  windowStart;  // minute of the day, UTC
+    uint16  windowEnd;    // start == end means all day
+    uint32  epoch;        // never decreases. **Any change to period must bump it** - see below
 }
 ```
 
 ---
 
-## 花費流程
+## The spending flow
 
 ```
-agent → EOA.spend(address token, address payee, uint256 amount)
+agent -> EOA.spend(address token, address payee, uint256 amount)
 ```
 
-**`node` 和 `label` 不由 caller 提供,從 `bindings[msg.sender]` 讀。**
-自我審查時發現原本的簽章讓 caller 自己送 `node`,那會產生「node 和 label 不一致」
-這一整類要驗證的錯誤。改成綁定時就寫定,這個問題在編譯期就不存在了 ——
-一個 agent 對應一個名字,這也符合「多個 agent、各指向不同 policy」的模型。
+**`node` and `label` are not supplied by the caller; they are read from
+`bindings[msg.sender]`.** Reviewing my own draft, the original signature had the caller pass
+`node`, which creates an entire class of "node and label disagree" validation. Writing them
+at bind time makes the problem cease to exist at compile time — one agent, one name, which
+also matches the "several agents, each pointing at a different policy" model.
 
-| 步 | 動作 | 失敗行為 |
+| Step | Action | Behaviour on failure |
 |---|---|---|
-| 1 | 重入鎖 `entered` | **revert** |
-| 2a | **綁定過嗎**:`bindings[msg.sender].node != 0` | **revert** `NotBoundAgent` |
-| 2b | **被撤銷了嗎**:`!revoked` | `SpendBlocked(AGENT_REVOKED)`,return |
-| 3 | `paused`? | `SpendBlocked(PAUSED)`,return |
-| 4 | **ENS 三跳** → policy 位址 | 任何一跳失敗或回 `0x0` → `SpendBlocked(NO_POLICY)` |
-| 5 | `approved = APPROVALS.isApproved(policy)`,**發 `PolicyResolved(node, policy, approved)`** | |
-| 6 | `!approved` | `SpendBlocked(POLICY_NOT_APPROVED)`,return |
-| 7 | 用帳戶自己的 `rules` / `payees` / `spent` 組 `SpendContext` | |
-| 8 | `policy.check{gas: POLICY_GAS}(ctx)` | 呼叫失敗或回傳長度 ≠ 32 → `SpendBlocked(POLICY_FAILED)`。**注意這裡是 32,與 ENS 第三跳的 96 不同** |
-| 9 | `reason != OK` | `SpendBlocked(reason)`,return |
+| 1 | The reentrancy lock, `entered` | **revert** |
+| 2a | **Is it bound?** `bindings[msg.sender].node != 0` | **revert** `NotBoundAgent` |
+| 2b | **Has it been revoked?** `!revoked` | `SpendBlocked(AGENT_REVOKED)`, return |
+| 3 | `paused`? | `SpendBlocked(PAUSED)`, return |
+| 4 | **the three ENS hops** → the policy address | any hop failing or returning `0x0` → `SpendBlocked(NO_POLICY)` |
+| 5 | `approved = APPROVALS.isApproved(policy)`, then **emit `PolicyResolved(node, policy, approved)`** | |
+| 6 | `!approved` | `SpendBlocked(POLICY_NOT_APPROVED)`, return |
+| 7 | Build the `SpendContext` from the account's own `rules` / `payees` / `spent` | |
+| 8 | `policy.check{gas: POLICY_GAS}(ctx)` | the call failing or a return length ≠ 32 → `SpendBlocked(POLICY_FAILED)`. **Note this is 32, unlike ENS hop three's 96** |
+| 9 | `reason != OK` | `SpendBlocked(reason)`, return |
 | 10 | **`spent[node][token][period] += amount`** | |
-| 11 | `token.transfer(payee, amount)`,檢查回傳值 | **revert** |
-| 12 | 發 `SpendExecuted` | |
-| 13 | 解鎖 | |
+| 11 | `token.transfer(payee, amount)`, checking the return value | **revert** |
+| 12 | Emit `SpendExecuted` | |
+| 13 | Unlock | |
 
-### 為什麼 2a revert 而 2b 不 revert
+### Why 2a reverts and 2b does not
 
-**這條線是刻意畫的,而且初版畫錯了。** 初版把「沒綁定」和「已撤銷」都收斂成
-`revert NotBoundAgent`,結果是**理由碼 1 和 2 永遠發不出來** ——
-直接違反 `events.md`「理由碼 1–4、10 由 `LeashAccount` 判定」。
+**This line is drawn deliberately, and the first version drew it wrong.** That version
+collapsed both "not bound" and "revoked" into `revert NotBoundAgent`, with the result that
+**reason codes 1 and 2 could never be emitted** — directly contradicting `events.md`'s
+"codes 1-4 and 10 are decided by `LeashAccount`".
 
-凍結文件把 revert 的例外限定在「caller **根本不是**被綁定的 agent」。
-而**被撤銷的 agent 是「已綁定」的** —— 撤銷是一個行政動作,那個 agent
-應該查得到自己為什麼不能動了(The Graph 賽道的第 4 個問題)。revert 的 log 會被丟棄,
-它就查不到。
+The frozen document confines the revert exception to "the caller is **not** a bound agent at
+all". And **a revoked agent *is* bound** — revocation is an administrative act, and that
+agent should be able to look up why it is stuck (question 4 of The Graph's track). Logs from
+a reverted call are discarded, so it could not.
 
-- **2a 沒綁定 → revert。** 那不是政策決定,是入侵,沒必要留可索引的紀錄
-- **2b 已撤銷 → `SpendBlocked(2)`。** 那是政策決定,要留紀錄
+- **2a, not bound → revert.** That is not a policy decision, it is an intrusion, and there is
+  no reason to leave an indexable record
+- **2b, revoked → `SpendBlocked(2)`.** That is a policy decision and needs a record
 
-> 「擋下來」的證據是**錢沒有動**,不是交易紅字。
+> The evidence of a block is that **money did not move**, not that the transaction went red.
 
-### `PolicyResolved.approved` 要送真值
+### `PolicyResolved.approved` must carry the real value
 
-初版把這個事件排在批准檢查**之後**,那時 `approved` 只可能是 `true` ——
-凍結 schema 裡那個欄位就永遠是死的。移到檢查**當下**發出,
-subgraph 才看得到「指標指到一份沒被批准的 policy」這件事,
-而那正是 ADMIN 金鑰被偷時唯一的鏈上訊號。
+The first version emitted this event **after** the approval check, where `approved` could
+only ever be `true` — leaving that field in the frozen schema permanently dead. Emitting it
+**at** the check is what lets the subgraph see "the pointer aims at an unapproved policy",
+which is exactly the one onchain signal that the ADMIN key has been stolen.
 
-### 為什麼第 10 步在第 11 步之前
+### Why step 10 comes before step 11
 
-`token.transfer` 是外部呼叫。惡意的收款人(或惡意代幣)可以在轉帳的
-callback 裡回頭再打 `spend`。重入鎖是第一道防線,**先記帳是第二道** ——
-兩道都失效才會出事。
+`token.transfer` is an external call. A malicious payee (or a malicious token) can call
+`spend` again from inside the transfer's callback. The reentrancy lock is the first line of
+defence and **writing the ledger first is the second** — it takes both failing to cause harm.
+### The period index: `period == 0` is an edge case that must be handled
 
-### 週期索引:`period == 0` 是一個要處理的邊界
+The `spent` key has two problems to solve; the second was caught in round two of review.
 
-`spent` 的 key 有兩個要處理的問題,第二個是 review 第二輪抓到的。
+**Problem one: `period == 0` divides by zero.** `TokenRule.period` is allowed to be `0` (no
+period).
 
-**問題一:`period == 0` 會除以零。** `TokenRule.period` 允許是 `0`(不設週期)。
+**Problem two (not properly fixed in the first version): changing `period` resurrects the
+budget.** If the key is nothing but `block.timestamp / rule.period`, then changing `period`
+changes the bucket number and `spent` reads back as `0` from the new bucket — **"adjust the
+period" becomes a free wipe-the-ledger button.**
 
-**問題二(初版沒修好):改 `period` 會讓預算復活。** 如果 key 只是
-`block.timestamp / rule.period`,那麼一改 `period`、桶的編號就變了,
-`spent` 從那個新桶讀出來是 `0` —— **「調整週期」變成一個免費的清帳鈕。**
+The first version only froze `period` in `tightenRule`, while `setRule` — which does have an
+attestation — could still change it, so the problem remained. Worse, **a test I wrote myself
+required that "the running total must not zero after `setRule` changes the period" — and
+nothing in the design provided that property.** That test could never have passed.
 
-初版只讓 `tightenRule` 凍結 `period`,但有 attestation 的 `setRule` 仍然能改,
-所以問題還在。更糟的是**我自己寫的測試要求了「`setRule` 改 period 後累計不得歸零」——
-而設計裡沒有任何東西提供這個性質。** 那條測試永遠不會通過。
-
-**修法:加一個只增不減的 `epoch`,`spent` 以它為 key。**
+**The fix: add a monotonically increasing `epoch` and key `spent` on it.**
 
 ```solidity
 uint256 bucket = rule.period == 0
-    ? (uint256(rule.epoch) << 224)                      // 無週期:一個 epoch 一個桶
+    ? (uint256(rule.epoch) << 224)                      // no period: one bucket per epoch
     : (uint256(rule.epoch) << 224) | (block.timestamp / rule.period);
 
 uint64 periodEnd = rule.period == 0
-    ? 0                                                  // 0 = 「不會重置」,不是「已結束」
+    ? 0                                                  // 0 means "never resets", not "already ended"
     : uint64(((block.timestamp / rule.period) + 1) * rule.period);
 ```
 
-`epoch` 放高位、週期索引放低位,兩者不會互相污染
-(`period` 最小 1 秒,`timestamp / 1` 遠小於 `2^224`)。
+`epoch` occupies the high bits and the period index the low bits, so neither contaminates the
+other (`period` is at least 1 second, and `timestamp / 1` is far below `2^224`).
 
-**規則:`setRule` 只在 `period` 真的改變時 `epoch += 1`。** 這是刻意的 ——
-換週期本來就意味著換一套帳,舊帳不該被繼承;而 `epoch` 只增不減,
-所以**清帳這件事永遠需要一份 attestation**,免費的 `tightenRule` 拿不到它。
+**The rule: `setRule` increments `epoch` only when `period` actually changes.** That is
+deliberate — a new period means a new ledger and the old one should not be inherited; and
+because `epoch` never decreases, **wiping the ledger always costs an attestation**, which the
+free `tightenRule` cannot obtain.
 
-`period == 0` 時所有花費累計進 `periodIdx = 0`,也就是**永不重置的總額** ——
-配上 `periodLimit` 就是一個終身額度。這是合理的語意,不是 fallback。
-`SpendExecuted.periodEnd` 送 `0` 表示「不會重置」,subgraph 要照這個解讀。
+When `period == 0`, every spend accumulates into `periodIdx = 0` — a **total that never
+resets**, which combined with `periodLimit` is a lifetime allowance. That is a sensible
+meaning, not a fallback. `SpendExecuted.periodEnd` sends `0` for "never resets", and the
+subgraph must read it that way.
 
-**這個邊界要有專門的測試**,不能只靠 fuzz 碰巧撞到。
+**This edge case needs its own test**; do not rely on fuzzing happening to hit it.
 
-### ENS 三跳
+### The three ENS hops
 
 ```solidity
 function _resolvePolicy(bytes32 node, string memory agentLabel)
     private view returns (address policy)
 {
-    // 1. ETH_REGISTRY.getSubregistry("leash") → LeashRegistry
-    //    這一跳讓 ETHRegistry.setSubregistry(leash.eth, 0x0) 成為「全滅」拉桿
-    // 2. LeashRegistry.getResolver(agentLabel) → LeashResolver
-    //    這一跳讓 revoke(label) 與 expiry 到期成為「殺一個 agent」的手段
-    // 3. LeashResolver.resolve(dnsName, abi.encodeCall(addr, node)) → policy
-    // 任何一跳 staticcall 失敗、回傳長度不符**該跳的預期**、或回 0x0 → 回 address(0)
+    // 1. ETH_REGISTRY.getSubregistry("leash") -> LeashRegistry
+    //    this hop is what makes ETHRegistry.setSubregistry(leash.eth, 0x0) the kill-everything lever
+    // 2. LeashRegistry.getResolver(agentLabel) -> LeashResolver
+    //    this hop is what makes revoke(label) and expiry the kill-one-agent levers
+    // 3. LeashResolver.resolve(dnsName, abi.encodeCall(addr, node)) -> policy
+    // Any hop whose staticcall fails, returns a length other than **that hop expects**, or
+    // returns 0x0 -> return address(0)
 }
 ```
 
-#### 🔴 每一跳的回傳長度不一樣,寫錯就一筆都付不出去
+#### 🔴 Each hop returns a different length, and getting it wrong means nothing can ever be paid
 
-初版只寫「回傳長度不對」,沒說明是多少。**如果實作對第三跳檢查 `== 32`,
-快樂路徑永遠不成立**,而且回報的理由碼會是 `NO_POLICY`(「ENS 上讀不到 policy」)——
-完全誤導除錯方向,可能燒掉半天。
+The first version said only "the wrong return length" without saying what the right one is.
+**If the implementation checks hop three for `== 32`, the happy path never succeeds**, while
+the reported reason code is `NO_POLICY` ("ENS has no policy pointer") — which sends you to
+debug entirely the wrong thing and can burn half a day.
 
-09-08 對已部署的合約實測(`cast rpc eth_call`,原始 returndata 不解碼):
+Measured against the deployed contracts on 09-08 (`cast rpc eth_call`, raw returndata,
+undecoded):
 
-| 跳 | 呼叫 | 原始 returndata | 為什麼 |
+| Hop | Call | Raw returndata | Why |
 |---|---|---|---|
-| 1 | `ETH_REGISTRY.getSubregistry("leash")` | **32 bytes** | 回傳 `address` |
-| 2 | `LeashRegistry.getResolver("vendors")` | **32 bytes** | 回傳 `address` |
-| 3 | `LeashResolver.resolve(dns, inner)` | **96 bytes** | 回傳 `bytes`:offset(32) + length(32) + 內層(32) |
+| 1 | `ETH_REGISTRY.getSubregistry("leash")` | **32 bytes** | returns an `address` |
+| 2 | `LeashRegistry.getResolver("vendors")` | **32 bytes** | returns an `address` |
+| 3 | `LeashResolver.resolve(dns, inner)` | **96 bytes** | returns `bytes`: offset (32) + length (32) + inner (32) |
 
-第三跳的實際位元組:
+Hop three's actual bytes:
 
 ```
-0x 0000…0020   ← offset = 32
-   0000…0020   ← length = 32
-   0000…b70f52e0ffc361e6e3c7765a58068308d4fa75cc   ← 內層 abi.encode(address)
+0x 0000…0020   <- offset = 32
+   0000…0020   <- length = 32
+   0000…b70f52e0ffc361e6e3c7765a58068308d4fa75cc   <- the inner abi.encode(address)
 ```
 
-所以第三跳要:`returndatasize() == 96` → 解出外層 `bytes` → 確認其長度為 32 → 再解 `address`。
+So hop three must: check `returndatasize() == 96` → decode the outer `bytes` → confirm its
+length is 32 → then decode the `address`.
 
-**實作要求:**
-- 每一跳用低階 `staticcall` 並各自檢查自己的預期長度,不要共用一個常數
-- 用**有界的** `returndatacopy`,不要無界複製別人回傳的資料(對方是外部合約)
-- 每一跳都加 gas 上限 —— ENS 的合約在審計期,不能讓它拖垮我們
-- **測試要對每一跳的長度各寫一條**,而且快樂路徑必須在 fork 測試裡跑過真的鏈
+**Implementation requirements:**
+- Use a low-level `staticcall` per hop and check each one's own expected length; do not share
+  a single constant
+- Use a **bounded** `returndatacopy`; never copy someone else's return data unbounded (they
+  are an external contract)
+- Cap the gas on every hop — ENS's contracts are in their audit window and must not be able
+  to drag us down
+- **Write a test per hop for its length**, and the happy path must run against the real chain
+  in a fork test
 
-**三跳全部用 `staticcall` 並包在 `try` / 低階呼叫裡** ——
-ENS 那邊的合約還在 Immunefi 審計期(至 09-14),位址可能變動或行為改變。
-我們不能因為別人的合約 revert 就讓帳戶整個卡死;解不出來就是 `NO_POLICY`,
-錢不動,而那正是安全的預設。
+**All three hops use `staticcall` wrapped in `try` or a low-level call** — ENS's contracts
+are still in their Immunefi audit window (through 09-14), so addresses may move and behaviour
+may change. Another contract reverting must not wedge the account; failing to resolve is
+`NO_POLICY`, no money moves, and that is the safe default.
 
-`label` 與 `node` 兩者都來自綁定,由錢包持有者在 `bindAgent` 時一起寫定 ——
-**caller 沒有機會送出不一致的組合。** 這是一個綁定時的不變式,不是每筆花費要驗的東西。
+Both `label` and `node` come from the binding, written together by the wallet's holder in
+`bindAgent` — **the caller never gets the chance to submit an inconsistent pair.** That is an
+invariant established at bind time, not something to verify on every spend.
 
-### 🔴 `bindAgent` **必須**檢查 `node == namehash(label + ".leash.eth")`
+### 🔴 `bindAgent` **must** check `node == namehash(label + ".leash.eth")`
 
-初版寫「不檢查」,理由是「鏈上算 namehash 要迴圈 keccak,而算錯只是解不出 policy」。
-**兩個前提都是錯的。**
+The first version said not to check, on the grounds that "computing a namehash on chain needs
+a keccak loop, and getting it wrong only means the policy does not resolve". **Both premises
+are false.**
 
-**錯一:成本。** 父層固定是 `leash.eth`,所以只要**兩次 keccak**,不是迴圈:
+**Wrong on cost.** The parent is always `leash.eth`, so it takes **two keccaks**, not a loop:
 
 ```solidity
 bytes32 expected = keccak256(abi.encodePacked(PARENT_NODE, keccak256(bytes(label))));
 ```
 
-`PARENT_NODE = namehash("leash.eth")` 是編譯期常數
-(`0x91fbe3f2c79f13bf641a8f388bc00cc7b13192a0a6c5a986e9ceb50456706fbf`)。約 200 gas,一次。
+`PARENT_NODE = namehash("leash.eth")` is a compile-time constant
+(`0x91fbe3f2c79f13bf641a8f388bc00cc7b13192a0a6c5a986e9ceb50456706fbf`). About 200 gas, once.
 
-**錯二:後果。** `node` **不只是** resolver 的 key —— 它也是 `rules` / `payees` / `spent`
-的 key。所以:
+**Wrong on consequence.** `node` is **not only** the resolver's key — it is also the key for
+`rules`, `payees` and `spent`. So:
 
 ```
 bindAgent(agentB, node = namehash("vendors.leash.eth"), label = "payroll")
 ```
 
-會讓 agentB 花 **vendors 那份真人核准過的額度與預算**,卻由 **payroll 的 policy** 判斷。
-兩套規則被錯接在一起,而 `AgentBound(agent, node)` 事件**不帶 label**
-(`events.md`),所以**鏈下完全看不出來**。
+would let agentB spend **vendors' human-approved limits and budget** while being judged by
+**payroll's policy**. Two rulesets wired to each other by mistake — and since the
+`AgentBound(agent, node)` event **carries no label** (`events.md`), **it would be completely
+invisible offchain.**
 
-200 gas 一次,把一個看不見的錯誤設定換成一個 revert。**要檢查。**
+200 gas, once, to trade an invisible misconfiguration for a revert. **Check it.**
 
 ---
 
-## 非 `spend` 的呼叫面:`receive()` 是必要的,不是禮貌
+## The non-`spend` call surface: `receive()` is required, not a courtesy
 
-**委派之後,純轉 ETH 進那個 EOA = 用空 calldata 呼叫 delegate。**
-兩個都沒有 → Solidity 的 dispatcher revert → **那個錢包收不到 ETH,加不了 gas。**
-faucet、交易所、`cast send --value` 全部失效,而 `PLAN.md` 明寫要分次補款。
+**After delegation, a plain ETH transfer into that EOA is a call to the delegate with empty
+calldata.** With neither function present → Solidity's dispatcher reverts → **that wallet
+cannot receive ETH and cannot be topped up with gas.** Faucets, exchanges and
+`cast send --value` all stop working, and `PLAN.md` explicitly plans to top up in stages.
 
-09-08 用本機 anvil 實測確認:
+Confirmed on a local anvil on 09-08:
 
 | delegate | `payable(eoa).call{value: 1 ether}("")` |
 |---|---|
-| 沒有 `receive()` | **`false`** |
-| 有 `receive()` | `true`,餘額正確增加 |
+| without `receive()` | **`false`** |
+| with `receive()` | `true`, and the balance increases correctly |
 
 ```solidity
-receive() external payable { }              // 必須有,否則錢包變成單向的
-fallback() external payable { revert UnknownSelector(); }   // 明確拒絕,不要靜默吞掉
+receive() external payable { }              // required, or the wallet becomes one-way
+fallback() external payable { revert UnknownSelector(); }   // refuse explicitly; do not swallow
 ```
 
-> **這一條同時是我 09-08 修正記憶時修過頭的地方。** `ensv2-sepolia.md` 原本記著
-> 「交易的 `to` 不可是被委派的 EOA 本身」,我把整條標成錯的 —— 但它對**空 calldata**
-> 的情況是對的,只有對「非空且 selector 對得上」的情況是錯的。兩種 calldata 要分開講。
+> **This is also where I over-corrected while fixing my notes on 09-08.**
+> `ensv2-sepolia.md` recorded that "the transaction's `to` must not be the delegated EOA
+> itself", and I marked the whole note wrong — but it is correct for **empty calldata** and
+> wrong only for calldata that is non-empty with a matching selector. The two cases have to be
+> stated separately.
 
-`fallback` 用 `revert` 而不是靜默接受,因為靜默接受會讓「打錯 selector」
-看起來像成功。這個帳戶不做通用呼叫轉發(見 YAGNI 表)。
+`fallback` reverts rather than accepting silently, because accepting silently would make a
+mistyped selector look like success. This account does not do general-purpose call
+forwarding (see the YAGNI table).
+## Allow-list changes: widening needs an attestation, reducing does not
 
-## 允許清單的變更:擴權要 attestation,縮權不要
+The asymmetry in the types is deliberate — the function signature alone tells you which
+operations need a human.
 
-型別上的不對稱是刻意的 —— 看函式簽章就知道哪些操作需要真人。
-
-> 🔴 **這張表初版有一個 critical。** 初版的擴權那幾列只寫「要 attestation」,
-> 沒有 sender 檢查 —— 因為我照抄了 `PolicyApprovals.sol` 的註解
-> 「門檻是背書,不是身分」。**那個註解在它自己的情境裡是對的,套到這裡是錯的:**
-> `PolicyApprovals` 是全域單例,「誰送這筆交易」真的不重要;
-> 而 per-wallet 的帳戶**有一個天然的正規送出者**(錢包自己)。
+> 🔴 **The first version of this table had a critical.** Its widening rows said only "needs
+> an attestation", with no sender check — because I had copied across the comment from
+> `PolicyApprovals.sol`, "the gate is the attestation, not an identity". **That comment is
+> correct in its own context and wrong when carried here:** `PolicyApprovals` is a global
+> singleton where who submits the transaction genuinely does not matter, while a per-wallet
+> account **has a natural canonical sender** (the wallet itself).
 >
-> 配上 `MockAttester`(對任何輸入回 `true`,而且**就是我們 09-08 部署在 Sepolia
-> 上正在用的那一個**),被入侵的 agent 三步就能清空錢包:
-> `allowPayee(自己)` → `allowToken(無限額度)` → `spend(全部餘額)`。
-> 它沒有繞過檢查 —— **它改寫了檢查的輸入。**
+> Combined with `MockAttester` (which returns `true` for any input, and **is exactly the one
+> we deployed on Sepolia on 09-08 and are using**), a compromised agent could empty the
+> wallet in three steps: `allowPayee(itself)` → `allowToken(no limit)` →
+> `spend(entire balance)`. It never bypassed a check — **it rewrote the check's inputs.**
 >
-> 而且這復活了決定 2 想殺掉的攻擊:委派後 storage 空白的那段窗口,
-> 任何人都能先把自己種進白名單,等真正的持有者綁定 agent 之後就生效,
-> 而持有者沒有理由去看。**決定 2 是對的,但不夠。**
+> And it resurrects the attack decision 2 was meant to kill: during the window after
+> delegation when storage is still blank, anyone can plant themselves on the allow-list, and
+> it takes effect once the real holder binds an agent — with no reason for the holder to
+> look. **Decision 2 was right, but not sufficient.**
 
-| 動作 | 誰可以 | 要 attestation | 事件 |
+| Action | Who may | Attestation | Event |
 |---|---|---|---|
 | `bindAgent(agent, node, label)` | `address(this)` | ❌ | `AgentBound` |
-| `unbindAgent(agent)` | `address(this)` **或該 agent 自己** | ❌ | `AgentRevoked` |
+| `unbindAgent(agent)` | `address(this)` **or that agent itself** | ❌ | `AgentRevoked` |
 | `restoreAgent(agent, node, label, attestation)` | `address(this)` | ✅ | `AgentBound` |
-| `revokeAgent(agent)` | `address(this)` **或該 agent 自己** | ❌ | `AgentRevoked` |
-| `pause()` | `address(this)` 或任何**未被撤銷的**被綁定 agent | ❌ | `Paused` |
+| `revokeAgent(agent)` | `address(this)` **or that agent itself** | ❌ | `AgentRevoked` |
+| `pause()` | `address(this)` or any bound agent **that has not been revoked** | ❌ | `Paused` |
 | `unpause()` | `address(this)` | ❌ | `Unpaused` |
 | `setRule(node, token, rule, attestation)` | `address(this)` | ✅ | `TokenAllowed` / `LimitRaised` |
 | `allowPayee(node, token, payee, attestation)` | `address(this)` | ✅ | `PayeeAllowed` |
 | `tightenRule(node, token, rule)` | `address(this)` | ❌ | `LimitLowered` / `TokenRemoved` |
 | `removePayee(node, token, payee)` | `address(this)` | ❌ | `PayeeRemoved` |
 
-**擴權是「兩個都要」(two-of-two):`msg.sender == address(this)` **且** 有效的 attestation。**
+**Widening is two-of-two: `msg.sender == address(this)` **and** a valid attestation.**
 
-**`bindAgent` 對已存在的綁定必須 revert。** 否則「撤銷一個 agent 之後免費重新綁回來」
-就繞過了凍結文件對理由碼 2 的規定(`AGENT_REVOKED` 的解除條件是
-「ADMIN(縮權免刷臉,**恢復要刷臉**)」)。
+**`bindAgent` must revert on an existing binding.** Otherwise "revoke an agent, then rebind
+it for free" would sidestep what the frozen document says about reason code 2 (clearing
+`AGENT_REVOKED` requires "ADMIN — reducing needs no face scan, **restoring does**").
 
-**但這樣會讓「綁錯」變成永久的** —— review 第二輪抓到的:`bindAgent` 對已存在的綁定
-revert、`restoreAgent` 又只還原舊的 node/label,那麼把 agent A 綁到錯的名字一次,
-就再也改不回來了。
+**But that would make a wrong bind permanent** — caught in round two of review: with
+`bindAgent` reverting on an existing binding and `restoreAgent` only restoring the old
+node/label, binding agent A to the wrong name once would leave it unfixable.
 
-**兩個函式一起解:**
-- **`unbindAgent(agent)` 完全免費**(`address(this)` 或該 agent 自己)。
-  解除綁定是**縮權** —— 那個 agent 從此什麼都不能做,把它變回未綁定狀態。
-  之後就能用 `bindAgent` 重新綁到正確的名字
-- **`restoreAgent(agent, node, label, attestation)` 帶完整參數**,三者都進 digest。
-  這是「把一個被撤銷的 agent 恢復」的路徑,要 attestation
+**Two functions solve it together:**
+- **`unbindAgent(agent)` is entirely free** (`address(this)` or that agent itself).
+  Unbinding is a **reduction** — that agent can do nothing afterwards, returned to the
+  unbound state. It can then be bound to the correct name with `bindAgent`
+- **`restoreAgent(agent, node, label, attestation)` takes the full parameters**, all three of
+  which go into the digest. This is the path for restoring a revoked agent, and it needs an
+  attestation
 
-`unbindAgent` 後再 `bindAgent` 需要兩筆交易,但**不需要刷臉** —— 因為兩步都是縮權
-(先歸零,再從零開始),中間沒有任何一刻權限比原本大。這是對的不對稱。
-每個函式一行的成本,而它把 C1 那條攻擊鏈的第一步就切斷了。
+`unbindAgent` then `bindAgent` takes two transactions but **needs no face scan** — because
+both steps are reductions (return to zero, then start from zero), and at no point in between
+does the agent hold more authority than before. That is the correct asymmetry. It costs one
+line per function, and it cuts the C1 attack chain at its first step.
 
-**`pause()` 連 agent 自己都能按。** 理由跟 `PolicyApprovals.revoke` 一樣:
-踩煞車只會讓系統更嚴,讓它需要權限是在出事的那一刻幫攻擊者省事。
-**但 `unpause` 因此不能要 attestation** —— 否則被入侵的 agent 可以免費 `pause`、
-反覆逼持有者刷臉。免費的煞車必須配免費的放開,兩邊都由錢包自己控制。
+**Even an agent itself can press `pause()`.** Same reasoning as `PolicyApprovals.revoke`:
+hitting the brake can only make the system stricter, and requiring a permission for it does
+the attacker a favour at exactly the moment things go wrong.
+**Which is precisely why `unpause` cannot require an attestation** — otherwise a compromised
+agent could `pause` for free and force the holder to scan their face over and over. A free
+brake demands a free release, both controlled by the wallet itself.
 
-### `tightenRule`:把「更嚴」變成可檢查的斷言
+### `tightenRule`: turning "stricter" into a checkable assertion
 
-`TokenRule` 有五個可調欄位(`allowed` / `txLimit` / `periodLimit` / `period` / 時段)。
-配對式的 raise/lower 函式會漏掉 window 和 period,而**漏掉的那些正好可以被用來放寬**:
+`TokenRule` has five tunable fields (`allowed` / `txLimit` / `periodLimit` / `period` / the
+window). A pair of raise/lower functions would leave the window and the period uncovered, and
+**precisely those omissions could then be used to widen**:
 
-> `period` 一改,`periodIdx` 就變,`spent` 的計數歸零 —— **「調低上限」反而讓可花的變多。**
+> Change `period` and `periodIdx` changes with it, zeroing the `spent` counter — so
+> **"lower the cap" would actually increase what can be spent.**
 
-所以縮權只有一個入口,而且它要求**每一個欄位都弱單調收緊**:
+So reduction has a single entry point, and it requires **every field to be weakly
+monotonically tightened**:
 
 ```solidity
 function _isTighter(TokenRule memory old_, TokenRule memory new_) private pure returns (bool) {
-    if (old_.allowed && !new_.allowed) return true;      // 直接關掉一定更嚴
-    if (!old_.allowed) return false;                     // 原本就關著,沒有更嚴可言
+    if (old_.allowed && !new_.allowed) return true;      // switching it off is always stricter
+    if (!old_.allowed) return false;                     // already off; nothing stricter to be
     return _lteOrUnlimited(new_.txLimit, old_.txLimit)
         && _lteOrUnlimited(new_.periodLimit, old_.periodLimit)
-        && new_.period == old_.period                    // ← 不准動,見上
-        && new_.epoch  == old_.epoch                     // ← 也不准動,否則就是免費清帳
+        && new_.period == old_.period                    // <- must not move; see above
+        && new_.epoch  == old_.epoch                     // <- must not move either, or the ledger wipes for free
         && _windowIsSubset(new_, old_);
 }
 ```
 
-注意 `0 = 不限` 的語意讓「比較大小」不是單純的 `<=`:從 `0` 改成 `100` 是**收緊**,
-從 `100` 改成 `0` 是**放寬**。`_lteOrUnlimited` 要處理這個反轉,**而且要有專門測試** ——
-這是最容易寫反的一行。(review 第二輪確認這個語意是對的。)
+Note that the `0 = unlimited` semantics make "compare magnitudes" more than a plain `<=`:
+`0` → `100` **tightens**, while `100` → `0` **widens**. `_lteOrUnlimited` has to handle that
+inversion, **and it needs a dedicated test** — it is the easiest line in the design to get
+backwards. (Round two of review confirmed the semantics are right.)
 
-#### `_windowIsSubset` —— 要明確定義,因為時段會跨午夜
+#### `_windowIsSubset` — define it explicitly, because windows cross midnight
 
-`StandardPolicy._inWindow`(`src/StandardPolicy.sol:41-48`)的語意是:
+The semantics of `StandardPolicy._inWindow` (`src/StandardPolicy.sol:41-48`):
 
-- `start == end` → **全天開放**
-- `start < end` → 同日區間 `[start, end)`
-- `start > end` → **跨午夜**,例如 22:00–06:00 = `[start, 1440) ∪ [0, end)`
+- `start == end` → **open all day**
+- `start < end` → the same-day interval `[start, end)`
+- `start > end` → **crossing midnight**, e.g. 22:00-06:00 = `[start, 1440) ∪ [0, end)`
 
-所以「更嚴」不能只比數字大小。三條規則,每一條都要有測試:
+So "stricter" cannot be decided by comparing magnitudes. Three rules, each needing a test:
 
-| 情況 | 判定 | 例 |
+| Case | Verdict | Example |
 |---|---|---|
-| 舊的是全天(`start == end`) | 新的**任何**時段都是收緊 | `(0,0)` → `(9,17)` ✅ |
-| 新的是全天,舊的不是 | **放寬,拒絕** | `(9,17)` → `(0,0)` ❌ |
-| 兩者都是有限區間 | 新的分鐘集合必須是舊的**子集** | `(21,7)` → `(22,6)` ✅;`(22,6)` → `(21,7)` ❌ |
+| The old window is all day (`start == end`) | **any** new window tightens | `(0,0)` → `(9,17)` ✅ |
+| The new window is all day and the old is not | **a widening; refuse** | `(9,17)` → `(0,0)` ❌ |
+| Both are bounded intervals | the new minute set must be a **subset** of the old | `(21,7)` → `(22,6)` ✅; `(22,6)` → `(21,7)` ❌ |
 
-跨午夜的子集判斷不要試圖用不等式湊 —— **把區間正規化成 `[start, start + length)` 之後
-比較 `start` 位移與 `length`**,或者直接接受 O(1440) 的迴圈(這是 `view`,gas 不重要,
-而且 `tightenRule` 一天跑不到幾次)。**清楚勝過聰明,這一段寫錯會靜默地放寬規則。**
+Do not try to decide the overnight subset case with inequalities — **normalise each interval
+to `[start, start + length)` and compare the offset and the length**, or simply accept an
+O(1440) loop.
 
-### 兩個與凍結事件對應的細節
+> ⚠️ **The parenthetical that used to be here — "this is a `view`, so gas does not matter" —
+> was wrong.** `_windowIsSubset` is called from `tightenRule`, which is external and
+> state-changing, so the gas is really paid in a transaction. Measured at about 480k gas in
+> the worst case. The loop is still the right choice; the reason is clarity, not that it is
+> free.
 
-**`Unpaused(by, attestationHash)` 有一個 hash 欄位,而 `unpause()` 已改成不收 attestation。**
-→ 發 `bytes32(0)`。subgraph 要把 `0` 解讀為「不需背書的解除」,而不是「缺資料」。
+**Clear beats clever: getting this section wrong silently widens the rule.**
 
-**`setRule` 對應到兩個凍結事件**(`TokenAllowed` / `LimitRaised`),要講明何時發哪一個,
-否則 subgraph 的兩個 handler 會各自臆測:
+### Two details that line up with the frozen events
 
-| 條件 | 發什麼 |
+**`Unpaused(by, attestationHash)` has a hash field, while `unpause()` no longer takes an
+attestation.** → Emit `bytes32(0)`. The subgraph must read `0` as "an unpause that needs no
+attestation", not as missing data.
+
+**`setRule` maps onto two frozen events** (`TokenAllowed` / `LimitRaised`), and which fires
+when must be stated, or the subgraph's two handlers will each guess:
+
+| Condition | Emit |
 |---|---|
-| `allowed` 從 `false` → `true` | `TokenAllowed` |
-| `txLimit` 或 `periodLimit` 或 `period` 變寬鬆(含 `epoch` 遞增) | `LimitRaised` |
-| 兩者同時發生 | **兩個都發**,順序為 `TokenAllowed` 再 `LimitRaised` |
+| `allowed` goes `false` → `true` | `TokenAllowed` |
+| `txLimit`, `periodLimit` or `period` loosens (including an `epoch` increment) | `LimitRaised` |
+| Both at once | **both**, in the order `TokenAllowed` then `LimitRaised` |
 
-`tightenRule` 同理:關掉代幣發 `TokenRemoved`,收緊額度發 `LimitLowered`,可能兩個都發。
+`tightenRule` is the mirror: disabling a token emits `TokenRemoved`, tightening a limit emits
+`LimitLowered`, and both may fire.
 
-### attestation 的 digest 綁住什麼
+### What an attestation's digest binds
 
 ```solidity
 digest = keccak256(abi.encode(
-    TYPEHASH,          // 每個動作一個
-    address(this),     // ← 這個錢包。A 的背書挪不到 B
-    SELF,              // ← **這一版 impl**。見下
-    block.chainid,     // ← 這條鏈
-    node, token, ...,  // 動作的參數
-    nonce              // ← 防重放
+    TYPEHASH,          // one per action
+    address(this),     // <- this wallet. A's attestation cannot be moved to B
+    SELF,              // <- **this impl version**. See below
+    block.chainid,     // <- this chain
+    node, token, ...,  // the action's parameters
+    nonce              // <- replay protection
 ));
 require(!usedAttestations[digest]);
 ```
 
-`address(this)` 在 7702 delegate 裡就是**那個 EOA**,所以同一份 impl 底下
-每個錢包的 digest 天然不同 —— 不需要額外的 salt。
+Inside a 7702 delegate, `address(this)` is **that EOA**, so under one impl every wallet's
+digest naturally differs — no extra salt is needed.
 
-**但 `address(this)` 不足以綁住「哪一版 impl」** —— review 第二輪抓到的。
-錢包 W 重新委派到 impl v2 之後,`address(this)` 仍然是 W,
-所以一份**當初為 v1 簽的 attestation 可以在 v2 上重放**,
-而 `usedAttestations` 是存在 EOA storage 裡的、v2 讀的是同一份 mapping…
-**但如果 v2 換了 ERC-7201 命名空間(見「Storage」一節,換佈局就換字串),
-那份「已用過」的紀錄就讀不到了,重放就成立。**
+**But `address(this)` is not enough to bind which impl version** — caught in round two of
+review. After wallet W redelegates to impl v2, `address(this)` is still W, so **an attestation
+signed for v1 could be replayed on v2** — and while `usedAttestations` lives in the EOA's
+storage and v2 reads the same mapping… **if v2 changed its ERC-7201 namespace (see the
+"Storage" section: change the layout, change the string), that "already used" record becomes
+unreadable and the replay succeeds.**
 
-修法:加一個 `address immutable SELF`,在 constructor 裡設成 `address(this)` ——
-那是**實作合約自己**被部署時的位址,不是執行時的 EOA。
-delegate 執行時 `address(this)` 是 EOA,而 `SELF` 仍然是 impl 的位址,
-兩者一起進 digest 就同時綁住「哪個錢包」和「哪一版 impl」。
+The fix: add an `address immutable SELF`, set in the constructor to `address(this)` — the
+address the **implementation contract itself** was deployed at, not the EOA at execution time.
+When the delegate runs, `address(this)` is the EOA while `SELF` is still the impl's address,
+and putting both into the digest binds which wallet *and* which impl version.
 
-> 這是 7702 特有的一個小陷阱:同一份程式碼裡,`address(this)` 和
-> 「這份程式碼住在哪」是**兩個不同的值**。`immutable` 在部署時被烙進 bytecode,
-> 所以它記得的是後者。
+> A small trap specific to 7702: inside one piece of code, `address(this)` and "where this
+> code lives" are **two different values**. An `immutable` is burned into the bytecode at
+> deploy time, so it remembers the latter.
+
+---
+## Four amendments to a frozen document — **one of which is not an addition**
+
+`docs/events.md`'s freeze rule is "fields and events may be added; **the type, order or
+meaning of an existing field may not change**". The first version of this spec claimed there
+were only two amendments and that both were additions. **That was wrong** — review found
+four, of which one is a deviation, one widens a field's range, and one was simply my
+mistake. Making exactly this kind of thing surface is what the freeze rule is for, so all
+four are listed below, and each needs a corresponding line in `events.md`'s change log.
+
+### 1. Adding reason code 12 `POLICY_FAILED`
+
+There was no existing code for step 8 failing closed. Reusing `POLICY_NOT_APPROVED` (4)
+would mislead the subgraph — that code means "no human approved this policy", while the
+situation here is "this policy is broken or eats too much gas". The two call for entirely
+different responses.
+
+### 2. One new constraint on the `IPolicy` interface
+
+> **A policy may only write to its ledger when it returns `Reason.OK`.**
+
+Because the account **does not revert** when it blocks: if a policy debits the shared budget
+and *then* returns "over limit", that debit is never rolled back and the shared budget leaks.
+The way `SharedBudgetPolicy` is written happens to be correct (check first, then accumulate),
+but that is an accident rather than a requirement — write it into `IPolicy`'s doc comments.
+
+### 3. `AttesterGate` will not exist, and its events move to the consumers ⚠️ **a deviation**
+
+Section 4 of `events.md` has a standalone component, `AttesterGate`, carrying
+`AttestationAccepted(...)`. We decided not to build it (decision 7) — the only consumers of
+an attestation are `LeashAccount` and `PolicyApprovals`, embedding the verification in each
+is simpler than another layer of forwarding, and an extra contract buys nothing within a
+five-day budget.
+
+**What this changes is who emits the event**, not its fields. The subgraph's data source has
+to follow. Mark in `events.md` that this component does not exist, so nobody later assumes it
+was forgotten.
+
+**Ownership settled (round two of review required this be decided on the spot, not left
+open):** `AttestationAccepted` is **emitted by `LeashAccount`**, because it is the only place
+holding the nonce and `usedAttestations` — the value of that event is the anti-replay audit
+trail. `PolicyApprovals` **does not** emit it; it already carries the same information in
+`PolicyApproved.attestationHash`, and changing an already-deployed contract for this is not
+worth it. Both sentences go into `events.md`, pinning down where the event comes from.
+
+Separately, `AttestationAccepted.action` is documented as "maps to reason codes 4-9", and we
+also need to cover **11** (the shared budget). That **widens an existing field's range**, and
+the change log needs a line for it.
+
+### 4. Reason code 10 `PAUSED` ⚠️ **here the spec was wrong, not the document**
+
+The frozen table says `| 10 | PAUSED | the whole account is paused | **ADMIN** |`, with the
+note below that "1-3 and 10 are an ADMIN's routine operations" — **needing no face scan**.
+
+The first version of this spec wrote `unpause(attestation)`, **in direct conflict with the
+frozen document.**
+
+**The frozen document is right.** And for a reason more substantial than "it was written
+first": any bound agent can `pause` for free, so if `unpause` cost a face scan, a compromised
+agent could force the holder to scan over and over — a DoS. A free brake demands a free
+release. Changed to `address(this)` per decision 6.
+
+**This item is listed here because the first version of the spec claimed there were "only two
+amendments, both additions", and that was false.** Of the four, one is a deviation (item 3),
+one widens a range (the second half of item 3), and one was simply my mistake (item 4). The
+freeze rule exists to force exactly this into the open; it must not be quietly patched.
+
+### Something that is not a documentation problem but would leave the subgraph blind
+
+`SpendExecuted` and `SpendBlocked` **are emitted from each EOA itself**, not from one shared
+contract. And 7702 delegation **emits no log at all**, so there is no factory event to
+trigger a subgraph template from — **the subgraph does not know which addresses to watch.**
+
+Two fixes; sprint item 9 has to pick:
+- **Hardcode** the demo wallet addresses in `subgraph.yaml` (simplest, and enough for a
+  hackathon)
+- Emit `Leashed(node, wallet, impl)` on the **first `bindAgent`** as the template's trigger
+  (cleaner, and `Leashed` is already in the frozen schema, so this gives it a definite moment
+  of emission)
+
+**Recommend doing both:** emitting `Leashed` is the correct design, and hardcoding the
+addresses is the demo's insurance.
+
 
 ---
 
-## 對已凍結文件的四處增修 —— **其中一項不是加法**
+## `LeashLens` — is the leash still on?
 
-`docs/events.md` 的凍結規則是「只准加欄位、加事件,**不准改既有欄位的型別、順序或語意**」。
-初版聲稱只有兩處增修、都是加法。**那是錯的** —— review 抓出實際是四處,
-而且有一處是偏離、一處是值域擴大、一處根本是我寫錯。
-凍結規則的意義就是逼這種事浮出來,所以全部列在下面,並且要在 `events.md`
-的變更紀錄留下對應的行。
+`PLAN.md` originally specified `isLeashed(bytes32 node) → (bool, address)`, walking
+ENS → wallet → delegate. **That direction does not exist** — ENS records node → policy, there
+is no node → wallet reverse index, and building one costs another contract and another thing
+to maintain.
 
-### 1. 新增理由碼 12 `POLICY_FAILED`
-
-第 8 步 fail-closed 時沒有現成的碼可用。挪用 `POLICY_NOT_APPROVED`(4)會誤導
-subgraph —— 那個碼的語意是「這份 policy 沒被真人批准」,而這裡的情況是
-「這份 policy 壞了或吃太多 gas」。兩者的處置完全不同。
-
-### 2. `IPolicy` 新增一條介面約束
-
-> **policy 只能在回傳 `Reason.OK` 時記帳。**
-
-因為帳戶在被擋時**不 revert**,如果 policy 先扣了共用預算才回傳「超限」,
-那筆扣款不會被回滾,共用預算會漏。`SharedBudgetPolicy` 現在的寫法剛好是對的
-(先檢查再累加),但那是巧合而不是被要求的 —— 寫進 `IPolicy` 的文件註解。
-
-### 3. `AttesterGate` 不會存在,那些事件改由消費者發出 ⚠️ **偏離**
-
-`events.md` 第四節有一個獨立元件 `AttesterGate`,帶 `AttestationAccepted(...)`。
-我們決定不做(決定 7)—— attestation 的消費者只有 `LeashAccount` 和 `PolicyApprovals`,
-各自內嵌驗證比多一層轉發簡單,而多一份合約在 5 天的預算裡買不到東西。
-
-**這改變的是「誰發這個事件」**,不是欄位。subgraph 的資料來源要跟著改。
-要在 `events.md` 標注這個元件不存在,免得日後有人以為漏做了。
-
-**決定歸屬(review 第二輪要求當場定案,不要留著):**
-`AttestationAccepted` **由 `LeashAccount` 發出**,因為它是唯一持有 nonce 與
-`usedAttestations` 的地方 —— 那個事件的價值就在防重放的審計軌跡。
-`PolicyApprovals` **不發**它,它已經有 `PolicyApproved.attestationHash` 承載同樣的資訊,
-為此改一份已部署的合約不值得。這兩句要寫進 `events.md`,把事件的來源釘死。
-
-另外 `AttestationAccepted.action` 的文件寫「對應理由碼 4–9」,而我們還需要涵蓋
-**11**(共用預算)。那是**擴大既有欄位的值域**,變更紀錄要記一行。
-
-### 4. 理由碼 10 `PAUSED` ⚠️ **這一項是 spec 錯了,不是文件要改**
-
-凍結表寫:`| 10 | PAUSED | 整個帳戶被暫停 | **ADMIN** |`,下方註明
-「1–3、10 是 ADMIN 的日常操作」——**不需刷臉**。
-
-初版 spec 寫 `unpause(attestation)`,**與凍結文件直接衝突**。
-
-**凍結文件是對的。** 而且理由比「文件先寫」更實質:任何被綁定的 agent 都能免費
-`pause`,若 `unpause` 要刷臉,被入侵的 agent 就能反覆逼持有者刷臉 —— 那是一個 DoS。
-免費的煞車必須配免費的放開。已依決定 6 改成 `address(this)`。
-
-**我把這一項列在這裡,是因為初版 spec 聲稱「只有兩處增修、都是加法」而那是錯的。**
-四處裡有一處是偏離(第 3 項)、一處是值域擴大(第 3 項後半)、一處根本是我寫錯
-(第 4 項)。凍結規則的意義就是逼這種事浮出來,不該悄悄改掉。
-
-### 一件不是文件問題、但會讓 subgraph 索引不到的事
-
-`SpendExecuted` / `SpendBlocked` **是從每一個 EOA 自己發出來的**,不是從一份共用合約。
-而 7702 的委派**不發任何 log**,所以沒有 factory 事件可以觸發 subgraph 的 template ——
-**subgraph 不知道要監聽哪些位址。**
-
-兩個解法,sprint 項目 9 要挑:
-- 在 `subgraph.yaml` 裡**寫死** demo 用的錢包位址(最簡單,hackathon 足夠)
-- 在**第一次 `bindAgent`** 時發 `Leashed(node, wallet, impl)` 當 template 的觸發點
-  (較乾淨,而且 `Leashed` 已經在凍結 schema 裡,正好給它一個明確的觸發時機)
-
-**建議兩個都做:** 發 `Leashed` 是對的設計,寫死位址是 demo 的保險。
-
-
----
-
-## `LeashLens` —— 韁繩還在嗎
-
-`PLAN.md` 原本寫 `isLeashed(bytes32 node) → (bool, address)`,走「ENS → 錢包 → 委派對象」。
-**這個方向不存在** —— ENS 記的是 node → policy,沒有 node → wallet 的反查表,
-而建一張反查表要多一份合約和多一筆維護。
-
-改成:
+Changed to:
 
 ```solidity
 contract LeashLens {
@@ -573,100 +641,104 @@ contract LeashLens {
 }
 ```
 
-讀 `wallet.code`,檢查長度是 23 且前綴為 `0xef0100`,回傳後面那 20 bytes。
-前端進頁面時查一次,監控腳本定期查。
+Read `wallet.code`, check that its length is 23 and its prefix is `0xef0100`, and return the
+20 bytes that follow. The frontend checks once on load; a monitoring script polls.
 
-**EIP-7702 的委派變更不發任何 log**,所以 subgraph 索引不到「拆掉韁繩」這件事 ——
-只能靠 `eth_call` 輪詢。這已經寫在 `events.md`,`LeashLens` 是它的實作。
+**An EIP-7702 delegation change emits no log at all**, so a subgraph cannot index the leash
+coming off — only `eth_call` polling can observe it. This is already written in `events.md`;
+`LeashLens` is its implementation.
 
 ---
+## Error handling, complete
 
-## 錯誤處理總表
-
-| 情況 | 行為 |
+| Situation | Behaviour |
 |---|---|
-| caller 不是被綁定的 agent | **revert** `NotBoundAgent` |
-| 重入 | **revert** `Reentrant` |
-| caller 已綁定但**已被撤銷** | `SpendBlocked(AGENT_REVOKED)`,不 revert |
-| ENS 任一跳 revert / 回 `0x0` / **回傳長度不符該跳的預期(1:32、2:32、3:96)** | `SpendBlocked(NO_POLICY)` |
-| policy 不在批准清單 | `SpendBlocked(POLICY_NOT_APPROVED)` |
-| `policy.check` revert / 超過 gas 上限 / 回傳長度 ≠ 32 | `SpendBlocked(POLICY_FAILED)` |
-| policy 回傳 `reason != OK` | `SpendBlocked(reason)` |
-| `token.transfer` revert 或回傳非 32-byte `true` | **revert**(整筆原子回滾) |
-| `amount == 0` | **revert** `ZeroAmount` —— 沒有意義,而且會污染 subgraph |
-| `token` 或 `payee` 是 `address(this)` / `address(0)` | **revert** `BadTarget`(見下) |
+| The caller is not a bound agent | **revert** `NotBoundAgent` |
+| Reentrancy | **revert** `Reentrant` |
+| The caller is bound but **has been revoked** | `SpendBlocked(AGENT_REVOKED)`, no revert |
+| Any ENS hop reverts / returns `0x0` / **returns a length other than that hop expects (1: 32, 2: 32, 3: 96)** | `SpendBlocked(NO_POLICY)` |
+| The policy is not on the approval list | `SpendBlocked(POLICY_NOT_APPROVED)` |
+| `policy.check` reverts / blows the gas cap / returns a length ≠ 32 | `SpendBlocked(POLICY_FAILED)` |
+| The policy returns `reason != OK` | `SpendBlocked(reason)` |
+| `token.transfer` reverts or returns anything but a 32-byte `true` | **revert** (the whole thing rolls back atomically) |
+| `amount == 0` | **revert** `ZeroAmount` — meaningless, and it would pollute the subgraph |
+| `token` or `payee` is `address(this)` / `address(0)` | **revert** `BadTarget` (see below) |
 | `token.code.length == 0` | **revert** `BadTarget` |
-| attestation 已用過 | **revert** `AttestationReused` |
+| The attestation has already been used | **revert** `AttestationReused` |
 
-### 🔴 `token` 和 `payee` 由 agent 指定,必須擋掉指回自己
+### 🔴 `token` and `payee` are chosen by the agent, so pointing back at this account must be blocked
 
-第 11 步 `token.transfer(payee, amount)` 送出去時,`msg.sender == address(this)` ——
-**那正是 `bindAgent` / `tightenRule` / `removePayee` 接受的那個憑證。**
+When step 11's `token.transfer(payee, amount)` goes out, `msg.sender == address(this)` —
+**exactly the authority `bindAgent` / `tightenRule` / `removePayee` accept.**
 
-今天的 selector 沒有碰撞(`transfer` 是 `0xa9059cbb`),所以不是立即的接管。
-但危險在回傳值檢查:如果用 SafeERC20 那種寬鬆慣例
-(`success && (ret.length == 0 || abi.decode(ret) == true)`),那麼:
+Today there is no selector collision (`transfer` is `0xa9059cbb`), so this is not an
+immediate takeover. The danger is in the return check: with SafeERC20's permissive
+convention (`success && (ret.length == 0 || abi.decode(ret) == true)`), then:
 
-- `token == address(this)` → 打到自己的 `fallback`,若 `fallback` 不 revert 就**回報成功但沒有轉帳**
-- `token == address(0)` → 對空位址的呼叫**永遠成功、回傳空 returndata** → 寬鬆檢查判定成功
+- `token == address(this)` → hits our own `fallback`, and if that does not revert, it
+  **reports success while transferring nothing**
+- `token == address(0)` → a call to an empty address **always succeeds and returns empty
+  returndata** → the permissive check reads it as success
 
-兩種情況都是:**`spent` 增加、`SpendExecuted` 發出,而錢一分都沒動。**
-subgraph 會記下一筆不存在的付款。
+Both cases mean: **`spent` increases and `SpendExecuted` is emitted while not a cent
+moved.** The subgraph would record a payment that never happened.
 
 ```solidity
 if (token == address(this) || payee == address(this)) revert BadTarget();
 if (token == address(0)   || payee == address(0))     revert BadTarget();
 if (token.code.length == 0)                           revert BadTarget();
-// policy 也不能是自己 —— 同樣的憑證問題
+// the policy must not be this account either - the same authority-confusion problem
 if (policy == address(this)) return NO_POLICY;
 ```
 
-**而且回傳值檢查要嚴格:** 恰好 32 bytes 且解出來是 `true`。
-不用 SafeERC20 的寬鬆版 —— 我們只需要支援自己 demo 用的代幣,
-不需要相容那些回傳空值的老式 ERC-20。**寬鬆換來的相容性,在這裡的代價是一個假的成功。**
+**And the return check must be strict:** exactly 32 bytes that decode to `true`.
+Not SafeERC20's permissive variant — we only need to support the tokens our own demo uses,
+not to be compatible with old ERC-20s that return nothing. **The compatibility permissiveness
+buys is paid for here with a fake success.**
 
-**`POLICY_GAS = 200_000`。** policy 真的需要更多就會 fail-closed。
-這是刻意的上限:一份能燒掉全部 gas 的 policy 等於一個 DoS 開關。
-數字寫成 `constant` 並在文件裡講明。
+**`POLICY_GAS = 200_000`.** A policy that genuinely needs more fails closed.
+The cap is deliberate: a policy that can burn all the gas is a DoS switch.
+Write the number as a `constant` and state it in the documentation.
 
 ---
 
-## 測試計畫
+## Test plan
 
-| 層 | 工具 | 蓋什麼 |
+| Layer | Tool | What it covers |
 |---|---|---|
-| **7702 語意** | `vm.signAndAttachDelegation` | 委派後可呼叫、storage 屬於 EOA、兩個 EOA 互不干擾、**攻擊者搶不到控制權** |
-| **fork** | `vm.createSelectFork(sepolia)` | ENS 三跳打真的 registry,用 09-08 已部署的位址。**快樂路徑必須在這一層驗過** |
-| **單元** | mock registry / mock policy | 每一個理由碼各一條測試,含 `POLICY_FAILED` 的三種觸發方式(revert / 燒 gas / 回傳長度錯) |
-| **重入** | 惡意代幣與惡意收款人 | 鎖有效,而且「先記帳」在鎖失效時仍然擋得住 |
-| **不對稱** | — | 每一個擴權函式沒有 attestation 就失敗;每一個縮權函式不需要 attestation |
-| **fuzz** | — | 預算記帳不溢位、不少扣;任意 `amount` 序列的累計等於逐筆相加 |
-| **三層撤銷** | fork | 換 policy / `revoke(label)` / `expiry` 到期 / `setSubregistry(0x0)` 各自讓花費停下來 |
-| **每一跳的長度** | fork + mock | 第 1/2 跳 32 bytes、第 3 跳 96 bytes。**故意回傳錯長度的假 registry 要被判成 `NO_POLICY`** |
-| **收 ETH** | 7702 | 委派後 `payable(wallet).call{value: 1 ether}("")` **必須成功** |
-| **C1 迴歸** | 7702 + `MockAttester` | **在 mock attester 接著的情況下**,非 `address(this)` 的 caller 呼叫每一個擴權函式都要失敗 |
-| **C4 邊界** | 7702 | WALLET 直簽 `USDC.transfer` **成功**,且**不發** `SpendExecuted` —— 把逃生口釘成規格 |
-| **假成功** | mock | `token`/`payee` = `address(this)` / `address(0)` / 無 code → revert,`spent` 不變 |
-| **`0 = 不限` 的反轉** | — | `txLimit` 從 `0`→`100` 是收緊(允許);`100`→`0` 是放寬(`tightenRule` 要拒絕) |
-| **impl 直接呼叫是惰性的** | — | 直接對 impl 位址呼叫 `spend` / 擴權函式,不得有任何效果 |
-| **理由碼全覆蓋** | mock | 每一個碼:`SpendBlocked` 有發出 **且** `balanceOf` 沒變 |
-| **namehash 不符** | — | `bindAgent(agent, node, label)` 的 node 與 label 不一致 → **revert**(M2 迴歸) |
-| **重複綁定** | — | 對已綁定的 agent 再 `bindAgent` → **revert**;`unbindAgent` 後可重新綁到正確的名字(M4 迴歸) |
-| **attestation 跨 impl 版本重放** | 7702 | 為 impl v1 簽的 attestation,在錢包改委派到 v2 之後**必須失效**(`SELF` 進 digest) |
-| **`_windowIsSubset`** | — | 三條規則各一:全天→有限 ✅、有限→全天 ❌、跨午夜子集 `(21,7)→(22,6)` ✅ 與 `(22,6)→(21,7)` ❌ |
-| **`epoch` 遞增才能清帳** | — | `tightenRule` 動 `epoch` 或 `period` → revert;`setRule` 改 `period` → `epoch` +1 且舊桶的累計**留在舊桶** |
+| **7702 semantics** | `vm.signAndAttachDelegation` | callable after delegating, storage belongs to the EOA, two EOAs do not interfere, **an attacker cannot seize control** |
+| **fork** | `vm.createSelectFork(sepolia)` | the three ENS hops against the real registry, using the addresses deployed 09-08. **The happy path must be verified at this layer** |
+| **unit** | mock registry / mock policy | one test per reason code, including all three ways to trigger `POLICY_FAILED` (revert / burn gas / wrong return length) |
+| **reentrancy** | a malicious token and a malicious payee | the lock works, and writing the ledger first still holds when the lock is defeated |
+| **asymmetry** | — | every widening function fails without an attestation; every reduction function needs none |
+| **fuzz** | — | budget accounting neither overflows nor under-debits; the running total for any sequence of `amount`s equals the sum |
+| **three revocation layers** | fork | swapping the policy / `revoke(label)` / `expiry` lapsing / `setSubregistry(0x0)` each stop spending |
+| **per-hop lengths** | fork + mock | 32 bytes for hops 1 and 2, 96 for hop 3. **A fake registry that deliberately returns the wrong length must be judged `NO_POLICY`** |
+| **receiving ETH** | 7702 | after delegating, `payable(wallet).call{value: 1 ether}("")` **must succeed** |
+| **C1 regression** | 7702 + `MockAttester` | **with the mock attester accepting everything**, every widening function must still fail for a caller that is not `address(this)` |
+| **C4 boundary** | 7702 | a WALLET-signed `USDC.transfer` **succeeds** and emits **no** `SpendExecuted` — pinning the escape hatch as a specification |
+| **fake success** | mock | `token`/`payee` = `address(this)` / `address(0)` / no code → revert, and `spent` unchanged |
+| **the inversion of `0 = unlimited`** | — | `txLimit` `0`→`100` tightens (allowed); `100`→`0` widens (`tightenRule` must refuse) |
+| **calling the impl directly is inert** | — | calling `spend` or any widening function on the impl address itself must have no effect |
+| **full reason-code coverage** | mock | for each code: `SpendBlocked` was emitted **and** `balanceOf` did not change |
+| **namehash mismatch** | — | `bindAgent(agent, node, label)` where node and label disagree → **revert** (M2 regression) |
+| **rebinding** | — | `bindAgent` on an already-bound agent → **revert**; after `unbindAgent` it can be bound to the correct name (M4 regression) |
+| **attestation replay across impl versions** | 7702 | an attestation signed for impl v1 **must be invalid** once the wallet redelegates to v2 (`SELF` goes into the digest) |
+| **`_windowIsSubset`** | — | one test per rule: all-day→bounded ✅, bounded→all-day ❌, overnight subset `(21,7)→(22,6)` ✅ and `(22,6)→(21,7)` ❌ |
+| **only `epoch` increments can wipe the ledger** | — | `tightenRule` touching `epoch` or `period` → revert; `setRule` changing `period` → `epoch` +1 with the old bucket's total **left in the old bucket** |
 
-**Definition of Done:** fork 測試裡,一個委派過的 EOA 能付款成功、
-能被四種撤銷手段各自擋下來,而且每一種都留下正確的理由碼。
+**Definition of done:** in the fork tests, a delegated EOA can pay successfully, can be
+stopped by each of the four revocation levers, and each of them leaves the correct reason
+code.
 
 ---
 
-## 明確不做的事(YAGNI)
+## Explicitly not doing (YAGNI)
 
-| 不做 | 為什麼 |
+| Not doing | Why |
 |---|---|
-| 通用的 `execute(target, data)` | `SpendContext` 已凍結成 payee/token/amount 的形狀。通用呼叫要 policy 去解 calldata,那是另一個專案 |
-| 原生 ETH 花費 | demo 用 MockUSDC。`token` 欄位保留,ETH 之後用 `address(0)` 慣例補得上 |
-| 批次花費 | 一次一筆,事件才對得起來 |
-| EIP-4337 相容 | 三個獎項沒有一個要求 |
-| 升級機制 | 7702 的重新委派**就是**升級機制 |
+| A general-purpose `execute(target, data)` | `SpendContext` is frozen into the payee/token/amount shape. General calls would need the policy to parse calldata, which is a different project |
+| Spending native ETH | The demo uses MockUSDC. The `token` field stays, and ETH can be added later under the `address(0)` convention |
+| Batched spends | One at a time, so the events line up |
+| EIP-4337 compatibility | None of the three prizes requires it |
+| An upgrade mechanism | Redelegating **is** 7702's upgrade mechanism |
