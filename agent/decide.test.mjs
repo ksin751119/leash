@@ -27,6 +27,16 @@ test("a payment inside every limit will pass", () => {
   assert.equal(d.reason, null);
 });
 
+// I5: `explain: null` on a pass reads as "nothing to say", which is exactly the silent
+// optimism the three-valued verdict was built to avoid - the five unindexed reasons must
+// stay visible somewhere the endpoint actually shows.
+test("a pass says what pre-flight cannot see, so it never reads as a silent guarantee", () => {
+  const d = decide(base(), intent(), NOW);
+  assert.equal(d.verdict, "will-pass");
+  assert.ok(d.explain && d.explain.length > 10, "will-pass must not carry a null explain");
+  assert.match(d.explain, /not indexed|only the chain/i);
+});
+
 test("a revoked agent is blocked with AGENT_REVOKED", () => {
   const s = base();
   s.agent.revoked = true;

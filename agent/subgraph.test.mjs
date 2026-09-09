@@ -13,13 +13,14 @@ const CFG = {
 const okBody = {
   data: {
     _meta: { block: { number: 11667861 } },
-    agent: { id: "x", revoked: false },
+    agent: { id: "x", revoked: false, node: "0x9B4CC5763F1C6DD5F80B1DD4D6D4C968B9971C25243467394F04E9AA1145E121" },
     subname: { label: "vendors", live: true },
     policyPointer: { policy: "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b", approved: true },
     agentBudget: {
       token: "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
       limit: "1000000000",
       spent: "300000000",
+      remaining: "700000000",
       periodEnd: "1788998400",
     },
     payees: [
@@ -56,6 +57,22 @@ test("a good response becomes a snapshot", async () => {
   assert.equal(s.budget.limit, "1000000000");
   assert.equal(s.budget.periodEnd, 1788998400, "periodEnd must be a number, not a string");
   assert.equal(s.payees["0x000000000000000000000000000000000000beef"].allowed, true);
+});
+
+// I3: the schema pre-computes `remaining` in the mapping precisely so the agent does not
+// re-derive it in JavaScript. Publishing it (alongside decide()'s own figure, which handles
+// the rollover case) means the endpoint stops silently dropping the index's own answer.
+test("the index's own remaining figure is published, lowercased ids included", async () => {
+  const s = await fetchSnapshot({ ...CFG, chainBlock: 11667862 }, stub(okBody));
+  assert.equal(s.budget.remaining, "700000000");
+  assert.equal(s.agent.node, "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121");
+});
+
+test("a null remaining (unlimited budget) is published as null, not the string \"null\"", async () => {
+  const body = structuredClone(okBody);
+  body.data.agentBudget.remaining = null;
+  const s = await fetchSnapshot(CFG, stub(body));
+  assert.equal(s.budget.remaining, null);
 });
 
 test("payee keys are lowercased so decide() can look them up", async () => {

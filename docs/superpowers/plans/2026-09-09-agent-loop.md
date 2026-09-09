@@ -1091,8 +1091,20 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
     return { tx, ...classifyReceipt(receipt, wallet) };
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
-    const msg = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
-    return tx ? { tx, error: redactUrls(msg) } : { error: redactUrls(msg) };
+    //
+    // viem prepares the write with eth_estimateGas and a chain-id assert, so the failures
+    // that actually happen against a live wallet - short MockUSDC balance, no Sepolia ETH,
+    // an RPC that 401s - surface as an *estimation* error whose useful detail sits in
+    // err.cause / err.details / err.metaMessages, not in err.shortMessage. Dropping those
+    // is walking into a supervised run against a finite budget with "HTTP request failed."
+    // Mirrors subgraph.mjs's approach to the same shape of nested error.
+    const top = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
+    const causeMsg = err?.cause?.shortMessage ?? err?.cause?.message;
+    const detail = err?.details;
+    const meta = Array.isArray(err?.metaMessages) ? err.metaMessages.join(" ") : null;
+    const full = [top, causeMsg, detail, meta].filter(Boolean).join(" — ");
+    const msg = redactUrls(full);
+    return tx ? { tx, error: msg } : { error: msg };
   }
 }
 ```
@@ -1165,7 +1177,7 @@ MSG
 // agent/loop.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord } from "./loop.mjs";
+import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -1271,6 +1283,87 @@ test("inFlight is cleared even when the send throws, via a finally", async () =>
   await assert.rejects(() => sendAndRecord(rec, intents[0], { rpcUrl: "", privKey: "", wallet: "" }, throwingSend));
   assert.equal(rec.inFlight, false);
 });
+
+// C1: a duplicate id (copy an intent block for the demo, change the amount, forget the id)
+// must never reach toSend twice. Two sends for the same id would call sendAndRecord on the
+// same record object twice, and the second write to lastAction silently overwrites the
+// first transaction's hash - no error, no warning, and the first payment becomes untraceable.
+test("a duplicate intent id is never queued twice, even if one slipped past validateIntents", () => {
+  const dupIntents = [
+    { id: "retainer", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
+    { id: "retainer", token: TOKEN, payee: PAYEE, amount: "9000000", note: "" },
+  ];
+  const { toSend } = advance(initialState(), okSnap(), dupIntents, NOW);
+  assert.deepEqual(toSend.map((i) => i.id), ["retainer"]);
+});
+
+// I2: decide()'s BigInt(intent.amount) throws on a malformed amount. Load-time validation
+// (validateIntents) refuses to start on this for intents.json, but advance() must still
+// contain the throw per-intent - otherwise one bad record would stop the loop from
+// evaluating every OTHER intent in the same tick, and the whole tick body would need its own
+// try/catch to avoid killing the process.
+test("a malformed amount does not crash advance, and the error reaches that intent's state", () => {
+  const badIntents = [
+    { id: "good", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
+    { id: "bad", token: TOKEN, payee: PAYEE, amount: "5.5", note: "" },
+  ];
+  const { state, toSend } = advance(initialState(), okSnap(), badIntents, NOW);
+  assert.deepEqual(toSend.map((i) => i.id), ["good"], "the good intent must still be evaluated and sent");
+  assert.equal(state.intents.bad.verdict, "invalid");
+  assert.match(state.intents.bad.explain, /malformed/);
+});
+
+// The "" amount is worse than a crash: BigInt("") === 0n, so decide() does not throw and
+// instead silently returns will-pass - the headline intent would degrade to a reverting
+// call every tick, which reads as a policy failure rather than a typo. validateIntents'
+// /^[0-9]+$/ requires at least one digit, so this is caught at load instead.
+test("an empty-string amount is rejected at load, not silently treated as zero", () => {
+  const errors = validateIntents([{ id: "a", token: TOKEN, payee: PAYEE, amount: "" }]);
+  assert.ok(errors.some((e) => e.includes("amount")), "an empty amount must be flagged");
+});
+
+test("validateIntents rejects a duplicate id", () => {
+  const errors = validateIntents([
+    { id: "a", token: TOKEN, payee: PAYEE, amount: "1" },
+    { id: "a", token: TOKEN, payee: PAYEE, amount: "2" },
+  ]);
+  assert.ok(errors.some((e) => e.includes("duplicate")), "a duplicate id must be flagged");
+});
+
+test("validateIntents rejects a malformed token or payee address", () => {
+  const errors = validateIntents([{ id: "a", token: "not-an-address", payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("token")), "a malformed token address must be flagged");
+});
+
+test("validateIntents accepts a well-formed, unique list", () => {
+  assert.deepEqual(validateIntents(intents), []);
+});
+
+// I7: presence alone let a quoted or CR-suffixed value from a naive `.env` extraction flow
+// through unchanged, producing entity ids that match nothing - fetchSnapshot then returns
+// ok:true with everything null/empty, and the demo shows NO_POLICY/PAYEE_NOT_ALLOWED for
+// every intent. A plausible-looking wrong screen, not an error.
+test("a quoted address value is rejected, not silently accepted", () => {
+  const result = validateEnvVar("WALLET_ADDR", '"0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6"', /^0x[0-9a-fA-F]{40}$/, "an address");
+  assert.ok(result.error, "a value with literal quote characters must be rejected");
+  assert.match(result.error, /WALLET_ADDR/);
+});
+
+test("a trailing CR is trimmed away, so a value that would otherwise be silently wrong is healed and accepted", () => {
+  const result = validateEnvVar("WALLET_ADDR", "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6\r", /^0x[0-9a-fA-F]{40}$/, "an address");
+  assert.equal(result.error, undefined, "trimming must heal a trailing CR from a naive .env extraction");
+  assert.equal(result.value, "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6");
+});
+
+test("a missing value is rejected by name", () => {
+  const result = validateEnvVar("LEASH_NODE", "", /^0x[0-9a-fA-F]{64}$/, "a hash");
+  assert.ok(result.error && result.error.includes("LEASH_NODE"));
+});
+
+test("a wrong-length hash is rejected", () => {
+  const result = validateEnvVar("LEASH_NODE", "0xdead", /^0x[0-9a-fA-F]{64}$/, "a 32-byte hash");
+  assert.ok(result.error, "a value of the wrong length must be rejected");
+});
 ```
 
 - [ ] **Step 3: Run them and watch them fail**
@@ -1301,7 +1394,60 @@ const SUBGRAPH_URL =
   process.env.SUBGRAPH_URL ||
   "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.4";
 
+const AMOUNT_RE = /^[0-9]+$/;
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+const NODE_RE = /^0x[0-9a-fA-F]{64}$/;
+
 export const initialState = () => ({ tick: 0, at: null, source: null, snapshot: null, intents: {} });
+
+// Refuse to start on a malformed or duplicate-id intents.json rather than fail live (C1). A
+// duplicate id is the most ordinary edit imaginable - copy an intent block for the demo,
+// change the amount, forget the id - and it makes `advance` push the same id to `toSend`
+// twice: `tick` then sends two spends against the same record, and the second write to
+// `lastAction` silently overwrites the first transaction's hash. No error, no warning. Pure
+// and side-effect-free so it is testable without a process to kill.
+export function validateIntents(intents) {
+  const errors = [];
+  const seen = new Set();
+  for (const intent of intents ?? []) {
+    const id = intent?.id;
+    if (seen.has(id)) errors.push(`duplicate intent id: ${JSON.stringify(id)}`);
+    seen.add(id);
+    if (!AMOUNT_RE.test(String(intent?.amount))) {
+      errors.push(
+        `intent ${JSON.stringify(id)}: amount must be a base-unit integer string, got ${JSON.stringify(intent?.amount)}`,
+      );
+    }
+    if (!ADDR_RE.test(String(intent?.token))) {
+      errors.push(`intent ${JSON.stringify(id)}: token is not a 20-byte hex address, got ${JSON.stringify(intent?.token)}`);
+    }
+    if (!ADDR_RE.test(String(intent?.payee))) {
+      errors.push(`intent ${JSON.stringify(id)}: payee is not a 20-byte hex address, got ${JSON.stringify(intent?.payee)}`);
+    }
+  }
+  return errors;
+}
+
+// Presence alone is not enough (I7): the README's own extraction
+// (`grep -m1 "^$1=" "$ENV" | cut -d= -f2-`) preserves surrounding quotes and a trailing CR
+// if the `.env` file has one. Either flows through buildIds into entity ids that match
+// nothing, and fetchSnapshot returns `ok: true` with everything null/empty - a
+// plausible-looking wrong demo, not an error. Trims first (healing a stray CR or leading/
+// trailing whitespace) and then checks shape, so a genuinely malformed value (surrounding
+// quotes, wrong length) is refused by name. Returns the trimmed value or an error string;
+// never exits itself, so it is testable without a process to kill.
+export function validateEnvVar(name, rawValue, pattern, label) {
+  if (!rawValue) {
+    return { error: `${name} is not set. Extract single variables; never source .env wholesale.` };
+  }
+  const trimmed = rawValue.trim();
+  if (pattern && !pattern.test(trimmed)) {
+    return {
+      error: `${name} is not shaped like ${label} (got ${JSON.stringify(rawValue)}). Check for stray quotes or a trailing CR from .env extraction.`,
+    };
+  }
+  return { value: trimmed };
+}
 
 // The pure half: given the state, a snapshot and the intents, work out each verdict and
 // which intents to send. Kept separate from the IO so duplicate-payment prevention is
@@ -1316,6 +1462,10 @@ export function advance(state, snapshot, intents, nowSec) {
   next.intents = { ...state.intents };
 
   const toSend = [];
+  // C1, belt and braces: a duplicate id must never reach toSend twice even if one slipped
+  // past validateIntents (a future caller that skips it, a bug in that function). Two sends
+  // for the same id overwrite each other's lastAction, and the first tx hash is lost.
+  const queued = new Set();
   for (const intent of intents) {
     const prev = next.intents[intent.id] ?? { inFlight: false, lastAction: null };
     const rec = { ...prev, id: intent.id, note: intent.note ?? "" };
@@ -1343,12 +1493,29 @@ export function advance(state, snapshot, intents, nowSec) {
       rec.reasonName = null; // same reason as above
       rec.explain = "waiting for the receipt of the transaction just sent";
     } else {
-      const d = decide(snapshot, intent, nowSec);
+      let d;
+      try {
+        d = decide(snapshot, intent, nowSec);
+      } catch (err) {
+        // decide()'s BigInt(intent.amount) throws on a malformed amount (I2). validateIntents
+        // refuses to start on this for intents.json, but catching it here too means one bad
+        // record does not stop every OTHER intent in the same tick from being evaluated - a
+        // single try/catch around the whole tick body would abort the rest of the loop.
+        d = {
+          verdict: "invalid",
+          reason: null,
+          reasonName: null,
+          explain: `intent is malformed and cannot be evaluated: ${err?.message ?? err}`,
+        };
+      }
       rec.verdict = d.verdict;
       rec.reason = d.reason;
       rec.reasonName = d.reasonName;
       rec.explain = d.explain;
-      if (d.verdict === "will-pass") toSend.push(intent);
+      if (d.verdict === "will-pass" && !queued.has(intent.id)) {
+        queued.add(intent.id);
+        toSend.push(intent);
+      }
     }
     next.intents[intent.id] = rec;
   }
@@ -1406,6 +1573,11 @@ let state = initialState();
 let intents = [];
 let ticking = false;
 
+// Populated by the startup validation below, after trimming. tick() reads these instead of
+// process.env directly, so a healed value (a trailing CR stripped by validateEnvVar) is what
+// actually gets used everywhere, not just at the startup check.
+let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE;
+
 function publicState() {
   const s = state;
   return {
@@ -1413,6 +1585,7 @@ function publicState() {
     at: s.at,
     source: s.source,
     readError: s.readError ?? null,
+    tickError: s.tickError ?? null,
     agent: s.snapshot?.agent ?? null,
     subname: s.snapshot?.subname ?? null,
     policy: s.snapshot?.policy ?? null,
@@ -1435,14 +1608,14 @@ async function tick() {
   try {
     const cfg = {
       url: SUBGRAPH_URL,
-      wallet: process.env.WALLET_ADDR,
-      node: process.env.LEASH_NODE,
-      agent: process.env.AGENT_ADDR,
+      wallet: WALLET_ADDR,
+      node: LEASH_NODE,
+      agent: AGENT_ADDR,
       token: intents[0]?.token,
     };
     let chainBlock;
     try {
-      const pc = createPublicClient({ chain: sepolia, transport: viemHttp(process.env.SEPOLIA_RPC) });
+      const pc = createPublicClient({ chain: sepolia, transport: viemHttp(SEPOLIA_RPC) });
       chainBlock = Number(await pc.getBlockNumber());
     } catch {
       chainBlock = undefined; // lag becomes 0; the read itself still decides
@@ -1454,9 +1627,9 @@ async function tick() {
 
     for (const intent of advanced.toSend) {
       const rec = await sendAndRecord(state.intents[intent.id], intent, {
-        rpcUrl: process.env.SEPOLIA_RPC,
-        privKey: process.env.AGENT_PK,
-        wallet: process.env.WALLET_ADDR,
+        rpcUrl: SEPOLIA_RPC,
+        privKey: AGENT_PK,
+        wallet: WALLET_ADDR,
       });
       const a = rec.lastAction;
       console.log(
@@ -1475,6 +1648,15 @@ async function tick() {
         console.log(`tick ${state.tick}  ${i.id}  ${i.verdict}${i.reason != null ? ` (${i.reasonName})` : ""}`);
       }
     }
+    state.tickError = null;
+  } catch (err) {
+    // Backstop (I2): advance() already contains a per-intent decide() throw (the "invalid"
+    // verdict above), but this catches anything else unexpected - a subgraph payload shaped
+    // differently than fetchSnapshot expects, a future change to this function - so a throw
+    // here degrades to a visible tickError instead of an unhandled rejection from
+    // `setInterval` killing the whole process on stage.
+    state.tickError = String(err?.message ?? err);
+    console.error(`tick ${state.tick}  error: ${state.tickError}`);
   } finally {
     ticking = false;
   }
@@ -1487,22 +1669,61 @@ async function tick() {
 // whole reason it was split out.
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
-  for (const v of ["AGENT_PK", "SEPOLIA_RPC", "WALLET_ADDR", "AGENT_ADDR", "LEASH_NODE"]) {
-    if (!process.env[v]) {
-      console.error(`${v} is not set. Extract single variables; never source .env wholesale.`);
+  const envChecks = [
+    ["AGENT_PK", null, null],
+    ["SEPOLIA_RPC", null, null],
+    ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
+    ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
+    ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
+  ];
+  const envValues = {};
+  for (const [name, pattern, label] of envChecks) {
+    const result = validateEnvVar(name, process.env[name], pattern, label);
+    if (result.error) {
+      console.error(result.error);
       process.exit(1);
     }
+    envValues[name] = result.value;
   }
+  AGENT_PK = envValues.AGENT_PK;
+  SEPOLIA_RPC = envValues.SEPOLIA_RPC;
+  WALLET_ADDR = envValues.WALLET_ADDR;
+  AGENT_ADDR = envValues.AGENT_ADDR;
+  LEASH_NODE = envValues.LEASH_NODE;
+
   intents = JSON.parse(await readFile(new URL("./intents.json", import.meta.url), "utf8"));
+  const intentErrors = validateIntents(intents);
+  if (intentErrors.length) {
+    for (const e of intentErrors) console.error(e);
+    process.exit(1);
+  }
 
   createServer(async (req, res) => {
+    // I6: sprint item 12 (the frontend) reads this endpoint from a different origin (a Vite
+    // dev server, file://), which the browser blocks without this header.
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.writeHead(204);
+      return res.end();
+    }
     const json = (code, body) => {
       res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(body, null, 2));
     };
-    if (req.method === "GET" && req.url === "/api/agent/state") return json(200, publicState());
-    if (req.method === "POST" && req.url === "/api/agent/tick") {
-      await tick();
+    // I6: route on the pathname, not the raw req.url - a cache-busting query string
+    // (`?t=169...`) otherwise 404s on an exact string match.
+    const pathname = new URL(req.url, "http://x").pathname;
+    if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
+    if (req.method === "POST" && pathname === "/api/agent/tick") {
+      try {
+        await tick();
+      } catch (err) {
+        // tick() already catches internally and records tickError (I2); this is a backstop
+        // so the request cannot hang or 500 with no body if something still escapes.
+        return json(500, { error: String(err?.message ?? err) });
+      }
       return json(200, publicState());
     }
     json(404, { error: "not found" });
@@ -1518,16 +1739,18 @@ if (isMain) {
 - [ ] **Step 5: Run the tests and watch them pass**
 
 Run: `cd agent && node --test loop.test.mjs`
-Expected: PASS, 10 tests.
+Expected: PASS, 20 tests.
 
 - [ ] **Step 6: Run every check together**
 
 ```bash
 cd agent && node --test && node check-reason-table.mjs
 ```
-Expected: all suites pass and `all 13 codes agree`. The count is **51 tests across five
-files** — reason 4, decide 16, subgraph 12, send 9, loop 10 (reason and subgraph grew in
-their fix rounds; loop grew from 7 to 10 fixing the timeout duplicate-payment path). If your
+Expected: all suites pass and `all 13 codes agree`. The count is **64 tests across five
+files** — reason 4, decide 17, subgraph 14, send 9, loop 20 (reason and subgraph grew in
+their fix rounds; loop grew 7→10→20 fixing the timeout duplicate-payment path and then the
+final review's C1/I2/I7 wave; decide grew 16→17 for I5's `will-pass` explain; subgraph grew
+12→14 for I3's `remaining`/`node`). If your
 total differs, say so
 rather than assuming the plan is right: this number is the plan author's arithmetic, not a
 measurement.
@@ -1559,6 +1782,16 @@ curl -s -X POST localhost:8788/api/agent/tick   # run one cycle now, do not wait
 Extract single variables as above. **Never source `.env` wholesale** — it also holds
 `WALLET_PK` and `WORLD_RP_SIGNER_PK`, and this process must hold neither.
 
+Startup validates more than presence: `WALLET_ADDR`/`AGENT_ADDR` must be a 20-byte hex
+address and `LEASH_NODE` a 32-byte hex hash, after trimming whitespace and a trailing CR (the
+`grep | cut` extraction above preserves both, and either flowing through unchanged produces
+entity ids that match nothing — the demo would show `NO_POLICY`/`PAYEE_NOT_ALLOWED` for every
+intent with no error at all). A quoted value (`"0x46C0…"` with the quotes) is refused by
+name; a value with only a stray trailing CR is healed by the trim and accepted. `intents.json`
+is validated the same way at load — unique ids, and `token`/`payee` as addresses and `amount`
+as a base-unit integer string — because a duplicate id makes `advance` queue it twice and the
+second send silently overwrites the first transaction's hash.
+
 ## Three things that surprise people
 
 **A block is not a revert.** `LeashAccount` emits `SpendBlocked` and returns normally so the
@@ -1579,11 +1812,19 @@ hand.
 ## What it cannot predict
 
 Five reason codes are not in the index — 5 `TOKEN_NOT_ALLOWED`, 7 `OVER_TX_LIMIT`,
-9 `OUTSIDE_TIME_WINDOW`, 10 `PAUSED`, 11 `OVER_SHARED_LIMIT` — plus 12 `POLICY_FAILED`. For
-those the verdict is `unknown` and the agent sends, letting the chain answer. `will-pass`
-means "I found nothing forbidding it", never "this will succeed": `Payee.allowed` is not
-per-token, so the agent can be optimistic and the contract is what stops it. When that
-happens the outcome reads `blocked-despite-green`.
+9 `OUTSIDE_TIME_WINDOW`, 10 `PAUSED`, 11 `OVER_SHARED_LIMIT` — plus 12 `POLICY_FAILED`. None
+of those five produce `unknown` on their own: since pre-flight never re-derives the policy
+logic that would predict them, they simply do not trigger a block, and if nothing else does
+either the verdict is `will-pass`. `will-pass` means "I found nothing forbidding it", never
+"this will succeed": `Payee.allowed` is not per-token, so the agent can be optimistic and the
+contract is what stops it. When that happens the outcome reads `blocked-despite-green`.
+
+`unknown` means something narrower: the index itself could not answer (no budget row yet for
+this token, or the budget row is for a different token). **`advance` does not send on
+`unknown`** — an earlier version of this document, the spec and the plan's self-review all
+said it does; that was wrong. An intent stuck at `unknown` is not retried by the agent on its
+own; it waits for the index to reach a state it can answer, which is the fail-closed
+direction.
 ```
 
 - [ ] **Step 9: Live run — requires explicit human authorisation**
@@ -1641,7 +1882,10 @@ match Task 5's call sites. `advance(state, snapshot, intents, nowSec)` returns
 
 **Known gap, deliberate.** `cfg.token` in Task 5's `tick()` uses `intents[0].token`, so the
 budget row fetched is the first intent's token. Every intent in `intents.json` uses MockUSDC,
-and `decide` returns `unknown` for any intent whose token differs from the budget's — so a
-mixed-token list degrades to "ask the chain" rather than deciding wrongly. Fixing it properly
-means one budget query per distinct token; not worth it for a two-intent demo, and the
-failure mode is safe.
+and `decide` returns `unknown` for any intent whose token differs from the budget's. The
+final whole-branch review (I4) correctly flagged that the justification here was wrong about
+what `unknown` does: `advance` never sends on `unknown` — it did not, and does not, "ask the
+chain". A mixed-token list degrades to "not sent, waiting for a state the index can answer",
+which is still the fail-closed direction and still not worth fixing for a two-intent demo —
+the gap and the deferral both stand; only the description of what happens on `unknown` was
+corrected. Fixing it properly means one budget query per distinct token.

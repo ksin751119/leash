@@ -31,7 +31,16 @@ const blocked = (reason, explain) => ({
   explain,
 });
 const unknown = (verdict, explain) => ({ verdict, reason: null, reasonName: null, explain });
-const pass = () => ({ verdict: "will-pass", reason: null, reasonName: null, explain: null });
+// A silent null here is the one thing the three-valued verdict was designed not to be:
+// found nothing forbidding it is not the same claim as it will succeed, and the five
+// unindexed reasons (5, 7, 9, 10, 11) plus 12 stay invisible unless this says so.
+const pass = () => ({
+  verdict: "will-pass",
+  reason: null,
+  reasonName: null,
+  explain:
+    "found nothing that forbids it; the per-tx cap, token allow-list, time window and pause are not indexed, so only the chain can confirm",
+});
 
 const lower = (a) => String(a ?? "").toLowerCase();
 

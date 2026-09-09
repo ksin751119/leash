@@ -160,10 +160,15 @@ The subgraph states these as facts, so pre-flight uses them:
 | 6 `PAYEE_NOT_ALLOWED` | `Payee.allowed` |
 | 8 `OVER_PERIOD_LIMIT` | `AgentBudget.remaining`, `periodEnd` |
 
-These are **not** indexed and pre-flight returns `unknown` for them: 5 `TOKEN_NOT_ALLOWED`,
-7 `OVER_TX_LIMIT`, 9 `OUTSIDE_TIME_WINDOW`, 10 `PAUSED` (none of `txLimit`, `paused` or the
-time window appear in the schema), 11 `OVER_SHARED_LIMIT` (kept in the policy's own ledger),
-and 12 `POLICY_FAILED` (unpredictable by nature).
+These are **not** indexed, and pre-flight does not attempt to block on them: 5
+`TOKEN_NOT_ALLOWED`, 7 `OVER_TX_LIMIT`, 9 `OUTSIDE_TIME_WINDOW`, 10 `PAUSED` (none of
+`txLimit`, `paused` or the time window appear in the schema), 11 `OVER_SHARED_LIMIT` (kept in
+the policy's own ledger), and 12 `POLICY_FAILED` (unpredictable by nature). **This does not
+produce `unknown`** — an earlier draft of this document said it did, which was wrong. If
+nothing else in the table above forbids the payment, the verdict is `will-pass`, because
+pre-flight simply never checks these five (or 12) at all. `unknown` is reserved for a
+narrower case: the index itself has no answer yet (no budget row for this token, or the row
+is for a different token) — see below.
 
 **Pre-flight must not close that gap by re-deriving policy logic.** Completing it would mean
 reimplementing `StandardPolicy` in JavaScript — per-transaction limits, time windows, period
@@ -173,7 +178,11 @@ and **no test could see it** because both sides were self-consistent. Copying po
 into a second language four days from a deadline repeats the mistake deliberately.
 
 So pre-flight stays shallow: it reads conclusions the index already states, never derives
-them. What it cannot see, it sends and lets the chain answer.
+them. **What it cannot see, it does not send** — an earlier draft of this document, and
+`agent/README.md`, said the opposite ("it sends and lets the chain answer"); that was wrong,
+and the built code was always the fail-closed direction: `advance` pushes to `toSend` only on
+the literal verdict `will-pass`. An intent stuck at `unknown` waits for the index to reach a
+state it can answer.
 
 ### Pre-flight is trustworthy when it refuses, not when it permits
 
@@ -203,7 +212,10 @@ Even when the agent is wrong, no money moves.
   "tick": 42,
   "at": "2026-09-09T12:00:00Z",
   "source": { "subgraphBlock": 11667861, "chainBlock": 11667862, "lagBlocks": 1 },
-  "agent": { "address": "0x…", "revoked": false, "node": "0x…", "label": "vendors" },
+  "readError": null,
+  "tickError": null,
+  "agent": { "address": "0x…", "revoked": false, "node": "0x…" },
+  "subname": { "label": "vendors", "live": true },
   "policy": { "address": "0x…", "approved": true },
   "budget": { "token": "0x…", "limit": "1000000000", "spent": "…", "remaining": "…", "periodEnd": 0 },
   "intents": [
@@ -219,13 +231,31 @@ Even when the agent is wrong, no money moves.
 }
 ```
 
-Three deliberate choices:
+**`agent` and `subname` are separate keys, not one merged object.** They are separate
+subgraph entities: `Agent` carries `agent`, `node`, `wallet` and `revoked`; `Subname` is
+keyed by node and holds `label`, `live` and `expiry`. An earlier draft of this document
+merged `node`/`label` into one `agent` object — that was inconsistent with its own note about
+where `label` lives (above, in "Each tick"), and the built endpoint keeps them apart.
+
+Four deliberate choices:
 
 - **`source` carries both block numbers and the lag.** The twelve-second wait becomes a
   number on screen instead of silence.
-- **`verdict` is three-valued** — `will-pass`, `will-be-blocked`, `unknown` — so the five
-  reasons the index cannot see are visibly "I do not know, I have to ask the chain" rather
-  than silently optimistic.
+- **Pre-flight's own prediction is four-valued** — `will-pass`, `will-be-blocked`, `unknown`,
+  `unknown-read-failed` — so the five reasons the index cannot see are visibly "I do not
+  know, I have to ask the chain" rather than silently optimistic. `will-pass` says so
+  explicitly in its `explain`, naming what pre-flight cannot see, rather than leaving that
+  honesty in a comment no judge reads.
+  **`unknown` is not sent.** The index could not answer (no budget row yet for this token, or
+  the row is for a different token), and the agent does not act on what it cannot verify —
+  the same fail-closed direction as `unknown-read-failed`. It waits for the index to reach an
+  answerable state.
+- **The published `verdict` carries three more values layered on top by the tick lifecycle**,
+  not by pre-flight: `in-flight` (a send is awaited), `unconfirmed` (a transaction hash
+  exists but no receipt was ever classified — see Error handling), `done` (executed;
+  terminal), and `invalid` (the intent itself is malformed — an unvalidated `intents.json`
+  slipping past load-time validation). None of these are pre-flight predictions; they are
+  what the loop knows about an intent's own history.
 - **`lastAction.outcome` can be `blocked-despite-green`**, which is where the honesty above
   becomes something the frontend can point at.
 

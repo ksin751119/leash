@@ -76,7 +76,19 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
     return { tx, ...classifyReceipt(receipt, wallet) };
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
-    const msg = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
-    return tx ? { tx, error: redactUrls(msg) } : { error: redactUrls(msg) };
+    //
+    // viem prepares the write with eth_estimateGas and a chain-id assert, so the failures
+    // that actually happen against a live wallet - short MockUSDC balance, no Sepolia ETH,
+    // an RPC that 401s - surface as an *estimation* error whose useful detail sits in
+    // err.cause / err.details / err.metaMessages, not in err.shortMessage. Dropping those
+    // is walking into a supervised run against a finite budget with "HTTP request failed."
+    // Mirrors subgraph.mjs's approach to the same shape of nested error.
+    const top = String(err?.shortMessage ?? err?.message ?? err).split("\n")[0];
+    const causeMsg = err?.cause?.shortMessage ?? err?.cause?.message;
+    const detail = err?.details;
+    const meta = Array.isArray(err?.metaMessages) ? err.metaMessages.join(" ") : null;
+    const full = [top, causeMsg, detail, meta].filter(Boolean).join(" — ");
+    const msg = redactUrls(full);
+    return tx ? { tx, error: msg } : { error: msg };
   }
 }

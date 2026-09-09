@@ -24,10 +24,10 @@ export function buildIds({ wallet, node, agent, token }) {
 const QUERY = `
 query AgentState($agentId: ID!, $budgetId: ID!, $node: ID!, $wallet: Bytes!, $nodeBytes: Bytes!) {
   _meta { block { number } }
-  agent(id: $agentId) { id revoked }
+  agent(id: $agentId) { id revoked node }
   subname(id: $node) { label live }
   policyPointer(id: $node) { policy approved }
-  agentBudget(id: $budgetId) { token limit spent periodEnd }
+  agentBudget(id: $budgetId) { token limit spent periodEnd remaining }
   payees(where: { wallet: $wallet, node: $nodeBytes }) { payee allowed lastToken }
 }`;
 
@@ -95,7 +95,11 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
   return {
     ok: true,
     block: { subgraph: blockNumber, chain, lag: Math.max(0, chain - blockNumber) },
-    agent: { address: lower(cfg.agent), revoked: d.agent?.revoked === true },
+    agent: {
+      address: lower(cfg.agent),
+      revoked: d.agent?.revoked === true,
+      node: d.agent?.node ? lower(d.agent.node) : null,
+    },
     subname: d.subname ? { label: d.subname.label, live: d.subname.live === true } : null,
     policy: d.policyPointer
       ? { address: lower(d.policyPointer.policy), approved: d.policyPointer.approved === true }
@@ -105,6 +109,12 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
           token: lower(d.agentBudget.token),
           limit: String(d.agentBudget.limit),
           spent: String(d.agentBudget.spent),
+          // Schema: "Pre-computed remaining budget... null" when limit is 0 (unlimited).
+          // decide() still computes its own figure (the rollover case means the index's
+          // answer can be stale-restrictive), but publishing the subgraph's own answer
+          // alongside it is what the schema's mapping-side arithmetic was for - see
+          // subgraph/schema.graphql:35.
+          remaining: d.agentBudget.remaining != null ? String(d.agentBudget.remaining) : null,
           periodEnd: Number(d.agentBudget.periodEnd ?? 0),
         }
       : null,

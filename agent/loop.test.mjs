@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord } from "./loop.mjs";
+import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -105,4 +105,85 @@ test("inFlight is cleared even when the send throws, via a finally", async () =>
   };
   await assert.rejects(() => sendAndRecord(rec, intents[0], { rpcUrl: "", privKey: "", wallet: "" }, throwingSend));
   assert.equal(rec.inFlight, false);
+});
+
+// C1: a duplicate id (copy an intent block for the demo, change the amount, forget the id)
+// must never reach toSend twice. Two sends for the same id would call sendAndRecord on the
+// same record object twice, and the second write to lastAction silently overwrites the
+// first transaction's hash - no error, no warning, and the first payment becomes untraceable.
+test("a duplicate intent id is never queued twice, even if one slipped past validateIntents", () => {
+  const dupIntents = [
+    { id: "retainer", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
+    { id: "retainer", token: TOKEN, payee: PAYEE, amount: "9000000", note: "" },
+  ];
+  const { toSend } = advance(initialState(), okSnap(), dupIntents, NOW);
+  assert.deepEqual(toSend.map((i) => i.id), ["retainer"]);
+});
+
+// I2: decide()'s BigInt(intent.amount) throws on a malformed amount. Load-time validation
+// (validateIntents) refuses to start on this for intents.json, but advance() must still
+// contain the throw per-intent - otherwise one bad record would stop the loop from
+// evaluating every OTHER intent in the same tick, and the whole tick body would need its own
+// try/catch to avoid killing the process.
+test("a malformed amount does not crash advance, and the error reaches that intent's state", () => {
+  const badIntents = [
+    { id: "good", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
+    { id: "bad", token: TOKEN, payee: PAYEE, amount: "5.5", note: "" },
+  ];
+  const { state, toSend } = advance(initialState(), okSnap(), badIntents, NOW);
+  assert.deepEqual(toSend.map((i) => i.id), ["good"], "the good intent must still be evaluated and sent");
+  assert.equal(state.intents.bad.verdict, "invalid");
+  assert.match(state.intents.bad.explain, /malformed/);
+});
+
+// The "" amount is worse than a crash: BigInt("") === 0n, so decide() does not throw and
+// instead silently returns will-pass - the headline intent would degrade to a reverting
+// call every tick, which reads as a policy failure rather than a typo. validateIntents'
+// /^[0-9]+$/ requires at least one digit, so this is caught at load instead.
+test("an empty-string amount is rejected at load, not silently treated as zero", () => {
+  const errors = validateIntents([{ id: "a", token: TOKEN, payee: PAYEE, amount: "" }]);
+  assert.ok(errors.some((e) => e.includes("amount")), "an empty amount must be flagged");
+});
+
+test("validateIntents rejects a duplicate id", () => {
+  const errors = validateIntents([
+    { id: "a", token: TOKEN, payee: PAYEE, amount: "1" },
+    { id: "a", token: TOKEN, payee: PAYEE, amount: "2" },
+  ]);
+  assert.ok(errors.some((e) => e.includes("duplicate")), "a duplicate id must be flagged");
+});
+
+test("validateIntents rejects a malformed token or payee address", () => {
+  const errors = validateIntents([{ id: "a", token: "not-an-address", payee: PAYEE, amount: "1" }]);
+  assert.ok(errors.some((e) => e.includes("token")), "a malformed token address must be flagged");
+});
+
+test("validateIntents accepts a well-formed, unique list", () => {
+  assert.deepEqual(validateIntents(intents), []);
+});
+
+// I7: presence alone let a quoted or CR-suffixed value from a naive `.env` extraction flow
+// through unchanged, producing entity ids that match nothing - fetchSnapshot then returns
+// ok:true with everything null/empty, and the demo shows NO_POLICY/PAYEE_NOT_ALLOWED for
+// every intent. A plausible-looking wrong screen, not an error.
+test("a quoted address value is rejected, not silently accepted", () => {
+  const result = validateEnvVar("WALLET_ADDR", '"0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6"', /^0x[0-9a-fA-F]{40}$/, "an address");
+  assert.ok(result.error, "a value with literal quote characters must be rejected");
+  assert.match(result.error, /WALLET_ADDR/);
+});
+
+test("a trailing CR is trimmed away, so a value that would otherwise be silently wrong is healed and accepted", () => {
+  const result = validateEnvVar("WALLET_ADDR", "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6\r", /^0x[0-9a-fA-F]{40}$/, "an address");
+  assert.equal(result.error, undefined, "trimming must heal a trailing CR from a naive .env extraction");
+  assert.equal(result.value, "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6");
+});
+
+test("a missing value is rejected by name", () => {
+  const result = validateEnvVar("LEASH_NODE", "", /^0x[0-9a-fA-F]{64}$/, "a hash");
+  assert.ok(result.error && result.error.includes("LEASH_NODE"));
+});
+
+test("a wrong-length hash is rejected", () => {
+  const result = validateEnvVar("LEASH_NODE", "0xdead", /^0x[0-9a-fA-F]{64}$/, "a 32-byte hash");
+  assert.ok(result.error, "a value of the wrong length must be rejected");
 });
