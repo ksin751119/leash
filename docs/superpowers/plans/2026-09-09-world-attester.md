@@ -1182,11 +1182,17 @@ anvil --port 8545 &
 cd "$(git rev-parse --show-toplevel)"   # this branch's checkout, NOT ~/DEV/leash
 # Deployed with anvil account #0 as the SIGNER, so the signature check below needs no
 # real secret. Step 5 must never touch WORLD_RP_SIGNER_PK.
+#
+# --constructor-args MUST be the LAST flag. It is variadic, so anything after it is eaten
+# as another constructor argument: put it first and forge swallows --rpc-url and the rest,
+# then either reports "Constructor argument count mismatch: expected 1 but got 6" or - worse
+# - silently falls back to the default RPC at localhost:8545 and fails to connect. Measured
+# on forge 1.7.1.
 forge create src/WorldAttester.sol:WorldAttester \
-  --constructor-args 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
   --rpc-url http://127.0.0.1:8545 \
   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-  --broadcast
+  --broadcast \
+  --constructor-args 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
 
 Take the deployed address, then — note anvil's chain id is 31337, not Sepolia's:
@@ -1296,8 +1302,24 @@ contract DeployWorldAttester is Script {
 
 - [ ] **Step 2: Simulate**
 
-Run: `set -a && . /home/ubuntu/DEV/ETHOnline2026/.env && set +a && forge script script/DeployWorldAttester.s.sol:DeployWorldAttester --rpc-url "$SEPOLIA_RPC"`
-Expected: `SIMULATION COMPLETE`, no revert, and the printed `SIGNER` equals `0x85b89D21DB13f220601430d48244B2AE06120969`
+> 🔑 **Extract single variables; never source `.env` wholesale.** That file also holds
+> `WALLET_PK`, `AGENT_PK`, `WORLD_RP_SIGNER_PK`, `GRAPH_DEPLOY_KEY` and `LEASH_SECRET`, none
+> of which this step needs, and `SEPOLIA_RPC` carries an API key that must never be echoed.
+> Pull out exactly what the command uses:
+>
+> ```bash
+> ENV=/home/ubuntu/DEV/ETHOnline2026/.env
+> get() { grep -m1 "^$1=" "$ENV" | cut -d= -f2-; }
+> ```
+
+```bash
+ADMIN_PK=$(get ADMIN_PK) forge script script/DeployWorldAttester.s.sol:DeployWorldAttester \
+  --rpc-url "$(get SEPOLIA_RPC)"
+```
+
+Expected: `SIMULATION COMPLETE`, no revert, and the printed `SIGNER` equals
+`0x85b89D21DB13f220601430d48244B2AE06120969`. Note the RPC is substituted inline so its API
+key never lands in a shell variable that a later command might print.
 
 - [ ] **Step 3: Deploy — requires explicit human authorisation**
 
@@ -1310,11 +1332,29 @@ Then put the attester's address in `.env` as `WORLD_ATTESTER=0x…`.
 
 - [ ] **Step 4: Run the cross-check against the real deployment**
 
+This step needs **no private key at all.** The four hash cases cover everything that is
+chain-dependent — `chainId` and `verifyingContract` both feed the domain separator, so a wrong
+domain fails the hash comparison. Signing and the recovery-byte order are chain-independent and
+were already proven against anvil in Task 4 Step 5, so `SIGNER_PK` is deliberately left unset
+here and the script prints `skip  signature checks`.
+
 ```bash
-cd world && set -a && . /home/ubuntu/DEV/ETHOnline2026/.env && set +a && node crosscheck.mjs
+cd world && SEPOLIA_RPC="$(get SEPOLIA_RPC)" WORLD_ATTESTER="$(get WORLD_ATTESTER)" \
+  node crosscheck.mjs
 ```
 
-Expected: `all cross-checks agree`, and the blob is 73 bytes.
+Expected: `chain id 11155111`, four `ok` lines, `skip  signature checks (SIGNER_PK unset)`,
+and `all cross-checks agree`.
+
+Then assert the deployed attester trusts the right signer — the one thing a Sepolia run can
+check that anvil cannot, and it needs no key either:
+
+```bash
+cast call "$(get WORLD_ATTESTER)" 'SIGNER()(address)' --rpc-url "$(get SEPOLIA_RPC)"
+```
+
+Expected: `0x85b89D21DB13f220601430d48244B2AE06120969`. A mismatch means the constructor got
+the wrong argument and every attestation the server signs will be rejected onchain.
 
 **Do not proceed past this step on a mismatch.** Everything downstream fails identically and uninformatively if the two implementations disagree.
 
