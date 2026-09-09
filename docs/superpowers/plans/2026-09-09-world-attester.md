@@ -362,10 +362,20 @@ For each, make the edit, run `forge test --match-contract WorldAttesterTest`, co
 | Edit | Must fail |
 |---|---|
 | Delete `if (block.timestamp > deadline) return false;` | `test_an_expired_deadline_fails`, `test_the_deadline_is_inclusive` |
-| Replace `attestationHash(digest, deadline)` with `digest` | `test_a_deadline_swapped_after_signing_fails`, `test_a_signature_does_not_carry_to_another_deployment` |
+| Replace `attestationHash(digest, deadline)` with `digest` | `test_a_valid_signature_inside_its_deadline_passes`, `test_the_deadline_is_inclusive`, `test_a_signature_does_not_carry_to_another_deployment` |
+| **Narrow:** drop `deadline` from `structHash` — `keccak256(abi.encode(ATTESTATION_TYPEHASH, digest))` | `test_a_deadline_swapped_after_signing_fails` |
 | Change `return recovered == SIGNER;` to `return true;` | `test_a_different_signer_fails` |
 
 If any mutation leaves the suite green, the test is vacuous — fix the test, not the contract.
+
+> The last two rows are separate on purpose, and the first version of this table conflated
+> them. Replacing the whole hash with the bare digest is a sledgehammer: it destroys the
+> typehash, the domain and the deadline at once, so recovery lands on a essentially random
+> address and `test_a_deadline_swapped_after_signing_fails` passes **trivially** — its
+> `assertFalse` holds for a reason unrelated to what it claims to pin. The narrow mutation
+> keeps the EIP-712 wrapper and removes only `deadline`, so both sides compute the same
+> deadline-free hash, the happy path still passes, and the swap test is the only thing that
+> can catch it. That is what makes it the test's real mutation.
 
 - [ ] **Step 6: Format and run the whole suite**
 
