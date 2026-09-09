@@ -46,7 +46,7 @@ contract WorldAttesterTest is Test {
     // --- each row below pins one guard; deleting the guard must fail the test ---
 
     /// Pins the `block.timestamp > deadline` comparison.
-    function test_an_expired_deadline_fails() public {
+    function test_an_expired_deadline_fails() public view {
         uint64 dl = uint64(block.timestamp - 1);
         assertFalse(att.verify(digest, _blob(SIGNER_PK, digest, dl, dl)));
     }
@@ -120,6 +120,19 @@ contract WorldAttesterTest is Test {
     /// 🔴 Pins `IAttester`'s never-revert contract. A `view` call that reverts fails here.
     function testFuzz_verify_never_reverts(bytes32 d, bytes calldata blob) public view {
         att.verify(d, blob);
+    }
+
+    /// The fuzz above almost never produces a 73-byte blob, so it only ever exercises the
+    /// length gate. This one is shaped correctly by construction, so arbitrary r/s/v reach
+    /// `tryRecover` — which is the only part of `verify` that could plausibly revert.
+    function testFuzz_a_well_shaped_blob_never_reverts(
+        bytes32 d,
+        uint64 deadline,
+        bytes32 r,
+        bytes32 s,
+        uint8 v
+    ) public view {
+        att.verify(d, abi.encodePacked(deadline, r, s, v));
     }
 
     function test_the_constructor_rejects_the_zero_signer() public {
