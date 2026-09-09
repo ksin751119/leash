@@ -1586,9 +1586,45 @@ the impl's own deploy address, and that changed.
 
 - [ ] **Step 6: Prove the demo beat works on chain**
 
-With a fresh action and a real face scan: compute the digest, get an attestation from
-`/api/attest`, and send `allowPayee`. Then have the agent retry the payment that was
-blocked with reason 6 and watch it succeed.
+Same single-variable extraction as Step 2 — never `set -a` or source `.env` wholesale:
+
+```bash
+ENV=/home/ubuntu/DEV/ETHOnline2026/.env
+get() { grep -m1 "^$1=" "$ENV" | cut -d= -f2-; }
+```
+
+Compute the digest `allowPayee` will consume. `nonce` is caller-chosen and only needs to be
+unused for this `(node, token, payee)` triple — replay is prevented by
+`attestationUsed[digest]`, so reusing a consumed digest reverts `AttestationReused`, not the
+nonce itself:
+
+```bash
+RPC="$(get SEPOLIA_RPC)"; W="$(get WALLET_ADDR)"; TOKEN="$(get MOCK_USDC)"
+PAYEE=<vendor address the demo is unblocking>
+NONCE=1
+DIGEST=$(cast call "$W" 'payeeDigest(bytes32,address,address,uint256)(bytes32)' "$NODE" "$TOKEN" "$PAYEE" "$NONCE" --rpc-url "$RPC")
+echo "$DIGEST"
+```
+
+(`$NODE` is the same `vendors` node computed in Step 5.)
+
+Open `world/index.html` (`node world/server.mjs`, tunnel or browse to `localhost:8787`),
+paste `$DIGEST` into the **Signal** field — the page detects the `0x…64-hex` shape and
+switches to the attestation path (the badge under Verify will read
+"/api/attest — attestation path") — and scan. **This is the one Selfie Check attempt this
+action has; do not scan before the digest is in the field.** On success the page shows the
+`attestation` bytes ready to copy, plus `deadline` and `nullifier`.
+
+Send `allowPayee` **from the wallet itself** — the function is `onlySelf`, so it must come
+from `WALLET_PK`, not `AGENT_PK` or `ADMIN_PK`:
+
+```bash
+cast send "$W" 'allowPayee(bytes32,address,address,uint256,bytes)' \
+  "$NODE" "$TOKEN" "$PAYEE" "$NONCE" <attestation from the page> \
+  --private-key "$(get WALLET_PK)" --rpc-url "$RPC"
+```
+
+Then have the agent retry the payment that was blocked with reason 6 and watch it succeed.
 
 Record the transaction hashes for `docs/deployments.md`.
 

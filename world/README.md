@@ -37,6 +37,16 @@ an unauthenticated endpoint and does not know who is asking.
 (500) without it — it does not fall back to the built-in default above, because that
 default (`expand-policy`) is itself a consumed action.
 
+**`index.html`'s Signal field is also the switch between the two backend routes.** Paste a
+`0x` + 64 hex-char digest in and the page calls `/api/attest`, verifying the proof and — only
+on World's HTTP 200 — returning a signed EIP-712 attestation ready to paste into
+`cast send allowPayee` / `setRule` / `restoreAgent`. Anything else (including the default
+`widen:vendors.acme.eth:5000`) calls `/api/verify`, the plain relay this harness was built
+to prove out; it signs nothing. The page never calls both for one scan — `/api/attest`
+performs its own World verification of the same proof, and `max_verifications: 1` means a
+second verify attempt against an already-consumed proof would only burn the action's one
+shot, not add safety.
+
 ---
 
 ## ✅ Verified end to end (2026-09-07)

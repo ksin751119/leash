@@ -24,6 +24,11 @@
   .ok { color: var(--ok); } .bad { color: var(--bad); }
   section { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 20px; }
   section[hidden] { display: none; }
+  p.hint { color: var(--mut); font-size: 12.5px; margin: 6px 0 0; }
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 4px; font-size: 12px;
+           font-weight: 700; letter-spacing: .02em; margin-bottom: 10px; }
+  .badge.attest { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.verify { background: color-mix(in srgb, var(--mut) 18%, transparent); color: var(--mut); }
 </style>
 
 <h1>Leash · Selfie Check harness</h1>
@@ -32,8 +37,11 @@
   verification. This is not the demo frontend.
 </p>
 
-<label for="signal">Signal — which single action this face scan approves</label>
+<label for="signal">Signal — which single action this face scan approves. A <code>0x…</code> + 64 hex-char
+  digest calls <code>/api/attest</code> for a signed attestation; anything else calls
+  <code>/api/verify</code> (relay only, no attestation signed).</label>
 <input id="signal" value="widen:vendors.acme.eth:5000" />
+<p id="signalHint" class="hint"></p>
 
 <label for="level">verification_level</label>
 <select id="level">
@@ -44,9 +52,10 @@
 <button id="go">Verify</button>
 
 <section id="out" hidden>
+  <p id="pathBadge" class="badge"></p>
   <h2 style="font-size:15px;margin:0 0 8px">The proof World App returned</h2>
   <pre id="proof"></pre>
-  <h2 style="font-size:15px;margin:16px 0 8px">Backend verification result</h2>
+  <h2 id="resultHeading" style="font-size:15px;margin:16px 0 8px">Backend verification result</h2>
   <pre id="result"></pre>
 </section>
 
@@ -55,26 +64,80 @@
   const $ = (id) => document.getElementById(id);
   const show = (el, text, cls) => { el.textContent = text; el.className = cls || ""; };
 
+  // A digest, and nothing else, routes a scan to /api/attest. Same shape /api/attest
+  // itself requires server-side (server.mjs: /^0x[0-9a-fA-F]{64}$/) — kept in sync by eye,
+  // since this is a throwaway harness with no shared module between page and server.
+  const DIGEST_RE = /^0x[0-9a-fA-F]{64}$/;
+  const isDigest = (v) => DIGEST_RE.test(v.trim());
+
+  function updateSignalHint() {
+    show(
+      $("signalHint"),
+      isDigest($("signal").value)
+        ? "→ digest detected: scanning will call /api/attest and return a signed attestation."
+        : "→ not a digest: scanning will call /api/verify (relay only — no attestation signed)."
+    );
+  }
+  $("signal").addEventListener("input", updateSignalHint);
+
   let APP_ID, ACTION;
 
   async function boot() {
     const cfg = await fetch("/api/config").then((r) => r.json());
     APP_ID = cfg.app_id;
     ACTION = cfg.action;
+    updateSignalHint();
     $("go").disabled = false;
   }
 
   // IDKit calls this once it has a proof. Throwing = verification failed, and World App
   // shows an error.
+  //
+  // Exactly one of /api/attest or /api/verify is called, never both. /api/attest performs
+  // its own World verification of the same proof, and the action's max_verifications is 1
+  // — a second verify call against an already-consumed proof does not add safety, it
+  // burns the one shot this scan bought. So the signal alone decides the path before any
+  // network call is made.
   async function handleVerify(proof) {
     $("out").hidden = false;
     show($("proof"), JSON.stringify(proof, null, 2));
+
+    const signal = $("signal").value;
+
+    if (isDigest(signal)) {
+      show($("pathBadge"), "/api/attest — attestation path", "badge attest");
+      $("resultHeading").textContent = "Attestation result";
+      show($("result"), "verifying + signing…");
+
+      const res = await fetch("/api/attest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ digest: signal.trim(), proof }),
+      });
+      const body = await res.json();
+      if (res.ok) {
+        show(
+          $("result"),
+          `HTTP ${res.status} — ready to send\n\n` +
+            `attestation (paste into cast send):\n${body.attestation}\n\n` +
+            `deadline: ${body.deadline}\nnullifier: ${body.nullifier}`,
+          "ok"
+        );
+      } else {
+        show($("result"), `HTTP ${res.status}\n\n${JSON.stringify(body, null, 2)}`, "bad");
+        throw new Error(body.detail || body.error || body.code || "attestation failed");
+      }
+      return;
+    }
+
+    show($("pathBadge"), "/api/verify — relay only, no attestation", "badge verify");
+    $("resultHeading").textContent = "Backend verification result";
     show($("result"), "verifying…");
 
     const res = await fetch("/api/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ proof, action: ACTION, signal: $("signal").value }),
+      body: JSON.stringify({ proof, action: ACTION, signal }),
     });
     const body = await res.json();
     show($("result"), JSON.stringify(body, null, 2), res.ok ? "ok" : "bad");
