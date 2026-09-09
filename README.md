@@ -255,10 +255,10 @@ the product able to say so.
 
 ## Tests
 
-170 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 8 matchstick tests
+201 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 8 matchstick tests
 for the subgraph mappings. The fork tests call
 `vm.skip` in `setUp` when `SEPOLIA_RPC` is unset, so `forge test` prints
-`170 passed, 0 failed, 1 skipped (171 total)` — one skip for the suite, not three. They
+`201 passed, 0 failed, 1 skipped (202 total)` — one skip for the suite, not three. They
 are reported as SKIPPED rather than quietly PASSED, which is the point of using
 `vm.skip` over a bare `return`.
 
