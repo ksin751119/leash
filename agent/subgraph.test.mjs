@@ -1,0 +1,108 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { buildIds, fetchSnapshot } from "./subgraph.mjs";
+
+const CFG = {
+  url: "http://example.invalid/graphql",
+  wallet: "0x46C09255377525b34B27ada1A8F0F5BBd0d8eba6", // checksummed on purpose
+  node: "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121",
+  agent: "0xf9248C78183E44b27AfAF6e0CdF5e3e2a3771De0", // checksummed on purpose
+  token: "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
+};
+
+const okBody = {
+  data: {
+    _meta: { block: { number: 11667861 } },
+    agent: { id: "x", revoked: false },
+    subname: { label: "vendors", live: true },
+    policyPointer: { policy: "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b", approved: true },
+    agentBudget: {
+      token: "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
+      limit: "1000000000",
+      spent: "300000000",
+      periodEnd: "1788998400",
+    },
+    payees: [
+      { payee: "0x000000000000000000000000000000000000beef", allowed: true, lastToken: null },
+    ],
+  },
+};
+
+const stub = (body, status = 200) => async () => ({
+  ok: status === 200,
+  status,
+  json: async () => body,
+});
+
+test("ids are lowercased, because the index stores them that way", () => {
+  const ids = buildIds(CFG);
+  assert.equal(ids.agent, "0x46c09255377525b34b27ada1a8f0f5bbd0d8eba6-0xf9248c78183e44b27afaf6e0cdf5e3e2a3771de0");
+  assert.equal(
+    ids.budget,
+    "0x46c09255377525b34b27ada1a8f0f5bbd0d8eba6-0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121-0x768f42455a2d082e23ceef7d51e5787c82d67a39",
+  );
+  assert.equal(ids.wallet, "0x46c09255377525b34b27ada1a8f0f5bbd0d8eba6");
+  assert.equal(ids.node, "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121");
+  assert.ok(!/[A-F]/.test(ids.agent + ids.budget + ids.wallet), "no uppercase hex may survive");
+});
+
+test("a good response becomes a snapshot", async () => {
+  const s = await fetchSnapshot({ ...CFG, chainBlock: 11667862 }, stub(okBody));
+  assert.equal(s.ok, true);
+  assert.equal(s.block.subgraph, 11667861);
+  assert.equal(s.block.lag, 1);
+  assert.equal(s.agent.revoked, false);
+  assert.equal(s.policy.approved, true);
+  assert.equal(s.budget.limit, "1000000000");
+  assert.equal(s.budget.periodEnd, 1788998400, "periodEnd must be a number, not a string");
+  assert.equal(s.payees["0x000000000000000000000000000000000000beef"].allowed, true);
+});
+
+test("payee keys are lowercased so decide() can look them up", async () => {
+  const body = structuredClone(okBody);
+  body.data.payees[0].payee = "0x000000000000000000000000000000000000BEEF";
+  const s = await fetchSnapshot(CFG, stub(body));
+  assert.ok(s.payees["0x000000000000000000000000000000000000beef"]);
+});
+
+test("GraphQL errors fail closed", async () => {
+  const s = await fetchSnapshot(CFG, stub({ errors: [{ message: "bad query" }] }));
+  assert.equal(s.ok, false);
+  assert.match(s.error, /bad query/);
+});
+
+test("a non-200 fails closed", async () => {
+  const s = await fetchSnapshot(CFG, stub({}, 502));
+  assert.equal(s.ok, false);
+  assert.match(s.error, /502/);
+});
+
+test("a thrown fetch fails closed instead of propagating", async () => {
+  const s = await fetchSnapshot(CFG, async () => {
+    throw new Error("ECONNREFUSED");
+  });
+  assert.equal(s.ok, false);
+  assert.match(s.error, /ECONNREFUSED/);
+});
+
+test("a missing _meta fails closed - we must never decide on an unknown block", async () => {
+  const body = structuredClone(okBody);
+  delete body.data._meta;
+  const s = await fetchSnapshot(CFG, stub(body));
+  assert.equal(s.ok, false);
+});
+
+test("absent optional rows are null, not an error", async () => {
+  const body = structuredClone(okBody);
+  body.data.agentBudget = null;
+  body.data.policyPointer = null;
+  const s = await fetchSnapshot(CFG, stub(body));
+  assert.equal(s.ok, true);
+  assert.equal(s.budget, null);
+  assert.equal(s.policy, null);
+});
+
+test("the error sentence never contains the url, which may carry a key", async () => {
+  const s = await fetchSnapshot({ ...CFG, url: "https://x/secret-key-abc" }, stub({}, 500));
+  assert.ok(!s.error.includes("secret-key-abc"));
+});
