@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath } from "./loop.mjs";
+import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath, publicState } from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -261,4 +261,47 @@ test("routePath strips a cache-busting query string", () => {
 
 test("routePath collapses a leading double slash, so base + \"/path\" joins still resolve", () => {
   assert.equal(routePath("//api/agent/state"), "/api/agent/state");
+});
+
+test("a record carries the intent's payee, token and amount", () => {
+  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const rec = state.intents.a;
+  assert.equal(rec.payee, PAYEE);
+  assert.equal(rec.token, TOKEN);
+  assert.equal(rec.amount, "5000000");
+});
+
+test("those three survive a second tick without being recomputed away", () => {
+  const first = advance(initialState(), okSnap(), intents, NOW).state;
+  const second = advance(first, okSnap(), intents, NOW + 5).state;
+  assert.equal(second.intents.a.payee, PAYEE);
+  assert.equal(second.intents.a.amount, "5000000");
+});
+
+test("publicState forwards the payee allow-list", () => {
+  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const pub = publicState(state);
+  assert.equal(pub.payees[PAYEE].allowed, true);
+});
+
+test("publicState publishes the three new intent fields", () => {
+  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const i = publicState(state).intents[0];
+  assert.equal(i.payee, PAYEE);
+  assert.equal(i.token, TOKEN);
+  assert.equal(i.amount, "5000000");
+});
+
+test("payees is an empty object when the read failed, never stale", () => {
+  const good = advance(initialState(), okSnap(), intents, NOW).state;
+  const bad = advance(good, { ok: false, error: "boom" }, intents, NOW + 5).state;
+  assert.deepEqual(publicState(bad).payees, {});
+  assert.equal(publicState(bad).readError, "boom");
+});
+
+test("an intent with no payee publishes null rather than undefined", () => {
+  const bare = [{ id: "z", token: TOKEN, payee: PAYEE, amount: "1", note: "" }];
+  delete bare[0].payee;
+  const { state } = advance(initialState(), okSnap(), bare, NOW);
+  assert.equal(publicState(state).intents[0].payee, null);
 });

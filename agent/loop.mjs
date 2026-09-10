@@ -140,7 +140,17 @@ export function advance(state, snapshot, intents, nowSec) {
   const queued = new Set();
   for (const intent of intents) {
     const prev = next.intents[intent.id] ?? { inFlight: false, lastAction: null };
-    const rec = { ...prev, id: intent.id, note: intent.note ?? "" };
+    // payee/token/amount are copied onto the record so the state endpoint can say who an
+    // intent pays and how much. They are inputs, not decisions: nothing below reads them,
+    // and no branch in this function changes because they exist.
+    const rec = {
+      ...prev,
+      id: intent.id,
+      note: intent.note ?? "",
+      payee: intent.payee ?? null,
+      token: intent.token ?? null,
+      amount: intent.amount ?? null,
+    };
 
     if (prev.lastAction?.outcome === "executed") {
       // One-shot. The tick is seconds and the budget is finite: an intent that stayed
@@ -250,8 +260,7 @@ let ticking = false;
 // actually gets used everywhere, not just at the startup check.
 let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE;
 
-function publicState() {
-  const s = state;
+export function publicState(s) {
   return {
     tick: s.tick,
     at: s.at,
@@ -262,9 +271,16 @@ function publicState() {
     subname: s.snapshot?.subname ?? null,
     policy: s.snapshot?.policy ?? null,
     budget: s.snapshot?.budget ?? null,
+    // Forwarded from the snapshot, so it is absent exactly when the read failed. Falling
+    // back to `{}` rather than the previous tick's map matters: a stale allow-list on a
+    // failed read would show the page a permission that may no longer exist.
+    payees: s.snapshot?.payees ?? {},
     intents: Object.values(s.intents).map((i) => ({
       id: i.id,
       note: i.note,
+      payee: i.payee ?? null,
+      token: i.token ?? null,
+      amount: i.amount ?? null,
       verdict: i.verdict ?? null,
       reason: i.reason ?? null,
       reasonName: i.reasonName ?? null,
@@ -402,7 +418,7 @@ if (isMain) {
     };
     try {
       const pathname = routePath(req.url);
-      if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState());
+      if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState(state));
       if (req.method === "POST" && pathname === "/api/agent/tick") {
         try {
           await tick();
@@ -411,7 +427,7 @@ if (isMain) {
           // so the request cannot hang or 500 with no body if something still escapes.
           return json(500, { error: String(err?.message ?? err) });
         }
-        return json(200, publicState());
+        return json(200, publicState(state));
       }
     } catch (err) {
       // Backstop for anything else unexpected in this handler - see the comment above on
