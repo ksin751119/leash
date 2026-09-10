@@ -1,6 +1,6 @@
 # Subagent-driven development ledgers
 
-Working records from two features that were built with a spec-driven, subagent-driven
+Working records from three features that were built with a spec-driven, subagent-driven
 workflow. They are published because ETHOnline's AI rules ask for them: *"Spec-driven
 workflows require submission of all spec files and prompts."*
 
@@ -12,6 +12,11 @@ them. Nothing has been cleaned up after the fact.
 |---|---|---|---|
 | [`2026-09-09-world-attester/`](2026-09-09-world-attester) | `WorldAttester` + EIP-712 attestation issuance | [spec](../specs/2026-09-09-world-attester-design.md) | [plan](../plans/2026-09-09-world-attester.md) |
 | [`2026-09-09-agent-loop/`](2026-09-09-agent-loop) | The agent decision loop | [spec](../specs/2026-09-09-agent-loop-design.md) | [plan](../plans/2026-09-09-agent-loop.md) |
+| [`2026-09-10-demo-frontend/`](2026-09-10-demo-frontend) | The demo page | [spec](../specs/2026-09-10-demo-frontend-design.md) | [plan](../plans/2026-09-10-demo-frontend.md) |
+
+The demo-frontend directory also keeps the per-task **briefs** — the exact requirements each
+implementer was given, extracted from the plan — beside the reports. The review packages
+(`*.diff`) are not kept; they are git ranges the history already holds.
 
 ## What each file is
 

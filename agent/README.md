@@ -18,6 +18,25 @@ curl -s -X POST localhost:8788/api/agent/tick   # run one cycle now, do not wait
 Extract single variables as above. **Never source `.env` wholesale** — it also holds
 `WALLET_PK` and `WORLD_RP_SIGNER_PK`, and this process must hold neither.
 
+> ### Starting this spends money
+>
+> There is no read-only mode. The first tick reads the subgraph, decides, and **sends a real
+> transaction** for every intent it judges will pass — that is the whole job. Starting it "just
+> to look at `/api/agent/state`" pays whatever is in `intents.json`.
+>
+> This has cost 5 test USDC twice, on 2026-09-09 and again on 2026-09-10, both times to someone
+> who knew exactly what the loop does and was thinking of it as a read.
+>
+> To inspect the endpoints without paying, empty the intents first:
+>
+> ```bash
+> cp intents.json /tmp/intents.bak && echo '[]' > intents.json
+> #  … start the loop, curl the endpoints, stop it …
+> cp /tmp/intents.bak intents.json
+> ```
+>
+> An empty array passes validation and the loop runs normally with nothing to send.
+
 Startup validates more than presence: `WALLET_ADDR`/`AGENT_ADDR` must be a 20-byte hex
 address and `LEASH_NODE` a 32-byte hex hash, after trimming whitespace and a trailing CR (the
 `grep | cut` extraction above preserves both, and either flowing through unchanged produces
