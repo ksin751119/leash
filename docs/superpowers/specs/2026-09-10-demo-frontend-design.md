@@ -98,10 +98,12 @@ says so — and rewriting it would cost the fallback.
 
 | Action | File | What |
 |---|---|---|
-| create | `world/demo.html` | The page: markup, styles, render functions, polling |
+| create | `world/demo.html` | The page: markup, styles, polling, IDKit wiring |
+| create | `world/demo-render.mjs` | Pure `publicState()` → DOM-text functions, so the layout is testable without a browser |
+| create | `world/demo-render.test.mjs` | Tests for the above |
 | create | `world/widen-plan.mjs` | Digest lookup and command construction, so it is testable without a server |
 | create | `world/widen-plan.test.mjs` | Tests for the above |
-| modify | `world/server.mjs` | `GET /` → demo, `GET /harness` → the old page, `GET /api/widen-plan`, startup env guard |
+| modify | `world/server.mjs` | `GET /` → demo, `GET /harness` → the old page, `GET /demo-render.mjs`, `GET /api/widen-plan`, startup env guard |
 | modify | `agent/loop.mjs` | `advance()` copies `payee`/`token`/`amount`; `publicState()` forwards them and `payees` |
 | modify | `agent/loop.test.mjs` | New assertions only; **no existing test edited** |
 | unchanged | `world/index.html`, `agent/decide.mjs`, `agent/subgraph.mjs`, `agent/send.mjs`, all contracts, `subgraph/` | |
@@ -118,7 +120,12 @@ about that pattern.
 
 ```
 GET /api/widen-plan?payee=0x00000000000000000000000000000000000cafe0
+                   &token=0x768f42455a2d082e23ceef7d51e5787c82d67a39
 ```
+
+`token` is a query parameter rather than an env var because the page already holds it: it
+comes from the intent record, which is the same value the agent is acting on. An env var
+would be a second place for it to be wrong.
 
 **Response 200**
 
@@ -129,22 +136,29 @@ GET /api/widen-plan?payee=0x00000000000000000000000000000000000cafe0
   "node":    "0x9b4cc576…",
   "token":   "0x768f4245…",
   "payee":   "0x…cafe0",
-  "command": "cast send $LEASH_WALLET \"allowPayee(bytes32,address,address,uint256,bytes)\" …"
+  "command": "cast send $WALLET_ADDR \"allowPayee(bytes32,address,address,uint256,bytes)\" …"
 }
 ```
 
 **Behaviour**
 
-1. Validate `payee` against `/^0x[0-9a-fA-F]{40}$/`; anything else is `400`.
+1. Validate `payee` and `token` against `/^0x[0-9a-fA-F]{40}$/`; anything else is `400`.
 2. `nonce = Math.floor(Date.now() / 1000)`.
-3. `eth_call` `payeeDigest(bytes32,address,address,uint256)` on `LEASH_WALLET` via
+3. `eth_call` `payeeDigest(bytes32,address,address,uint256)` on `WALLET_ADDR` via
    `SEPOLIA_RPC`.
 4. Build the `cast send` string with **`$WALLET_PK` as a literal shell variable name**, never
    a value. The operator's own shell resolves it.
-5. Any RPC failure returns `502` with the URL redacted, reusing `redactUrls()`'s approach.
+5. Any RPC failure returns `502` with the URL redacted, the way `agent/subgraph.mjs` redacts
+   both the full URL and its hostname.
 
-**New env**, guarded at startup the way `checkAttestEnv` guards the attest route:
-`SEPOLIA_RPC`, `LEASH_WALLET`, `LEASH_NODE`, `LEASH_TOKEN`.
+**New env for `world/`**, guarded at startup the way `checkAttestEnv` guards the attest
+route: `SEPOLIA_RPC`, `WALLET_ADDR`, `LEASH_NODE`. All three already exist under exactly
+these names in `agent/loop.mjs`'s own startup validation — **no new names are invented**, so
+one `.env` still drives both processes.
+
+The calldata is encoded by hand with `keccak_256` from `@noble/hashes`, which `world/` already
+depends on for `attest.mjs`. `world/` gets no new dependency, and in particular does not gain
+`viem`.
 
 **A limit, stated because it is real.** `LeashAccount` exposes no getter for
 `attestationUsed`, so this endpoint cannot prove the digest is unspent. A second-resolution
@@ -226,7 +240,7 @@ Node's built-in runner, matching `agent/*.test.mjs`.
 | `/api/widen-plan` rejects a malformed payee | `400`, no RPC call made |
 | It never emits a key | assert the command contains `$WALLET_PK` and **not** the value of `WALLET_PK` |
 | RPC failure redacts the URL | stub a failing fetch; assert the URL is absent from the body |
-| Startup guard | missing `LEASH_WALLET` refuses at boot, like `checkAttestEnv` |
+| Startup guard | missing `WALLET_ADDR` refuses at boot, like `checkAttestEnv` |
 | `advance()` carries the new fields | a record for a fresh intent has `payee`, `token`, `amount` matching the input |
 | **`advance()`'s behaviour is unchanged** | the existing `loop.test.mjs` suite passes untouched — no test may be edited to accommodate the new fields |
 | `publicState()` forwards `payees` | with a snapshot, the map is present; with `readError`, it is `{}` and not stale |
