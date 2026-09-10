@@ -385,10 +385,17 @@
   const BLIND_TEXT = "the agent is blind — it will propose nothing";
   const TICK_ERROR_TEXT = "the last tick errored — the verdicts below are from before it";
 
-  // The reason code that this page's one button can do something about. It is not a decision:
-  // the agent already decided, published `reason`, and this only asks "is the thing it
-  // objected to the thing a face scan can fix?"
+  // The one refusal this page can do anything about. Deciding is not what this is: the agent
+  // already decided and published both `reason` and `reasonName`; this only asks "is the thing
+  // it objected to the thing a face scan can fix?"
+  //
+  // The name is authoritative and the number is the fallback for a state that omits it, rather
+  // than the two being OR'd: if agent/reason.mjs ever renumbers, 6 becomes some *other*
+  // refusal, and an OR would cheerfully offer a face scan for it.
   const PAYEE_NOT_ALLOWED = 6;
+  const PAYEE_NOT_ALLOWED_NAME = "PAYEE_NOT_ALLOWED";
+  const isPayeeNotAllowed = (raw) =>
+    raw.reasonName ? raw.reasonName === PAYEE_NOT_ALLOWED_NAME : raw.reason === PAYEE_NOT_ALLOWED;
 
   let last = null;           // the most recent published state, verbatim
   let lastStatus = null;     // renderStatus(last), computed once per state and shared
@@ -465,24 +472,43 @@
     const views = (state.intents ?? []).map((i) => renderIntent(i, payees));
     paintIntents(views);
 
-    // A payee is "pending" when an intent the agent says it will block names it and the
-    // allow-list published alongside does not contain it. Both halves are the agent's, read
-    // through demo-render; nothing here is inferred about whether it *should* be allowed.
-    // Shortened from the lowercased address, not from `payeeShort`, because renderRules
-    // shortens the allow-list's lowercase keys: a checksummed address would otherwise change
-    // case at the very moment the ghost row becomes a real one, which reads as a different
-    // address appearing rather than this one being allowed.
-    pending = views
-      .filter((v) => v.tone === "blocked" && v.payee && !v.payeeAllowed)
-      .map((v) => {
-        const addr = String(v.payee).toLowerCase();
-        return { addr, short: shortHex(addr), id: v.id };
-      });
+    pending = widenable(state, views);
 
     paintRules(renderRules(state));
     paintButton();
     paintWait();
     requestAnimationFrame(drawWire);
+  }
+
+  // One selection, and everything downstream reads it: the ghost payee row, the connector, the
+  // wait strip, and the button's target. They cannot disagree about which intent or which payee
+  // because there is only one list.
+  //
+  // Every clause is a fact the agent published, and the narrow one is deliberate. A card
+  // reading `2 · AGENT_REVOKED` is also "blocked", and drawing the connector from it to the
+  // payee list would have the page assert a cause the agent never gave — that the refusal was
+  // a missing payee. That is precisely the class of invention this whole page is built to
+  // avoid, so the connector is drawn only for the refusal that is actually about a payee, and
+  // only when the allow-list agrees that payee is absent.
+  function widenable(state, views) {
+    const out = [];
+    (state?.intents ?? []).forEach((raw, i) => {
+      const v = views[i];
+      if (!v) return;
+      if (raw.verdict !== "will-be-blocked") return;
+      if (!isPayeeNotAllowed(raw)) return;
+      // token as well as payee: the widening plan needs both, so an intent missing either is
+      // not something this button could act on even though the refusal is the right one.
+      if (!raw.payee || !raw.token) return;
+      if (v.payeeAllowed) return;
+      // Shortened from the lowercased address, not from `payeeShort`, because renderRules
+      // shortens the allow-list's lowercase keys: a checksummed address would otherwise change
+      // case at the very moment the ghost row becomes a real one, which reads as a different
+      // address appearing rather than this one being allowed.
+      const addr = String(raw.payee).toLowerCase();
+      out.push({ id: v.id, addr, short: shortHex(addr), intent: raw });
+    });
+    return out;
   }
 
   const intentEls = new Map();
@@ -577,11 +603,13 @@
   /* ------------------------------------------------------------------ the connector */
 
   // Geometry only: it draws a line between two elements that are already on screen. Which
-  // intent and which row it joins was decided by the agent, above.
+  // intent and which row it joins was decided by the agent, above — and it is the same
+  // `widenTarget()` the button acts on, so the line cannot point at one payee while the scan
+  // widens another.
   function drawWire() {
     const parts = [$("wirePath"), $("wireDot"), $("wireLabelBg"), $("wireLabel")];
     const [path, dot, labelBg, label] = parts;
-    const target = pending[0];
+    const target = widenTarget();
     const from = target ? intentEls.get(target.id) : null;
     const to = target ? payeeEls.get(target.addr) : null;
     if (!from || !to || $("intents").classList.contains("dim")) {
@@ -689,20 +717,31 @@
     $("widenMsg").classList.toggle("bad", Boolean(bad));
   };
 
-  // The one intent this button can act on: blocked, for the one reason a face scan answers,
-  // and carrying the two addresses the plan needs. Read out of the published state, not
-  // re-derived from it.
-  const widenTarget = (state) =>
-    (state?.intents ?? []).find(
-      (i) => i.verdict === "will-be-blocked" && i.reason === PAYEE_NOT_ALLOWED && i.payee && i.token
-    ) ?? null;
+  // The intent this button acts on is the first of the same list the connector points at, so
+  // the line on screen and the payee about to be widened are the same payee by construction.
+  const widenTarget = () => pending[0] ?? null;
+
+  // Everything the command box shows belongs to one widening attempt. Any path that ends an
+  // attempt — cancelled, failed, or superseded by a new one — puts the box back rather than
+  // leaving a digest or an expiry notice standing over the next one.
+  const CMD_PLACEHOLDER = $("cmdLabel").textContent;
+  const VALID_TEXT = $("validText").textContent;
+
+  function resetCommandBox() {
+    $("cmdLabel").textContent = CMD_PLACEHOLDER;
+    $("cmd").textContent = "";
+    $("copy").hidden = true;
+    $("valid").hidden = true;
+    $("valid").classList.remove("stale");
+    $("validText").textContent = VALID_TEXT;
+  }
 
   // The button is never a dead end. While a scan is out it stays live and becomes its own
   // cancel, because dismissing the World App modal calls nothing back — IDKit only reports
   // success — and a page that latches `busy` on that path is a page that needs a reload in
   // the middle of a recording. Whatever state it is in, the label says so.
   function paintButton() {
-    const target = widenTarget(last);
+    const target = widenTarget();
     const idkitReady = typeof IDKit !== "undefined";
     const btn = $("widen");
 
@@ -721,7 +760,7 @@
     if (!idkitReady) return setMsg("IDKit did not load — the scan cannot start", true);
     if (!last) return setMsg("waiting for the agent…", false);
     if (!target) return setMsg("nothing is blocked on a missing payee", false);
-    setMsg(`${target.id} is blocked because ${shortHex(target.payee)} is not on the list`, false);
+    setMsg(`${target.id} is blocked because ${target.short} is not on the list`, false);
   }
 
   $("widen").addEventListener("click", () => (busy ? cancelWiden() : startWiden()));
@@ -737,16 +776,18 @@
     } catch {
       // IDKit exposes no close in every build; the operator dismisses the modal themselves.
     }
-    $("cmdLabel").textContent = "THE COMMAND APPEARS HERE AFTER THE SCAN";
-    $("cmd").textContent = "";
+    resetCommandBox();
     paintButton();
     setMsg("scan cancelled — press the button to start a new one", false);
   }
 
   async function startWiden() {
-    const intent = widenTarget(last);
+    const intent = widenTarget()?.intent;
     if (!intent || busy || signed) return;
     busy = true;
+    // Whatever the last attempt left behind — a digest, an expired attestation, its notice —
+    // belongs to that attempt and not to this one.
+    resetCommandBox();
     paintButton();
 
     try {
@@ -783,9 +824,13 @@
       });
       IDKit.open();
     } catch (err) {
+      // Same cleanup as cancelling, for the same reason: if this threw after the digest was
+      // painted, leaving "THIS SCAN IS BOUND TO THIS DIGEST" over a digest no scan is bound to
+      // would be the one lie this page must not tell.
       busy = false;
-      setMsg(String(err?.message ?? err), true);
+      resetCommandBox();
       paintButton();
+      setMsg(String(err?.message ?? err), true);
     }
   }
 
@@ -806,14 +851,15 @@
       //    only transformation this page performs on anything it was given.
       showCommand(plan.command.replace("$ATTESTATION", body.attestation), body.deadline);
     } catch (err) {
+      // The attempt is over either way, so the box goes back with it. setMsg comes after
+      // paintButton because paintButton writes the idle message over whatever is there.
       busy = false;
-      setMsg(String(err?.message ?? err), true);
+      resetCommandBox();
       paintButton();
+      setMsg(String(err?.message ?? err), true);
       throw err;
     }
   }
-
-  const VALID_TEXT = $("validText").textContent;
 
   function showCommand(command, deadline) {
     busy = false;
