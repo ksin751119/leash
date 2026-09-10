@@ -13,6 +13,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { signAttestation, buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
+import { widenPlan, checkWidenEnv } from "./widen-plan.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -63,10 +64,26 @@ const readBody = (req) =>
 
 const server = createServer(async (req, res) => {
   try {
+    // The demo page is the front door: during judging this is what is on screen. The
+    // harness stays reachable at /harness because it is the tool you reach for when the
+    // demo misbehaves, and losing it would cost the fallback.
     if (req.method === "GET" && (req.url === "/" || req.url.startsWith("/?"))) {
+      const html = await readFile(new URL("./demo.html", import.meta.url));
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(html);
+    }
+
+    if (req.method === "GET" && (req.url === "/harness" || req.url.startsWith("/harness?"))) {
       const html = await readFile(new URL("./index.html", import.meta.url));
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       return res.end(html);
+    }
+
+    // demo.html imports this as an ES module, so it needs a JavaScript content type.
+    if (req.method === "GET" && req.url === "/demo-render.mjs") {
+      const js = await readFile(new URL("./demo-render.mjs", import.meta.url));
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" });
+      return res.end(js);
     }
 
     if (req.method === "GET" && req.url === "/api/config") {
@@ -186,6 +203,17 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    if (req.method === "GET" && req.url.startsWith("/api/widen-plan")) {
+      const q = new URL(req.url, "http://localhost").searchParams;
+      const { status, body } = await widenPlan({
+        payee: q.get("payee"),
+        token: q.get("token"),
+        env: process.env,
+        nonce: Math.floor(Date.now() / 1000),
+      });
+      return json(res, status, body);
+    }
+
     json(res, 404, { error: "not found" });
   } catch (err) {
     console.error(err);
@@ -205,4 +233,10 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`  rp_id   ${RP_ID}`);
   console.log(`  verify  ${VERIFY_URL}\n`);
   console.log(`  config check: curl -s localhost:${PORT}/api/precheck\n`);
+
+  // Not fatal: /api/config, /api/precheck and /harness still work without these, and
+  // finding out mid-demo is worse than a line at boot. The route itself still refuses with
+  // a 500, so it can never half-work.
+  const widenErr = checkWidenEnv(process.env);
+  if (widenErr) console.warn(`⚠ /api/widen-plan is unavailable: ${widenErr}`);
 });
