@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One agent payment, first step to last",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1060,
+      730
+    ],
+    "views": [
+      {
+        "id": "the-call",
+        "label": "The call",
+        "focus": [
+          "agent",
+          "wallet"
+        ],
+        "note": "The agent calls the wallet. The wallet's own delegated code answers, in the wallet's own storage."
+      },
+      {
+        "id": "ens-walk",
+        "label": "Resolving the policy",
+        "focus": [
+          "wallet",
+          "ethreg",
+          "lreg",
+          "lres"
+        ],
+        "note": "Three hops, inside the transaction. No CCIP-read gateway, because ENSv2 resolve() returns data directly."
+      },
+      {
+        "id": "judgement",
+        "label": "Judgement",
+        "focus": [
+          "wallet",
+          "approvals",
+          "policy"
+        ],
+        "note": "The account decides whether to trust the policy. The policy decides whether the spend is allowed."
+      },
+      {
+        "id": "effect",
+        "label": "Effect",
+        "focus": [
+          "wallet",
+          "usdc",
+          "subgraph",
+          "agent"
+        ],
+        "note": "A block emits an event and returns normally, so the agent can read the refusal on its next tick."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Agent",
+      "sublabel": "holds nothing"
+    },
+    {
+      "id": "wallet",
+      "type": "security",
+      "label": "Wallet EOA",
+      "sublabel": "LeashAccount"
+    },
+    {
+      "id": "ethreg",
+      "type": "external",
+      "label": "ETHRegistry",
+      "sublabel": "ENSv2"
+    },
+    {
+      "id": "lreg",
+      "type": "backend",
+      "label": "LeashRegistry",
+      "sublabel": "agent subnames"
+    },
+    {
+      "id": "lres",
+      "type": "backend",
+      "label": "LeashResolver",
+      "sublabel": "ENSIP-10"
+    },
+    {
+      "id": "approvals",
+      "type": "security",
+      "label": "Approvals",
+      "sublabel": "the allow list"
+    },
+    {
+      "id": "policy",
+      "type": "backend",
+      "label": "Policy",
+      "sublabel": "StandardPolicy"
+    },
+    {
+      "id": "usdc",
+      "type": "database",
+      "label": "USDC",
+      "sublabel": "ERC-20"
+    },
+    {
+      "id": "subgraph",
+      "type": "database",
+      "label": "Subgraph",
+      "sublabel": "The Graph"
+    }
+  ],
+  "segments": [
+    {
+      "from": 160,
+      "to": 205,
+      "label": "The call"
+    },
+    {
+      "from": 230,
+      "to": 400,
+      "label": "Resolve the policy through ENS — on every payment, inside the transaction"
+    },
+    {
+      "from": 425,
+      "to": 540,
+      "label": "Judgement"
+    },
+    {
+      "from": 565,
+      "to": 650,
+      "label": "Effect, and what the agent can see next"
+    }
+  ],
+  "messages": [
+    {
+      "id": "call",
+      "from": "agent",
+      "to": "wallet",
+      "y": 175,
+      "label": "spend(token, payee, amount)",
+      "variant": "emphasis",
+      "note": "Is the caller a bound agent, not revoked, and is the account unpaused? Reasons 1, 2 and 10 stop here."
+    },
+    {
+      "id": "hop1",
+      "from": "wallet",
+      "to": "ethreg",
+      "y": 245,
+      "label": "getSubregistry(\"leash\")"
+    },
+    {
+      "id": "hop1r",
+      "from": "ethreg",
+      "to": "wallet",
+      "y": 273,
+      "label": "LeashRegistry",
+      "variant": "return"
+    },
+    {
+      "id": "hop2",
+      "from": "wallet",
+      "to": "lreg",
+      "y": 301,
+      "label": "getResolver(\"vendors\")"
+    },
+    {
+      "id": "hop2r",
+      "from": "lreg",
+      "to": "wallet",
+      "y": 329,
+      "label": "LeashResolver — 0x0 once the subname expires",
+      "variant": "return"
+    },
+    {
+      "id": "hop3",
+      "from": "wallet",
+      "to": "lres",
+      "y": 357,
+      "label": "resolve(dnsName, addr(node))"
+    },
+    {
+      "id": "hop3r",
+      "from": "lres",
+      "to": "wallet",
+      "y": 385,
+      "label": "the policy address — else reason 3",
+      "variant": "return"
+    },
+    {
+      "id": "approved",
+      "from": "wallet",
+      "to": "approvals",
+      "y": 440,
+      "label": "is this policy approved?",
+      "variant": "security"
+    },
+    {
+      "id": "approvedr",
+      "from": "approvals",
+      "to": "wallet",
+      "y": 468,
+      "label": "yes — else reason 4",
+      "variant": "return"
+    },
+    {
+      "id": "check",
+      "from": "wallet",
+      "to": "policy",
+      "y": 500,
+      "label": "check(SpendContext) — capped at 200k gas",
+      "variant": "emphasis"
+    },
+    {
+      "id": "checkr",
+      "from": "policy",
+      "to": "wallet",
+      "y": 528,
+      "label": "0, or 5-9 / 11 — anything anomalous is 12",
+      "variant": "return"
+    },
+    {
+      "id": "transfer",
+      "from": "wallet",
+      "to": "usdc",
+      "y": 580,
+      "label": "write the ledger, then transfer — only on 0",
+      "variant": "emphasis"
+    },
+    {
+      "id": "emit",
+      "from": "wallet",
+      "to": "subgraph",
+      "y": 608,
+      "label": "SpendExecuted — or SpendBlocked, and no money moved",
+      "variant": "dashed"
+    },
+    {
+      "id": "nexttick",
+      "from": "subgraph",
+      "to": "agent",
+      "y": 636,
+      "label": "the agent reads this on its next tick",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "wallet",
+      "from": 172,
+      "to": 645,
+      "type": "security"
+    },
+    {
+      "participant": "ethreg",
+      "from": 240,
+      "to": 279,
+      "type": "external"
+    },
+    {
+      "participant": "lreg",
+      "from": 296,
+      "to": 335,
+      "type": "backend"
+    },
+    {
+      "participant": "lres",
+      "from": 352,
+      "to": 391,
+      "type": "backend"
+    },
+    {
+      "participant": "approvals",
+      "from": 435,
+      "to": 474,
+      "type": "security"
+    },
+    {
+      "participant": "policy",
+      "from": 495,
+      "to": 534,
+      "type": "backend"
+    },
+    {
+      "participant": "usdc",
+      "from": 575,
+      "to": 614,
+      "type": "database"
+    },
+    {
+      "participant": "subgraph",
+      "from": 603,
+      "to": 642,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What is actually running",
+      "items": [
+        "The wallet is a plain EOA delegated under EIP-7702 to the LeashAccount implementation",
+        "So this code executes in the wallet’s own storage, at the wallet’s own address — msg.sender for the transfer is the wallet",
+        "The agent is only a msg.sender that a policy recognises: it holds no funds and no permissions"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Where each refusal comes from",
+      "items": [
+        "1 AGENT_NOT_BOUND · 2 AGENT_REVOKED · 3 NO_POLICY · 4 POLICY_NOT_APPROVED · 10 PAUSED · 12 POLICY_FAILED — all decided by LeashAccount",
+        "5 TOKEN_NOT_ALLOWED · 6 PAYEE_NOT_ALLOWED · 7 OVER_TX_LIMIT · 8 OVER_PERIOD_LIMIT · 9 OUTSIDE_TIME_WINDOW · 11 OVER_SHARED_LIMIT — all decided by the policy",
+        "The numbers are frozen: the subgraph, the frontend and the agent all depend on them"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "A block does not revert",
+      "items": [
+        "It emits SpendBlocked and returns normally, so the subgraph can index the refusal",
+        "The cost is that a successful receipt is not a successful payment",
+        "12 POLICY_FAILED is deliberately not 4 — \"this policy is broken\" and \"no human approved this\" have different fixes"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Why the walk cannot wedge the account",
+      "items": [
+        "resolvePolicy never reverts: a failed hop is reason 3 and no money moves",
+        "No externally returned data reaches abi.decode — every hop reads its words in assembly and checks structure and padding itself",
+        "The three hops return 32, 32 and 96 bytes; hop three returns bytes, so offset and length come first"
+      ]
+    }
+  ]
+}

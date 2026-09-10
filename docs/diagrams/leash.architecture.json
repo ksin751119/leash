@@ -1,0 +1,503 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Leash — onchain policy engine for AI agent wallets",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1200,
+      840
+    ],
+    "repository": {
+      "url": "https://github.com/ksin751119/leash",
+      "provider": "github",
+      "revision": "2edcde232f665e188563a34b3151a0f2fc8b20c4"
+    },
+    "views": [
+      {
+        "id": "spend-path",
+        "label": "The payment path",
+        "focus": [
+          "agent",
+          "wallet",
+          "approvals",
+          "policy",
+          "usdc"
+        ],
+        "note": "Every agent payment runs this check inside the wallet's own code."
+      },
+      {
+        "id": "ens-walk",
+        "label": "The ENS walk",
+        "focus": [
+          "wallet",
+          "ethregistry",
+          "leashregistry",
+          "leashresolver",
+          "policy"
+        ],
+        "note": "The policy address is resolved out of ENS on every single payment. Break hop one and payments stop."
+      },
+      {
+        "id": "widening",
+        "label": "Widening needs a human",
+        "focus": [
+          "human",
+          "rp",
+          "worldapi",
+          "worldattester",
+          "wallet"
+        ],
+        "note": "Allowing a payee or raising a limit needs a fresh face scan. Tightening never does."
+      },
+      {
+        "id": "observability",
+        "label": "What the agent can see",
+        "focus": [
+          "wallet",
+          "subgraph",
+          "agent"
+        ],
+        "note": "Blocked attempts are indexed too, which is why a block returns normally instead of reverting."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "ethregistry",
+      "type": "external",
+      "label": "ENS ETHRegistry",
+      "sublabel": "ENSv2 on Sepolia",
+      "pos": [
+        420,
+        60
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "leashregistry",
+      "type": "backend",
+      "label": "LeashRegistry",
+      "sublabel": "IRegistry + ERC-1155",
+      "tag": "subname expiry",
+      "pos": [
+        680,
+        60
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/LeashRegistry.sol",
+          "label": "issue / renew / revoke"
+        }
+      ]
+    },
+    {
+      "id": "leashresolver",
+      "type": "backend",
+      "label": "LeashResolver",
+      "sublabel": "ENSIP-10 only",
+      "pos": [
+        940,
+        60
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/LeashResolver.sol",
+          "label": "resolve(bytes,bytes)"
+        }
+      ]
+    },
+    {
+      "id": "human",
+      "type": "external",
+      "label": "Human",
+      "sublabel": "World App · Selfie Check",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "rp",
+      "type": "backend",
+      "label": "RP Server",
+      "sublabel": "world/server.mjs",
+      "tag": "signs only after 200",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "world/server.mjs",
+          "line": 144,
+          "label": "POST /api/attest"
+        }
+      ]
+    },
+    {
+      "id": "worldapi",
+      "type": "external",
+      "label": "World ID Cloud",
+      "sublabel": "/api/v2/verify",
+      "pos": [
+        40,
+        340
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "approvals",
+      "type": "security",
+      "label": "PolicyApprovals",
+      "sublabel": "the approval list",
+      "tag": "revoke is public",
+      "pos": [
+        860,
+        300
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/PolicyApprovals.sol",
+          "label": "no owner"
+        }
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Agent Loop",
+      "sublabel": "agent/loop.mjs",
+      "tag": "holds nothing",
+      "pos": [
+        40,
+        480
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "agent/loop.mjs",
+          "line": 405,
+          "label": "GET /api/agent/state"
+        }
+      ]
+    },
+    {
+      "id": "wallet",
+      "type": "security",
+      "label": "Wallet EOA",
+      "sublabel": "EIP-7702 → LeashAccount",
+      "tag": "runs in the EOA's own storage",
+      "pos": [
+        380,
+        450
+      ],
+      "size": [
+        230,
+        132
+      ],
+      "sources": [
+        {
+          "path": "src/LeashAccount.sol",
+          "line": 808,
+          "label": "spend()"
+        },
+        {
+          "path": "src/LeashAccount.sol",
+          "line": 710,
+          "label": "resolvePolicy()"
+        }
+      ]
+    },
+    {
+      "id": "policy",
+      "type": "backend",
+      "label": "StandardPolicy",
+      "sublabel": "pure · reason codes 5-9, 11",
+      "tag": "200k gas cap",
+      "pos": [
+        860,
+        470
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/StandardPolicy.sol",
+          "label": "check(SpendContext)"
+        }
+      ]
+    },
+    {
+      "id": "worldattester",
+      "type": "security",
+      "label": "WorldAttester",
+      "sublabel": "EIP-712 · immutable",
+      "tag": "no setter",
+      "pos": [
+        860,
+        640
+      ],
+      "size": [
+        200,
+        72
+      ],
+      "sources": [
+        {
+          "path": "src/WorldAttester.sol",
+          "label": "verify()"
+        }
+      ]
+    },
+    {
+      "id": "subgraph",
+      "type": "database",
+      "label": "Subgraph",
+      "sublabel": "The Graph Studio",
+      "tag": "indexes blocked attempts too",
+      "pos": [
+        40,
+        700
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "usdc",
+      "type": "database",
+      "label": "USDC",
+      "sublabel": "ERC-20 on Sepolia",
+      "pos": [
+        400,
+        700
+      ],
+      "size": [
+        200,
+        72
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Control plane — ADMIN authority",
+      "wraps": [
+        "ethregistry",
+        "leashregistry",
+        "leashresolver"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "agent-spend",
+      "from": "agent",
+      "to": "wallet",
+      "label": "spend(token, payee, amount)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "hop1",
+      "from": "wallet",
+      "to": "ethregistry",
+      "label": "hop 1 · getSubregistry(\"leash\")",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        600,
+        250
+      ]
+    },
+    {
+      "id": "hop2",
+      "from": "ethregistry",
+      "to": "leashregistry",
+      "label": "hop 2 · getResolver(\"vendors\")",
+      "labelAt": [
+        650,
+        160
+      ]
+    },
+    {
+      "id": "hop3",
+      "from": "leashregistry",
+      "to": "leashresolver",
+      "label": "hop 3 · resolve(dnsName, addr)",
+      "labelAt": [
+        910,
+        160
+      ]
+    },
+    {
+      "id": "resolves-to",
+      "from": "leashresolver",
+      "to": "policy",
+      "label": "policy address",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right"
+    },
+    {
+      "id": "is-approved",
+      "from": "wallet",
+      "to": "approvals",
+      "label": "approved? · else reason 4",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelSegment": 2,
+      "labelDx": -90
+    },
+    {
+      "id": "policy-check",
+      "from": "wallet",
+      "to": "policy",
+      "label": "check(SpendContext)",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDx": 76
+    },
+    {
+      "id": "attest-check",
+      "from": "wallet",
+      "to": "worldattester",
+      "label": "verify(digest, blob)",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelSegment": 2
+    },
+    {
+      "id": "events",
+      "from": "wallet",
+      "to": "subgraph",
+      "label": "SpendExecuted / SpendBlocked",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "transfer",
+      "from": "wallet",
+      "to": "usdc",
+      "label": "transfer · only when OK",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agent-reads",
+      "from": "subgraph",
+      "to": "agent",
+      "label": "GraphQL · one read per tick",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "scan",
+      "from": "human",
+      "to": "rp",
+      "label": "proof from the face scan",
+      "labelAt": [
+        140,
+        146
+      ]
+    },
+    {
+      "id": "verify-with-world",
+      "from": "rp",
+      "to": "worldapi",
+      "label": "verify the proof",
+      "variant": "security",
+      "labelAt": [
+        140,
+        286
+      ]
+    },
+    {
+      "id": "widen",
+      "from": "rp",
+      "to": "wallet",
+      "label": "allowPayee(payee, attestation)",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "top",
+      "labelAt": [
+        335,
+        236
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "The claim",
+      "items": [
+        "The rules live onchain, in a place the agent cannot reach",
+        "The agent holds no funds and no permissions — it is a msg.sender that a policy recognises",
+        "Every offchain answer fails the same way: the thing being constrained also enforces the constraint"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "ENS is the skeleton, not decoration",
+      "items": [
+        "The policy address is resolved on every single payment",
+        "Point hop one at 0x0 and every agent halts at once (reason 3)",
+        "ENSv2 resolve() returns data directly, so the walk finishes inside the transaction — no CCIP-read gateway"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "The asymmetry",
+      "items": [
+        "Widening — allow a payee, raise a limit, restore an agent — needs onlySelf AND a fresh attestation",
+        "Reduction — pause, revoke, tighten — needs authority only, never an attestation",
+        "Hunting for your phone is the last thing you want when something has gone wrong"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Stated honestly",
+      "items": [
+        "A block does not revert: it emits SpendBlocked and returns, so a successful receipt is not a successful payment",
+        "EIP-7702 constrains only calls to the EOA — the WALLET key can still transfer directly, which is the owner's escape hatch",
+        "A World proof cannot prove it came from Selfie Check; the guarantee is configuration-level, not cryptographic",
+        "PolicyApprovals is still wired to MockAttester; only LeashAccount runs WorldAttester today"
+      ]
+    }
+  ]
+}

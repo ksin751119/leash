@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "The demo, end to end — a machine is refused, a face changes the rule",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "refusal", "label": "Refused before any gas", "focus": ["tick", "predict", "retainer"], "note": "The agent reads the indexed rules, works out that one intent cannot pass, and never sends that transaction." },
+      { "id": "widening", "label": "Widening needs a human", "focus": ["predict", "scan", "widen"], "note": "A face scan produces a proof; the RP signs an EIP-712 attestation only after World returns 200; the blob widens the rule onchain." },
+      { "id": "payoff", "label": "The rule changed, not the agent", "focus": ["widen", "retry", "paid"], "note": "Nothing was redeployed or restarted. The agent's next tick simply reads a different world." }
+    ]
+  },
+  "lanes": [
+    { "id": "agent", "label": "Agent loop — no key, no funds" },
+    { "id": "human", "label": "Human in the loop — only for widening" },
+    { "id": "chain", "label": "Onchain — the wallet's own code" }
+  ],
+  "phases": [
+    { "id": "observe", "label": "Observe and judge", "fromCol": 0, "toCol": 0 },
+    { "id": "refuse", "label": "Refused before any gas is spent", "fromCol": 1, "toCol": 1, "variant": "security" },
+    { "id": "widening", "label": "Widening needs a human", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "payoff", "label": "The rule changed; the agent did not", "fromCol": 4, "toCol": 4 }
+  ],
+  "mainPath": ["tick", "predict", "scan", "widen", "retry", "paid"],
+  "semanticChecks": {
+    "allowedRoots": ["tick"],
+    "allowedTerminals": ["retainer", "paid"],
+    "requiredPaths": [{ "from": "predict", "to": "paid" }]
+  },
+  "nodes": [
+    { "id": "tick", "lane": "agent", "col": 0, "type": "backend", "label": "Tick → decide()", "sublabel": "one read, one verdict", "tag": "fails closed", "width": 140 },
+    { "id": "predict", "lane": "agent", "col": 1, "type": "security", "label": "will-be-blocked", "sublabel": "6 PAYEE_NOT_ALLOWED", "tag": "nothing is sent", "width": 140 },
+    { "id": "retry", "lane": "agent", "col": 4, "type": "backend", "label": "The next tick", "sublabel": "now will-pass", "tag": "agent unchanged", "width": 140 },
+
+    { "id": "scan", "lane": "human", "col": 2, "type": "external", "label": "Face scan", "sublabel": "World verifies, RP signs", "width": 140 },
+    { "id": "widen", "lane": "human", "col": 3, "type": "security", "label": "allowPayee", "sublabel": "payee + attestation", "tag": "onlySelf", "width": 140 },
+
+    { "id": "retainer", "lane": "chain", "col": 1, "type": "cloud", "label": "Retainer is paid", "sublabel": "SpendExecuted · 5 USDC", "width": 140 },
+    { "id": "paid", "lane": "chain", "col": 4, "type": "cloud", "label": "New vendor is paid", "sublabel": "SpendExecuted · 5 USDC", "width": 140 }
+  ],
+  "edges": [
+    { "id": "refused", "from": "tick", "to": "predict", "label": "payee not on the allow list", "variant": "security" },
+    { "id": "allowed", "from": "tick", "to": "retainer", "label": "will-pass, so it is sent", "variant": "dashed", "role": "branch" },
+    { "id": "ask", "from": "predict", "to": "scan", "label": "a human decides to widen the rule", "variant": "emphasis" },
+    { "id": "onchain", "from": "scan", "to": "widen", "label": "the signed blob goes onchain", "variant": "security" },
+    { "id": "flip", "from": "widen", "to": "retry", "label": "the rule is wider now" },
+    { "id": "pays", "from": "retry", "to": "paid", "label": "spend() returns reason 0", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "What this beat is actually showing", "items": ["A machine wants to spend, the rules say no, one human's face changes the rules, and the machine notices on its own", "Nothing was redeployed, restarted or reconfigured between the refusal and the payment", "The rules were never in a place the agent could reach"] },
+    { "dot": "rose", "title": "Why the agent refuses itself", "items": ["decide() is pure and reads only the subgraph, so it costs nothing and can be wrong only in the safe direction", "It admits what it cannot see: the per-tx cap, the token allow-list, the time window and pause are not indexed — only the chain can confirm", "So will-pass is a prediction, and the chain remains the authority"] },
+    { "dot": "amber", "title": "The honest limits", "items": ["A World proof cannot prove it came from Selfie Check — credential_type returns \"device\" either way, so the human-in-the-loop guarantee is configuration-level, not cryptographic", "max_verifications: 1 binds to (person, action), so one World action can be scanned exactly once by the same person", "The wallet key can still transfer directly and bypass all of this; that is the owner's escape hatch, not a hole", "A block does not revert — it emits SpendBlocked and returns, so a successful receipt is not a successful payment"] }
+  ]
+}
