@@ -18,7 +18,22 @@ const SIG = "payeeDigest(bytes32,address,address,uint256)";
 const SELECTOR = Buffer.from(keccak_256(Buffer.from(SIG))).subarray(0, 4).toString("hex");
 
 const strip = (h) => String(h).replace(/^0x/, "").toLowerCase();
-const word = (h) => strip(h).padStart(64, "0");
+const word = (h) => {
+  const s = strip(h);
+  if (s.length > 64) throw new Error(`word too wide: ${s.length / 2} bytes`);
+  return s.padStart(64, "0");
+};
+
+// Accepts a non-negative integer as either a number or a numeric string — the digest API
+// receives nonce as a route/query value, so "7" has to work exactly like 7. Anything else
+// (a float, a sign, garbage, undefined) is rejected here, before encodePayeeDigestCall's
+// BigInt(nonce) gets a chance to throw past widenPlan's try/catch and its {status, body}
+// contract.
+const isValidNonce = (n) => {
+  if (typeof n === "number") return Number.isInteger(n) && n >= 0;
+  if (typeof n === "string") return /^\d+$/.test(n);
+  return false;
+};
 
 export function checkWidenEnv(env) {
   if (!env.SEPOLIA_RPC) return "SEPOLIA_RPC not set";
@@ -76,6 +91,9 @@ export async function widenPlan({ payee, token, env, nonce, fetchImpl = fetch })
   }
   if (!ADDR_RE.test(String(token ?? ""))) {
     return { status: 400, body: { error: "token must be 0x + 40 hex chars" } };
+  }
+  if (!isValidNonce(nonce)) {
+    return { status: 400, body: { error: "nonce must be a non-negative integer" } };
   }
   const envErr = checkWidenEnv(env);
   if (envErr) return { status: 500, body: { error: envErr } };

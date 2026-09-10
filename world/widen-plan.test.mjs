@@ -74,6 +74,32 @@ test("a malformed token is 400", async () => {
   assert.equal(r.status, 400);
 });
 
+test("a malformed nonce is 400 and makes no rpc call, for every bad shape", async () => {
+  for (const badNonce of ["abc", undefined, null, 1.5, -1, "-1"]) {
+    let called = false;
+    const r = await widenPlan({
+      payee: PAYEE, token: TOKEN, env, nonce: badNonce,
+      fetchImpl: async () => { called = true; },
+    });
+    assert.equal(r.status, 400, `nonce ${JSON.stringify(badNonce)} should be 400`);
+    assert.equal(called, false, `nonce ${JSON.stringify(badNonce)} should not call rpc`);
+  }
+});
+
+test("a numeric-string nonce is accepted, same as a number", async () => {
+  const r = await widenPlan({ payee: PAYEE, token: TOKEN, env, nonce: "7", fetchImpl: okFetch });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.nonce, "7");
+});
+
+test("encodePayeeDigestCall rejects an oversized word", () => {
+  const tooWide = "0x" + "ab".repeat(33); // 33 bytes, one too many
+  assert.throws(
+    () => encodePayeeDigestCall({ node: tooWide, token: TOKEN, payee: PAYEE, nonce: 7 }),
+    /word too wide/,
+  );
+});
+
 test("missing env is 500 before any rpc call", async () => {
   let called = false;
   const r = await widenPlan({
