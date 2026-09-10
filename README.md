@@ -298,7 +298,9 @@ On Ubuntu 22 or 24, `cd subgraph && npm test` is enough.
 | [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** |
 | [`docs/world-feedback.md`](docs/world-feedback.md) | Developer feedback for the World track |
 | [`docs/ensv2-sepolia.md`](docs/ensv2-sepolia.md) | Onchain measurements of live ENSv2 |
-| [`docs/superpowers/specs/`](docs/superpowers/specs) | `LeashAccount` design, with every overturned decision recorded |
+| [`docs/superpowers/specs/`](docs/superpowers/specs) | Design documents, approved before implementation started, with every overturned decision recorded |
+| [`docs/superpowers/plans/`](docs/superpowers/plans) | The task-by-task implementation plans those specs became |
+| [`docs/superpowers/sdd/`](docs/superpowers/sdd) | The working ledgers — every dispatch, review and ruling, uncleaned |
 
 ## Start from Scratch
 
@@ -310,3 +312,69 @@ predates the event.
 starting 2026-09-05.** The commit history is the record, and it is cross-checked by
 timestamps nobody can forge: the deployment transactions on Sepolia, the World
 verification's server-side `created_at`, and the GitHub push events.
+
+## How AI was used
+
+This project was built by one person working with Claude Code (Claude Opus 5) in a
+spec-driven workflow. Stated plainly, because the rules ask for it and because a vague
+answer here would be worse than an honest one.
+
+### Where AI assisted
+
+| Area | Lines | How it was produced |
+|---|---|---|
+| `src/` — the contracts | 2,454 | Written by Claude Code from an approved spec, then reviewed |
+| `test/` — the Foundry tests | 3,371 | Same |
+| `agent/`, `world/` — the offchain services | 2,374 | Same |
+| `subgraph/` — schema, mappings, tests | 886 | Same |
+| `script/` | 261 | Same |
+| `docs/` | 4,022 | Drafted by Claude Code, corrected against onchain measurements |
+
+There is no file in this repository that Claude Code did not touch. Presenting any part of
+it as hand-written would be false.
+
+### What the human did
+
+- **Every design decision, including the ones that were overturned.** The specs record the
+  arguments; the choices in them were made by the human rather than proposed and accepted
+  wholesale. `docs/PLAN.md` keeps the superseded reasoning visible for exactly this reason.
+- **Approved each spec before implementation began** — the gate the whole workflow is built
+  around.
+- **Held every key.** No private key was ever placed in an AI context: the wallet signed its
+  own EIP-7702 authorisation, and each deployment was run by the human.
+- **Did the World integration by hand** — the Developer Portal application, both access
+  gates, and every face scan.
+- **Rejected work.** Several reviews were overruled and several proposals cut; those rulings
+  are in the ledgers, including the ones that later proved wrong.
+
+### The artifacts that workflow produced
+
+The rules ask that spec-driven workflows submit their specs and prompts. They are here,
+unedited:
+
+| | Lines | |
+|---|---|---|
+| [`docs/superpowers/specs/`](docs/superpowers/specs) | 8,120 | Design documents, approved before implementation started |
+| [`docs/superpowers/plans/`](docs/superpowers/plans) | *(counted above)* | Task-by-task implementation plans |
+| [`docs/superpowers/sdd/`](docs/superpowers/sdd) | 4,791 | The working ledgers: every dispatch, every review, every ruling |
+
+100 of the 106 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
+first `.gitignore` commit and five documentation commits from 2026-09-09, made while the
+trailer format was being changed mid-session — an omission, not a claim of authorship.
+
+### What that workflow actually caught
+
+The reviews are adversarial by construction — a fresh reviewer sees the diff and nothing
+else. Two that landed, both written up in [`docs/superpowers/sdd/`](docs/superpowers/sdd):
+
+- `hashSignal()` hashed a hex digest as UTF-8, so `POST /api/attest` could never have
+  succeeded on the digest path. Every existing test missed it, because the test pinned the
+  server against itself.
+- Four separate paths through the agent loop could pay the same intent twice.
+
+A third came from mutation testing rather than review, and predates the ledgers: the
+`uint8` clamp in `_askPolicy` turned out to be load-bearing. A policy returning `256`
+truncates to `0`, which is `Reason.OK`, and the transfer executes — and deleting that line
+left every test green. It is now pinned by
+`test_policy_return_over_uint8_max_is_clamped_to_policy_failed`, which fails when the clamp
+is removed. The reasoning is in the comment above `_askPolicy` in `src/LeashAccount.sol`.
