@@ -829,7 +829,20 @@
         app_id: cfg.app_id,
         action: cfg.action,
         signal: plan.digest,
-        verification_level: "selfieCheckLegacy",
+        // `device`, and NOT `selfieCheckLegacy`, which is what this said until a Playwright
+        // run clicked the button for the first time. `selfieCheckLegacy` is the name of
+        // IDKit's REACT PRESET FUNCTION; `verification_level` is a different vocabulary, and
+        // idkit-standalone@2.2.5 accepts exactly four values - device, document,
+        // secure_document, orb. Anything else throws `Unknown verification level` inside
+        // `createClient`, AFTER the modal has opened, so the dialog appears with no QR in it
+        // and the only trace is a console error nobody is looking at during a demo.
+        //
+        // `device` is correct despite reading wrong: Selfie Check is turned on by the app's
+        // `enable_face_check` setting, not by the level, and a successful face check comes
+        // back as `credential_type: "device"` - which is the naming complaint already filed
+        // in docs/world-feedback.md. world/index.html, verified end to end on 2026-09-07,
+        // labels this option "device - what Selfie Check uses".
+        verification_level: "device",
         handleVerify: (proof) => handleVerify(proof, plan.digest, plan),
         onSuccess: () => {},
       });

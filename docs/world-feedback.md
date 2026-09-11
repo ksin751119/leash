@@ -736,6 +736,63 @@ happens to take the UTF-8 branch, so on its own it documents only half the rule.
 
 ---
 
+### 7.8 `selfieCheckLegacy` is a React preset, not a `verification_level`, and passing it to the standalone widget fails *after* the modal opens
+
+*Logged 2026-09-11, found by driving our own demo page with Playwright rather than by
+reading it.*
+
+The docs introduce Selfie Check through the React preset `selfieCheckLegacy()`. That name
+is the only handle a reader is given, so when we wired the same flow with
+`@worldcoin/idkit-standalone@2.2.5` — which has no presets, only an options object — we
+passed it where it seemed to belong:
+
+```js
+IDKit.init({ app_id, action, signal, verification_level: "selfieCheckLegacy", handleVerify })
+IDKit.open()
+```
+
+`verification_level` is a different vocabulary. Reading the bundle,
+`verification_level_to_credential_types` accepts exactly four values — `device`,
+`document`, `secure_document`, `orb` — and throws on anything else.
+
+**What makes this worth reporting is not the mistake; it is the shape of the failure.**
+`IDKit.open()` mounts the widget, the Radix dialog renders, and the host page's own state
+advances — our button flipped to "Cancel", and the digest the scan was supposed to bind to
+was painted on screen. Only *then* does `createClient` throw, inside a promise nobody
+awaits. The result is a modal that opens empty:
+
+```
+Uncaught (in promise) Error: Unknown verification level: selfieCheckLegacy
+    at verification_level_to_credential_types (index.global.js:14818)
+    at createClient (index.global.js:14955)
+```
+
+No visible error, no `onError` callback, nothing the page could catch and show. To an
+operator — and this would have been an operator standing in front of a camera — it reads
+as "the QR code did not appear", which sends you to inspect your own layout rather than
+your options object. Our page has a deliberate `IDKit did not load` guard for the case
+where the CDN fails; it could not help here, because IDKit *had* loaded and the widget
+*had* mounted.
+
+**Suggested fixes, cheapest first:**
+
+1. **Validate options in `IDKit.init()`, not deep inside `createClient` at open time.**
+   `init` is synchronous and its throw is catchable by the caller; a bad
+   `verification_level` should never reach a rendered modal.
+2. **Reject unknown keys and unknown values loudly**, naming the four accepted values in
+   the message. The current message names what was wrong but not what would have been
+   right.
+3. **Say in the Selfie Check docs which `verification_level` the standalone widget needs.**
+   The React preset's name is the discoverable one, and it is not a value any API accepts.
+   The value that works is `device` — which, as §7.5 notes, also reads as though it were
+   the wrong one.
+
+This is the third item in this document (with §7.2 and §7.5) where the React path's
+vocabulary and the wire/standalone path's vocabulary differ silently. One table mapping
+preset → `verification_level` → returned `credential_type` would close all three.
+
+---
+
 ## Summary
 
 *Rewritten 2026-09-07, after Selfie Check verified end to end. Two earlier versions of
@@ -786,6 +843,10 @@ the pattern the credential gate needs and does not have.
 7. `max_verifications: 1` is a silent default that breaks the second demo run, is not
    settable anywhere we can find, and is discoverable only through an undocumented API.
    (§6.3, §7.6)
+8. **`selfieCheckLegacy` is a React preset name, not a `verification_level` value**, and
+   passing it to the standalone widget throws *after* the modal has opened — an empty
+   dialog, no `onError`, and a host page whose state has already advanced. The failure
+   reads as "the QR code did not appear". (§7.8)
 
 **And one finding that is not about time at all** (§7.5): a Selfie Check proof arrives as
 `verification_level: "device"`, `credential_type: "device"` — **indistinguishable from the
