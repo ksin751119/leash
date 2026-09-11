@@ -27,6 +27,11 @@ query AgentState($agentId: ID!, $budgetId: ID!, $node: ID!, $wallet: Bytes!, $no
   agent(id: $agentId) { id revoked node }
   subname(id: $node) { label live }
   policyPointer(id: $node) { policy approved }
+  # What a human wrote when they approved a policy. The pointer names an address; this is
+  # the sentence that address was approved AS, and it is the only human-readable thing in
+  # the whole control plane. Fetched as a list because GraphQL cannot chain one lookup into
+  # another in a single query, and there are two of them.
+  approvedPolicies(first: 20) { id description approved }
   agentBudget(id: $budgetId) { token limit spent periodEnd remaining }
   payees(where: { wallet: $wallet, node: $nodeBytes }) { payee allowed everAllowed lastToken }
 }`;
@@ -125,7 +130,16 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     },
     subname: d.subname ? { label: d.subname.label, live: d.subname.live === true } : null,
     policy: d.policyPointer
-      ? { address: lower(d.policyPointer.policy), approved: d.policyPointer.approved === true }
+      ? {
+          address: lower(d.policyPointer.policy),
+          approved: d.policyPointer.approved === true,
+          // Matched here rather than in a second query. `approved` on the pointer is a
+          // point-in-time snapshot from the event; `approved` on the list row is current,
+          // and the two disagreeing is exactly the state a revocation produces.
+          description:
+            (d.approvedPolicies ?? []).find((a) => lower(a.id) === lower(d.policyPointer.policy))
+              ?.description ?? null,
+        }
       : null,
     budget: d.agentBudget
       ? {

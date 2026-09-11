@@ -58,10 +58,15 @@
   /* The row heights are a 720px budget: ~30px of top bar, a 232px action strip sized to hold
      the finished command without clipping it, and whatever is left for the two columns. */
   .stage {
-    height: 100vh;
+    /* `min-height`, not `height`, and `auto` for the action strip rather than a reserved
+       232px. The page was built as a fixed dashboard and the content is not fixed: with
+       nothing to act on, that reservation was 232 pixels of nothing under two columns
+       already stretched to fill a viewport. It reads as "this page is missing something",
+       which is the opposite of what an empty action strip means. */
+    min-height: 100vh;
     padding: 16px 22px 18px;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) 232px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 14px;
   }
 
@@ -259,6 +264,47 @@
 
   .cmd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   #cmdLabel { font-size: 14px; color: var(--mut); letter-spacing: .06em; }
+  #cmd:empty { display: none; }
+  .empty {
+    border: 1px dashed var(--line); border-radius: 10px; padding: 16px 18px;
+    color: var(--mut); font-size: 15px; line-height: 1.55; max-width: 60ch;
+  }
+  .empty p { margin: 0 0 10px; }
+  .empty p:last-child { margin-bottom: 0; }
+  .empty b { color: var(--fg); }
+  .empty-try { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip {
+    font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .ens { margin-top: 8px; }
+  .ens-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .ens-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 17px;
+    color: var(--fg); font-weight: 600;
+  }
+  /* A left rule rather than an arrow glyph: it reads as one continuous descent from the
+     name to the address, which is what a resolution is. */
+  .ens-arrow {
+    font-size: 13px; color: var(--mut); margin: 4px 0 4px 3px;
+    padding: 2px 0 2px 12px; border-left: 2px solid var(--line);
+  }
+  .ens-desc {
+    font-size: 14px; color: var(--mut); margin-top: 6px; line-height: 1.4;
+  }
+  .ask { display: flex; gap: 8px; margin-bottom: 10px; }
+  #ask { flex: 1; font: inherit; font-size: 16px; padding: 11px 14px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
+  #ask:focus { outline: none; border-color: var(--accent); }
+  #ask:disabled { opacity: .55; }
+  #askGo { font: inherit; font-weight: 700; font-size: 15px; padding: 11px 20px;
+           border-radius: 8px; border: 1px solid var(--accent); background: var(--accent);
+           color: #0b0f14; cursor: pointer; }
+  #askGo:disabled { opacity: .5; cursor: default; }
+  .askMsg { font-size: 15px; color: var(--mut); min-height: 22px; margin-bottom: 12px; }
+  .askMsg.bad { color: var(--blocked); }
+  .askMsg b { color: var(--fg); }
   #qrWrap { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
   #qr { width: 168px; flex: 0 0 168px; }
   #qr svg { width: 100%; height: auto; background: #fff; border-radius: 8px;
@@ -306,9 +352,35 @@
     <section class="col">
       <h2>AGENT <span>— what it is about to do</span></h2>
 
+      <!-- The instruction is the first thing in this column because it is the first thing
+           that happens: a person asks, the model proposes, the chain decides. Putting it
+           above the intents makes that order visible without a caption. -->
+      <form id="askForm" class="ask">
+        <input id="ask" autocomplete="off" spellcheck="false"
+               placeholder="tell the agent what to do — e.g. pay this month's retainer" />
+        <button id="askGo" type="submit">Ask</button>
+      </form>
+      <div id="askMsg" class="askMsg"></div>
+
       <div id="blind" class="banner" hidden>
         <strong id="blindHead">the agent is blind — it will propose nothing</strong>
         <span id="blindDetail" class="detail grow"></span>
+      </div>
+
+      <!-- Shown until an instruction produces something. An empty column is the first
+           thing a visitor sees, and "nothing here" and "waiting for you" look identical
+           unless one of them says so. -->
+      <div id="empty" class="empty">
+        <p><b>Nothing is proposed yet.</b></p>
+        <p>
+          Ask the agent to do something above. A language model turns what you type into
+          payments; it never writes an address, only picks from a vendor directory. What
+          happens to those payments is decided on chain, by the policy on the right.
+        </p>
+        <p class="empty-try">
+          Try: <button type="button" class="chip" data-ask="Pay this month's studio retainer, and top up our inference API credits by 50 cents.">pay the retainer and top up the API</button>
+          <button type="button" class="chip" data-ask="We just hired Bluefin Design for the rebrand. Pay their first invoice.">pay a contractor we just hired</button>
+        </p>
       </div>
 
       <div id="intents"></div>
@@ -318,11 +390,22 @@
       <h2>RULES <span>— what the chain lets it do</span></h2>
 
       <div class="panel">
+        <!-- The policy address is not configured anywhere. It is RESOLVED, every tick,
+             by walking ENS - and showing the walk is the difference between a judge
+             reading "we use ENS" in a README and watching a name become a rule. -->
         <div class="kv">
-          <span class="k">POLICY</span>
-          <span id="policyApproved" class="pill no">not approved</span>
+          <span class="k">WHERE THE RULE COMES FROM</span>
+          <span id="subnameLive" class="pill no">not live</span>
         </div>
-        <div id="policyAddr" class="addr" style="margin-top:6px">—</div>
+        <div class="ens">
+          <div class="ens-row"><span id="ensName" class="ens-name">—</span></div>
+          <div class="ens-arrow">resolved through ENS, every tick</div>
+          <div class="ens-row">
+            <span id="policyAddr" class="addr">—</span>
+            <span id="policyApproved" class="pill no">not approved</span>
+          </div>
+          <div id="policyDesc" class="ens-desc"></div>
+        </div>
 
         <hr />
 
@@ -375,6 +458,9 @@
         <span id="cmdLabel">THE COMMAND APPEARS HERE AFTER THE SCAN</span>
         <button id="copy" hidden>copy</button>
       </div>
+      <!-- `:empty` collapses this to nothing before a scan. It used to hold a large empty
+           rectangle whenever there was no command, which is the most prominent thing on a
+           page can be and it was saying nothing. -->
       <pre id="cmd"></pre>
       <div id="valid" hidden><span id="validText">signed · valid for 15 min · run the command</span> <span id="expires"></span></div>
     </div>
@@ -402,6 +488,7 @@
   // by world/server.mjs on 8787 and reads the loop's state on 8788, which is why this one url
   // is absolute and every other fetch on this page is relative.
   const STATE_URL = "http://localhost:8788/api/agent/state";
+  const INSTRUCT_URL = "http://localhost:8788/api/agent/instruct";
   const POLL_MS = 1000;
 
   const BLIND_TEXT = "the agent is blind — it will propose nothing";
@@ -461,7 +548,17 @@
     return Number.isFinite(t) ? new Date(t).toTimeString().slice(0, 8) : "—";
   };
 
+  for (const chip of document.querySelectorAll(".chip[data-ask]")) {
+    chip.addEventListener("click", () => {
+      $("ask").value = chip.dataset.ask;
+      sendInstruction(chip.dataset.ask);
+    });
+  }
+
   function render(state) {
+    // The placeholder and the intents are mutually exclusive: one of them is always the
+    // right thing to be looking at, and showing both would be a page that cannot decide.
+    $("empty").hidden = (state?.intents ?? []).length > 0;
     last = state;
     // Computed once per state and kept, so the 4Hz repaint below and this frame can never
     // print two different readings of the same tick.
@@ -576,6 +673,14 @@
   }
 
   function paintRules(rules) {
+    $("ensName").textContent = rules.ensName ?? "no name resolves here";
+    $("subnameLive").textContent = rules.ensLive ? "live" : "not live";
+    $("subnameLive").className = `pill ${rules.ensLive ? "yes" : "no"}`;
+    // The description is what a person wrote when they approved this address, and it is
+    // the only human-readable thing in the control plane. When it is absent, say so rather
+    // than leaving a gap that reads as "there is nothing to say".
+    $("policyDesc").textContent = rules.policyDesc ?? "no description was recorded at approval";
+
     $("policyAddr").textContent = rules.policyShort;
     $("policyApproved").textContent = rules.approved ? "approved" : "not approved";
     $("policyApproved").className = `pill ${rules.approved ? "yes" : "no"}`;
@@ -1003,6 +1108,65 @@
     paintButton();
     setMsg("widening sent — nobody will touch the agent");
   }
+
+  /* ------------------------------------------------- telling the agent what to do */
+
+  // The model takes seconds, not milliseconds, and on a stage that wait is the content
+  // rather than a cost: it is the only moment where something other than a rule is doing
+  // the deciding. So it gets a running counter instead of a spinner - "thinking" says
+  // nothing, "thinking… 4s" says a language model is working.
+  let asking = false;
+
+  async function sendInstruction(text) {
+    if (asking || !text) return;
+    asking = true;
+    $("ask").disabled = true;
+    $("askGo").disabled = true;
+
+    const started = Date.now();
+    const tickMsg = () => {
+      if (!asking) return;
+      $("askMsg").className = "askMsg";
+      $("askMsg").innerHTML = `the model is deciding what to pay… <b>${Math.round((Date.now() - started) / 1000)}s</b>`;
+      setTimeout(tickMsg, 250);
+    };
+    tickMsg();
+
+    try {
+      const r = await fetch(INSTRUCT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: text }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+
+      asking = false;
+      const i = body.instruction ?? {};
+      const n = i.count ?? (body.intents ?? []).length;
+      $("askMsg").className = "askMsg";
+      $("askMsg").innerHTML =
+        `the model proposed <b>${n}</b> payment${n === 1 ? "" : "s"} in <b>${((i.tookMs ?? 0) / 1000).toFixed(1)}s</b>. ` +
+        `What happens to them is not its decision.`;
+      // Paint immediately rather than waiting for the poll: the instruction and the
+      // payments it produced have to appear together or the causal link is lost.
+      render(body);
+    } catch (err) {
+      asking = false;
+      $("askMsg").className = "askMsg bad";
+      $("askMsg").textContent = String(err?.message ?? err);
+    } finally {
+      asking = false;
+      $("ask").disabled = false;
+      $("askGo").disabled = false;
+      $("ask").focus();
+    }
+  }
+
+  $("askForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    sendInstruction($("ask").value.trim());
+  });
 
   function showRelayed(signed_, plan) {
     busy = false;

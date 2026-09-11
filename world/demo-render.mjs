@@ -86,6 +86,12 @@ export function renderRules(s) {
     policy: s.policy?.address ?? null,
     policyShort: shortHex(s.policy?.address ?? null),
     approved: s.policy?.approved === true,
+    // The name the rule is resolved through, and the sentence a human approved it as.
+    // Both come from the index rather than from configuration: the point of the panel is
+    // that nothing here is written down on our side.
+    ensName: s.subname?.label ? `${s.subname.label}.leash.eth` : null,
+    ensLive: s.subname?.live === true,
+    policyDesc: s.policy?.description ?? null,
     spent: formatUsdc(spent),
     limit: formatUsdc(limit),
     pct,
