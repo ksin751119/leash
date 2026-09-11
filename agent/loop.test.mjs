@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath, publicState } from "./loop.mjs";
+import {
+  advance, initialState, sendAndRecord, validateIntents, validateEnvVar, routePath, publicState,
+  inputFingerprint,
+} from "./loop.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
@@ -9,6 +12,8 @@ const NOW = 1788955200;
 // installed. advance() takes it as an argument rather than reading module state, so these
 // tests can say which policy is installed without starting the loop.
 const KNOWN = "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b";
+// Any other policy - in production the PolicySet, `(MicroPaymentPolicy) OR (StandardPolicy)`.
+const POLICYSET = "0x1234567890abcdef1234567890abcdef12345678";
 
 const intents = [{ id: "a", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" }];
 
@@ -43,11 +48,152 @@ test("an executed intent is terminal and never sent again", () => {
   assert.equal(next.state.intents.a.verdict, "done");
 });
 
-test("a blocked intent stays eligible, so the agent retries after a widening", () => {
+// This test used to be called "a blocked intent stays eligible, so the agent retries after a
+// widening" and asserted that the same blocked intent was queued again on the very next tick.
+// The first half of that was pinning the defect, not a feature: nothing had changed between
+// the two ticks, so "retries" meant a real Sepolia transaction every TICK_MS forever. The
+// widening half is the part worth keeping, and it now has a test of its own below.
+test("a blocked intent is not sent again while nothing it depends on has changed", () => {
   let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
-  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, tx: "0x1" };
-  const next = advance(state, okSnap(), intents, NOW, KNOWN);
+  assert.deepEqual(state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0]),
+    "the first tick sent it, so it must have recorded what it sent under");
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
+
+  const second = advance(state, okSnap(), intents, NOW, KNOWN);
+  assert.deepEqual(second.toSend, [], "one block is enough; the same request buys the same refusal");
+
+  // And it stays latched - a latch that only holds for one tick is a latch that pays twelve
+  // times a minute instead of thirteen.
+  const third = advance(second.state, okSnap(), intents, NOW + 5, KNOWN);
+  assert.deepEqual(third.toSend, []);
+});
+
+// The other half of the latch, and the demo's face-scan beat, in the exact shape it happens:
+// under a PolicySet the pre-flight no longer applies the payee allow-list, so the intent is
+// sent, the chain refuses it with 6, and a human scans their face a few ticks later. The
+// agent has to notice by itself. Asserted on toSend, because toSend is what spends money - a
+// verdict-string assertion here would pass even with the intent still latched.
+test("a widening re-arms a latched intent, which is the whole point of keying on the inputs", () => {
+  const composed = okSnap();
+  composed.policy.address = POLICYSET;
+  composed.payees = {}; // nobody has allow-listed this payee yet
+
+  let { state, toSend } = advance(initialState(), composed, intents, NOW, KNOWN);
+  assert.deepEqual(toSend.map((i) => i.id), ["a"], "under the composition the pre-flight sends it");
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
+  assert.deepEqual(advance(state, composed, intents, NOW, KNOWN).toSend, [], "latched until something moves");
+
+  const widened = okSnap();
+  widened.policy.address = POLICYSET;
+  widened.payees = { [PAYEE]: { allowed: true, lastToken: TOKEN } }; // the face scan lands
+  const next = advance(state, widened, intents, NOW + 5, KNOWN);
+  assert.deepEqual(next.toSend.map((i) => i.id), ["a"], "the intent must actually be queued to send");
+});
+
+// The demo's finale: ADMIN points the name at the PolicySet. An intent blocked under the old
+// policy has to be reconsidered under the new one without anyone restarting the agent.
+test("a new policy address re-arms a latched intent", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
+
+  const composed = okSnap();
+  composed.policy.address = POLICYSET;
+  const next = advance(state, composed, intents, NOW, KNOWN);
   assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
+});
+
+// A budget that moves is the other thing that can turn a refusal into a payment - someone
+// raises the limit, or an earlier spend falls out of the period.
+test("a changed budget re-arms a latched intent", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 8, reasonName: "OVER_PERIOD_LIMIT", tx: "0x1" };
+
+  const moved = okSnap();
+  moved.budget.spent = "1";
+  const next = advance(state, moved, intents, NOW, KNOWN);
+  assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
+});
+
+// The latch must not invent a verdict: world/demo.html styles verdicts by value and an
+// unrecognised one renders unstyled on stage. The last decided verdict and reason survive,
+// and only the explanation changes - to one a person can read out.
+test("the latch leaves the verdict and reason alone and explains itself in words", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  const decided = state.intents.a.verdict;
+  state.intents.a.reason = 6;
+  state.intents.a.reasonName = "PAYEE_NOT_ALLOWED";
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 7, reasonName: "OVER_TX_LIMIT", tx: "0x1" };
+
+  const rec = advance(state, okSnap(), intents, NOW, KNOWN).state.intents.a;
+  assert.equal(rec.verdict, decided, "no new verdict string");
+  assert.equal(rec.reason, 6);
+  assert.equal(rec.reasonName, "PAYEE_NOT_ALLOWED");
+  assert.match(rec.explain, /7 OVER_TX_LIMIT/, "the chain's own reason belongs in the sentence");
+  assert.match(rec.explain, /restarting the agent/i, "an operator has to be told the latch is in memory only");
+});
+
+// Every record is rebuilt from scratch each tick. `sentFingerprint` survives only through the
+// `...prev` spread: list it among the fields that are overwritten and it is zeroed before the
+// comparison runs, the latch never engages, and the intent goes back to being resubmitted
+// every five seconds - a mutation that looks exactly like a working fix from the outside.
+test("the latch survives the per-tick record rebuild", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
+
+  // Two ticks of nothing changing: the second one can only stay latched if the fingerprint
+  // written at send time is still on the record after a rebuild.
+  const second = advance(state, okSnap(), intents, NOW, KNOWN);
+  const third = advance(second.state, okSnap(), intents, NOW + 5, KNOWN);
+  assert.equal(third.state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0]));
+  assert.deepEqual(third.toSend, []);
+});
+
+// --- the fingerprint itself ---
+
+test("the fingerprint is stable across snapshots that differ only in key order or address case", () => {
+  const a = okSnap();
+  const b = {
+    // The payee key stays lower-cased: the index reports it that way and `decide` looks it up
+    // that way. What varies here is key order and the case of the two addresses that are
+    // values rather than keys.
+    payees: { [PAYEE]: { lastToken: TOKEN, allowed: true } },
+    budget: { periodEnd: 0, spent: "0", limit: "1000000000", token: TOKEN.toUpperCase() },
+    policy: { approved: true, address: KNOWN.toUpperCase() },
+    ok: true,
+    block: { subgraph: 1, chain: 1, lag: 0 },
+  };
+  assert.equal(inputFingerprint(a, intents[0]), inputFingerprint(b, intents[0]));
+});
+
+test("the fingerprint moves when any fact decide reads moves", () => {
+  const baseline = inputFingerprint(okSnap(), intents[0]);
+  const vary = (f) => {
+    const s = okSnap();
+    f(s);
+    return inputFingerprint(s, intents[0]);
+  };
+  assert.notEqual(vary((s) => (s.policy.address = POLICYSET)), baseline);
+  assert.notEqual(vary((s) => (s.payees[PAYEE].allowed = false)), baseline);
+  assert.notEqual(vary((s) => delete s.payees[PAYEE]), baseline);
+  assert.notEqual(vary((s) => (s.budget.token = "0x1111111111111111111111111111111111111111")), baseline);
+  assert.notEqual(vary((s) => (s.budget.limit = "1")), baseline);
+  assert.notEqual(vary((s) => (s.budget.spent = "1")), baseline);
+  assert.notEqual(vary((s) => (s.budget.periodEnd = 1)), baseline);
+});
+
+// A failed read must not look like a changed input that re-arms everything: it produces one
+// fingerprint of empty fields, which matches nothing recorded at send time, so the latch is
+// bypassed - but decide() answers `unknown-read-failed` on that same snapshot and nothing is
+// sent. The next successful read restores the match.
+test("a failed read neither sends a latched intent nor loses the fingerprint", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
+
+  const down = advance(state, { ok: false, error: "boom" }, intents, NOW, KNOWN);
+  assert.deepEqual(down.toSend, []);
+
+  const back = advance(down.state, okSnap(), intents, NOW + 5, KNOWN);
+  assert.deepEqual(back.toSend, [], "the latch must still hold once the index answers again");
 });
 
 test("a failed read sends nothing and says so", () => {

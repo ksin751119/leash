@@ -121,6 +121,35 @@ export function routePath(url) {
 // The pure half: given the state, a snapshot and the intents, work out each verdict and
 // which intents to send. Kept separate from the IO so duplicate-payment prevention is
 // testable without a chain.
+// The facts `decide` reads about one intent, flattened into one comparable string. It is the
+// latch's re-arm signal: a payment the chain refused will be refused again for as long as
+// nothing it depends on has moved, so the agent resubmits only when one of these changes.
+//
+// Built field by field in a fixed order rather than with `JSON.stringify`, because the
+// snapshot's key order comes from a GraphQL response nothing here controls, and a
+// fingerprint that changed when two equal snapshots serialised differently would un-latch
+// on its own - which is the failure the latch exists to prevent, wearing a different hat.
+// Addresses are lower-cased for the same reason `decide` compares them that way: the index
+// reports them lower-cased and the environment carries them checksummed.
+//
+// `nowSec` is deliberately not in here: it changes every tick, so including it would re-arm
+// the latch continuously and the whole mechanism would be decorative.
+export function inputFingerprint(snapshot, intent) {
+  const payee = String(intent?.payee ?? "").toLowerCase();
+  const budget = snapshot?.budget;
+  // The payee address itself is not a field: the allow-flag below is looked up with it, so
+  // the string is already about this intent's payee, and fingerprints are only ever compared
+  // with another fingerprint for the same intent.
+  return [
+    `policy=${String(snapshot?.policy?.address ?? "").toLowerCase()}`,
+    `allowed=${String(snapshot?.payees?.[payee]?.allowed ?? "")}`,
+    `token=${String(budget?.token ?? "").toLowerCase()}`,
+    `limit=${String(budget?.limit ?? "")}`,
+    `spent=${String(budget?.spent ?? "")}`,
+    `periodEnd=${String(budget?.periodEnd ?? "")}`,
+  ].join("|");
+}
+
 // `knownPolicy` is threaded in rather than read from the module-level `STANDARD_POLICY`
 // below, so this half stays a total function of its arguments - the same reason
 // `publicState` takes the state instead of closing over it.
@@ -143,6 +172,7 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
   const queued = new Set();
   for (const intent of intents) {
     const prev = next.intents[intent.id] ?? { inFlight: false, lastAction: null };
+    const fingerprint = inputFingerprint(snapshot, intent);
     // payee/token/amount are copied onto the record so the state endpoint can say who an
     // intent pays and how much. They are inputs, not decisions: nothing below reads them,
     // and no branch in this function changes because they exist.
@@ -153,6 +183,12 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       payee: intent.payee ?? null,
       token: intent.token ?? null,
       amount: intent.amount ?? null,
+      // `sentFingerprint` is deliberately NOT rebuilt here. It arrives through `...prev` and
+      // must survive untouched: listing it above with a fresh value would zero it every tick,
+      // the comparison in the blocked branch below would never match, and the latch would
+      // silently never engage - the intent would go back to being resubmitted every 5
+      // seconds, which is the defect this exists to fix and would look exactly like a fix
+      // that works. `test the latch survives the per-tick record rebuild` pins that.
     };
 
     if (prev.lastAction?.outcome === "executed") {
@@ -177,6 +213,29 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       rec.reason = null;
       rec.reasonName = null; // same reason as above
       rec.explain = "waiting for the receipt of the transaction just sent";
+    } else if (prev.lastAction?.outcome === "blocked" && prev.sentFingerprint === fingerprint) {
+      // The chain refused this payment, and nothing it depends on has moved since it was
+      // submitted - so submitting it again would buy the same refusal, once every TICK_MS,
+      // for as long as the agent runs. Five of the twelve reason codes are not indexed at
+      // all, so `decide` cannot see most of the reasons a send comes back blocked; the
+      // chain's own answer is the better evidence, and this is where it is used.
+      //
+      // Compared against the fingerprint recorded at SEND time, not one taken when the block
+      // was observed, so the latch engages after exactly one block rather than two.
+      //
+      // No new verdict string: `world/demo.html` styles verdicts by value and an unknown one
+      // renders unstyled on stage. `verdict`, `reason` and `reasonName` are left exactly as
+      // the tick that decided them wrote them, arriving here through `...prev`; only the
+      // explanation changes.
+      const code = prev.lastAction.reasonName
+        ? `${prev.lastAction.reason} ${prev.lastAction.reasonName}`
+        : "no reason code in the receipt";
+      rec.explain =
+        `the chain refused this payment (${code}), so the agent has stopped asking. ` +
+        "Sending it again against the same rules would only be refused again, twelve times a minute. " +
+        "It will try once more on its own as soon as the index shows something that could change the " +
+        "answer: this payee allow-listed, the budget moved, or a different policy installed. " +
+        "Restarting the agent also clears this, because it is remembered in memory and not on disk.";
     } else {
       let d;
       try {
@@ -201,6 +260,9 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       rec.explain = d.explain;
       if (d.verdict === "will-pass" && !queued.has(intent.id)) {
         queued.add(intent.id);
+        // Recorded at send time, so that if this comes back blocked the branch above can tell
+        // "nothing has changed since I asked" from "the inputs have moved, ask again".
+        rec.sentFingerprint = fingerprint;
         toSend.push(intent);
       }
     }
