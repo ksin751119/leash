@@ -217,3 +217,78 @@ export function checkAttestEnv(env) {
   }
   return null;
 }
+
+/// Builds the v4 verify payload for a **World ID 4.0 `SelfieCheckLegacy`** result, and
+/// refuses everything that is not one.
+///
+/// This exists because of what 2026-09-11 established by measurement. The demo asked
+/// `@worldcoin/idkit-standalone` for `verification_level: "device"` — the only vocabulary
+/// that widget has — and got back a device credential with **no camera, no face, and no
+/// face check**, while the app's `enable_face_check: true` did nothing. Selfie Check is a
+/// 4.0 *credential request*, reachable only through `@worldcoin/idkit-core`.
+///
+/// 🔴 **Two checks here are the difference between a face gating a widening and nothing
+/// gating it.** Neither is a formality:
+///
+///   1. `identifier === "selfie"`. A successful Selfie Check says `selfie`; a device
+///      credential says `device`. Until 2026-09-11 this project believed the proof could
+///      not distinguish them and wrote that down as a finding — it was wrong, and it was
+///      wrong because it had never requested a face check. The proof was telling the truth
+///      the whole time. Accepting any other identifier here would sign an attestation for
+///      a widening no face approved.
+///
+///   2. `signal_hash === hashSignal(digest)`. The 4.0 result arrives already carrying its
+///      own `signal_hash`, which is exactly the field a caller would tamper with: present a
+///      proof genuinely bound to signal X, claim it is for digest Y, and walk away with an
+///      attestation that widens Y. World cannot catch that — the proof really does match
+///      its own `signal_hash`. So the binding is checked HERE, and the value we forward is
+///      the one we computed, never the one we were handed.
+///
+/// @returns `{ error }` on refusal, or `{ payload }` ready to POST to the v4 endpoint.
+export function buildSelfieVerifyPayload({ digest, result, action }) {
+  if (!result || typeof result !== "object") return { error: "missing result" };
+
+  const responses = result.responses;
+  if (!Array.isArray(responses) || responses.length !== 1) {
+    // Exactly one: a multi-credential response would leave "which one gated this?"
+    // ambiguous, and the answer has to be unambiguous to be worth anything.
+    return { error: "expected exactly one response in the World ID result" };
+  }
+  const r = responses[0];
+
+  if (r.identifier !== "selfie") {
+    return {
+      error:
+        `this widening needs a Selfie Check and the proof says "${r.identifier}". ` +
+        `A device credential is not a face.`,
+    };
+  }
+
+  const expected = hashSignal(digest);
+  if (String(r.signal_hash).toLowerCase() !== String(expected).toLowerCase()) {
+    return {
+      error:
+        "the proof is bound to a different signal than this digest; refusing to sign an " +
+        "attestation for a widening the scan did not approve",
+    };
+  }
+
+  return {
+    payload: {
+      protocol_version: result.protocol_version ?? "3.0",
+      nonce: result.nonce,
+      action,
+      environment: result.environment ?? "production",
+      responses: [
+        {
+          identifier: r.identifier,
+          // Ours, not theirs. See check 2 above.
+          signal_hash: expected,
+          merkle_root: r.merkle_root,
+          nullifier: r.nullifier,
+          proof: r.proof,
+        },
+      ],
+    },
+  };
+}

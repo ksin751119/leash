@@ -259,6 +259,11 @@
 
   .cmd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   #cmdLabel { font-size: 14px; color: var(--mut); letter-spacing: .06em; }
+  #qrWrap { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+  #qr { width: 168px; flex: 0 0 168px; }
+  #qr svg { width: 100%; height: auto; background: #fff; border-radius: 8px;
+            padding: 6px; box-sizing: border-box; display: block; }
+  #qrHint { font-size: 15px; color: var(--mut); }
   #copy {
     font: inherit; font-size: 14px; font-weight: 600; padding: 5px 12px;
     border-radius: 6px; border: 1px solid var(--line-2);
@@ -362,6 +367,10 @@
     </div>
 
     <div class="act-right">
+      <div id="qrWrap" hidden>
+        <div id="qr"></div>
+        <div id="qrHint">scan with World App — it will ask for your face</div>
+      </div>
       <div class="cmd-head">
         <span id="cmdLabel">THE COMMAND APPEARS HERE AFTER THE SCAN</span>
         <button id="copy" hidden>copy</button>
@@ -372,7 +381,13 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@worldcoin/idkit-standalone@2.2.5/build/index.global.js"></script>
+<!-- @worldcoin/idkit-core, served from this origin. NOT idkit-standalone: that widget
+     speaks only the `verification_level` vocabulary, which has no Selfie Check in it at
+     all - measured 2026-09-11, a scan against a brand-new action opened no camera and
+     returned `identifier: "device"`. A face check is a 4.0 credential request, and this
+     is the package that can make one. Self-hosted because it resolves its WASM relative
+     to itself. -->
+<script src="/idkit.global.js"></script>
 
 <script type="module">
   // Every string this page prints that came from the agent is formatted here, and only here.
@@ -787,6 +802,7 @@
     } catch {
       // IDKit exposes no close in every build; the operator dismisses the modal themselves.
     }
+    $("qrWrap").hidden = true;
     resetCommandBox();
     paintButton();
     setMsg("scan cancelled — press the button to start a new one", false);
@@ -814,59 +830,69 @@
       $("cmdLabel").textContent = "THIS SCAN IS BOUND TO THIS DIGEST";
       $("cmd").textContent = plan.digest;
 
-      // 2. Bind the scan to that digest. `signal` is threaded into handleVerify as an
-      //    argument rather than read back from anywhere, exactly as world/index.html does,
-      //    so the proof cannot end up bound to a value other than the one on screen.
-      // Checked like any other response: an unchecked 500 here would hand IDKit an undefined
-      // app_id and fail inside the modal, where the reason is not visible.
-      const cfgRes = await fetch("/api/config");
-      const cfg = await cfgRes.json();
-      if (!cfgRes.ok) throw new Error(cfg.error ?? `config failed: HTTP ${cfgRes.status}`);
+      // 2. Build the World ID **4.0** credential request that actually asks for a face.
+      //    `selfieCheckLegacy()` returns `{ type: "SelfieCheckLegacy" }` - a credential
+      //    request, not a `verification_level`. The two are different vocabularies, and the
+      //    widget this page used until 2026-09-11 only spoke the one with no face in it.
+      //
+      //    `rp_context` is signed by the relying party, server-side; the signing key never
+      //    reaches the browser.
+      setMsg("preparing a face scan bound to this digest…");
+      const [cfg, rp] = await Promise.all([
+        fetch("/api/config").then((r) => r.json()),
+        fetch("/api/rp-context").then((r) => r.json()),
+      ]);
       if (!cfg.app_id || !cfg.action) throw new Error("the server returned no app_id or action");
+      if (rp.error) throw new Error("rp-context: " + rp.error);
 
-      setMsg("scan your face in World App — one scan, this digest only");
-      IDKit.init({
+      const request = await IDKit.request({
         app_id: cfg.app_id,
         action: cfg.action,
-        signal: plan.digest,
-        // `device`, and NOT `selfieCheckLegacy`, which is what this said until a Playwright
-        // run clicked the button for the first time. `selfieCheckLegacy` is the name of
-        // IDKit's REACT PRESET FUNCTION; `verification_level` is a different vocabulary, and
-        // idkit-standalone@2.2.5 accepts exactly four values - device, document,
-        // secure_document, orb. Anything else throws `Unknown verification level` inside
-        // `createClient`, AFTER the modal has opened, so the dialog appears with no QR in it
-        // and the only trace is a console error nobody is looking at during a demo.
-        //
-        // `device` is correct despite reading wrong: Selfie Check is turned on by the app's
-        // `enable_face_check` setting, not by the level, and a successful face check comes
-        // back as `credential_type: "device"` - which is the naming complaint already filed
-        // in docs/world-feedback.md. world/index.html, verified end to end on 2026-09-07,
-        // labels this option "device - what Selfie Check uses".
-        verification_level: "device",
-        handleVerify: (proof) => handleVerify(proof, plan.digest, plan),
-        onSuccess: () => {},
-      });
-      IDKit.open();
+        rp_context: rp,
+        // **false on purpose.** `true` would let World answer with a legacy 3.0 device
+        // credential - the camera-less path that made this page claim a face scan for two
+        // days - and the backend would then refuse it, after the operator had already been
+        // told to scan. Refusing here means the request World shows is a face check or
+        // nothing.
+        allow_legacy_proofs: false,
+      }).preset(IDKit.selfieCheckLegacy({ signal: plan.digest }));
+
+      // 3. Draw the QR ourselves. A 4.0 request hands back a URI rather than opening a
+      //    modal, which is an improvement worth stating: the scan happens inside this
+      //    page's own layout, next to the digest it is bound to, instead of in a
+      //    third-party dialog that covers the thing the audience is meant to be reading.
+      const svg = await fetch("/api/qr?data=" + encodeURIComponent(request.connectorURI)).then((r) => r.text());
+      $("qr").innerHTML = svg;
+      $("qrWrap").hidden = false;
+
+      setMsg("scan it in World App — one scan, this digest only");
+      const outcome = await request.pollUntilCompletion();
+      $("qrWrap").hidden = true;
+      if (!outcome.success) throw new Error("World ID returned: " + (outcome.error ?? "no result"));
+      await handleVerify(outcome.result, plan.digest, plan);
     } catch (err) {
       // Same cleanup as cancelling, for the same reason: if this threw after the digest was
       // painted, leaving "THIS SCAN IS BOUND TO THIS DIGEST" over a digest no scan is bound to
       // would be the one lie this page must not tell.
       busy = false;
+      $("qrWrap").hidden = true;
       resetCommandBox();
       paintButton();
       setMsg(String(err?.message ?? err), true);
     }
   }
 
-  // 3. Exchange the proof for an attestation. The server signs only after World returns 200;
-  //    throwing here is how IDKit is told the verification failed.
-  async function handleVerify(proof, digest, plan) {
+  // 4. Exchange the result for an attestation. The server signs only after World returns
+  //    200 AND the result is a Selfie Check bound to this digest - see
+  //    buildSelfieVerifyPayload in world/attest.mjs for why both halves are checked there
+  //    rather than trusted from here.
+  async function handleVerify(result, digest, plan) {
     try {
       setMsg("verifying the proof and signing the attestation…");
       const r = await fetch("/api/attest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ digest, proof }),
+        body: JSON.stringify({ digest, result }),
       });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error ?? body.detail ?? `attest failed: HTTP ${r.status}`);

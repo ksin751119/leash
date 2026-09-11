@@ -5,6 +5,9 @@
   "description": "Selfie Check verification harness - throwaway, not the demo frontend",
   "dependencies": {
     "@noble/curves": "^2.4.0",
-    "@noble/hashes": "^1.5.0"
+    "@noble/hashes": "^1.5.0",
+    "@worldcoin/idkit-core": "^4.2.4",
+    "@worldcoin/idkit-server": "^1.1.1",
+    "qrcode": "^1.5.4"
   }
 }

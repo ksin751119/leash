@@ -12,7 +12,9 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { signAttestation, buildVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
+import QRCode from "qrcode";
+import { signRequest } from "@worldcoin/idkit-server";
+import { signAttestation, buildVerifyPayload, buildSelfieVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
 import { widenPlan, checkWidenEnv } from "./widen-plan.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -73,10 +75,43 @@ const server = createServer(async (req, res) => {
       return res.end(html);
     }
 
+    // The 4.0 Selfie Check probe. Separate from /harness, which speaks the older
+    // `verification_level` vocabulary, so the two can be compared side by side.
+    if (req.method === "GET" && (req.url === "/facetest" || req.url.startsWith("/facetest?"))) {
+      const html = await readFile(new URL("./facetest.html", import.meta.url));
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      return res.end(html);
+    }
+
     if (req.method === "GET" && (req.url === "/harness" || req.url.startsWith("/harness?"))) {
       const html = await readFile(new URL("./index.html", import.meta.url));
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       return res.end(html);
+    }
+
+    // `@worldcoin/idkit-core`'s browser build, served from OUR origin rather than a CDN.
+    // It resolves `idkit_wasm_bg.wasm` relative to itself, and a CDN copy resolves that
+    // against the CDN - which is one more thing to be wrong on a stage. Both files come
+    // out of node_modules so the version is pinned by package-lock.
+    if (req.method === "GET" && (req.url === "/idkit.global.js" || req.url === "/idkit_wasm_bg.wasm")) {
+      const name = req.url.slice(1);
+      const buf = await readFile(new URL(`./node_modules/@worldcoin/idkit-core/dist/${name}`, import.meta.url));
+      res.writeHead(200, {
+        "Content-Type": name.endsWith(".wasm") ? "application/wasm" : "text/javascript; charset=utf-8",
+        "Content-Length": buf.length,
+      });
+      return res.end(buf);
+    }
+
+    // A QR rendered as SVG, server-side. The 4.0 flow hands us a `connectorURI` string and
+    // expects the page to draw it - which is an improvement for the demo, because the code
+    // then lives in our own layout instead of a third-party modal.
+    if (req.method === "GET" && req.url.startsWith("/api/qr")) {
+      const data = new URL(req.url, "http://x").searchParams.get("data");
+      if (!data) return json(res, 400, { error: "missing data" });
+      const svg = await QRCode.toString(data, { type: "svg", margin: 1, width: 320 });
+      res.writeHead(200, { "Content-Type": "image/svg+xml; charset=utf-8" });
+      return res.end(svg);
     }
 
     // demo.html imports this as an ES module, so it needs a JavaScript content type.
@@ -88,6 +123,42 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && req.url === "/api/config") {
       return json(res, 200, { app_id: APP_ID, action: ACTION });
+    }
+
+    // The RP context a World ID **4.0** credential request needs. This is the route to
+    // Selfie Check, and it exists because of what 2026-09-11 established: the older
+    // `verification_level` vocabulary that `@worldcoin/idkit-standalone` speaks CANNOT
+    // request a face check at all. Its bundle contains no Selfie Check of any kind - four
+    // levels, `device` / `document` / `secure_document` / `orb`, and nothing else. A scan
+    // against a brand-new action, with the app's `enable_face_check: true`, opened no
+    // camera and came back `protocol_version: "3.0"`, `identifier: "device"`.
+    //
+    // Selfie Check is a 4.0 *credential request* - `{ type: "SelfieCheckLegacy" }` - and
+    // reaching it means `@worldcoin/idkit-core`, which requires an RP context signed by
+    // the relying party. `signRequest` is World's own helper for exactly that, so the
+    // message format (version || nonce || createdAt || expiresAt || action) is theirs and
+    // not ours to guess.
+    //
+    // **The signing key never leaves this process.** The browser gets the signature, the
+    // nonce and the two timestamps - which is all a credential request needs, and none of
+    // which lets anyone sign a different one.
+    if (req.method === "GET" && req.url === "/api/rp-context") {
+      const pk = process.env.WORLD_RP_SIGNER_PK;
+      if (!pk) return json(res, 500, { error: "WORLD_RP_SIGNER_PK is not set" });
+      try {
+        // `action` is hashed into the signed message for a non-session proof, which binds
+        // the context to this action. Omitting it would produce a signature World rejects.
+        const r = signRequest({ signingKeyHex: pk, action: ACTION, ttl: 900 });
+        return json(res, 200, {
+          rp_id: RP_ID,
+          nonce: r.nonce,
+          created_at: r.createdAt,
+          expires_at: r.expiresAt,
+          signature: r.sig,
+        });
+      } catch (err) {
+        return json(res, 500, { error: String(err?.message ?? err) });
+      }
     }
 
     // The Portal has no surface anywhere that shows credential enablement status;
@@ -118,7 +189,8 @@ const server = createServer(async (req, res) => {
             identifier: proof.credential_type ?? proof.verification_level,
             signal_hash: proof.signal_hash ?? hashSignal(signal ?? ""),
             merkle_root: proof.merkle_root,
-            nullifier: proof.nullifier_hash,
+            nullifier: result.responses[0].nullifier,
+        credential: result.responses[0].identifier,
             proof: proof.proof,
           },
         ],
@@ -158,12 +230,21 @@ const server = createServer(async (req, res) => {
     // docstring in attest.mjs for the two attacks that closes, and checkAttestEnv's for
     // why WORLD_ACTION has no fallback here even though ACTION (used by the other
     // routes) does.
+    // Takes a World ID **4.0** `SelfieCheckLegacy` result, and only that.
+    //
+    // It used to take a 3.0 `proof` from `@worldcoin/idkit-standalone`. That path is gone
+    // rather than deprecated, because on 2026-09-11 it was measured to produce a **device
+    // credential with no camera and no face** — the app's `enable_face_check: true` has no
+    // effect on the 3.0 vocabulary, and that widget cannot request a face check at all.
+    // Leaving the old path in place "for compatibility" would leave the exact hole this
+    // endpoint exists to close: an attestation, signed by us and accepted by the chain,
+    // for a widening no human face ever approved.
     if (req.method === "POST" && req.url === "/api/attest") {
-      const { digest, proof } = await readBody(req);
+      const { digest, result } = await readBody(req);
       if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
         return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
       }
-      if (!proof) return json(res, 400, { error: "missing proof" });
+      if (!result) return json(res, 400, { error: "missing result" });
 
       // checkAttestEnv (attest.mjs) also refuses to run without WORLD_ACTION set — the
       // module-level ACTION above falls back to "expand-policy" for the other routes,
@@ -173,7 +254,15 @@ const server = createServer(async (req, res) => {
       const attestEnvErr = checkAttestEnv(process.env);
       if (attestEnvErr) return json(res, 500, { error: attestEnvErr });
 
-      const payload = buildVerifyPayload({ digest, proof, action: process.env.WORLD_ACTION });
+      // Refuses a non-selfie credential and a proof bound to another signal. See the
+      // notes on buildSelfieVerifyPayload - both refusals are load-bearing, and both are
+      // pinned by mutation-tested cases in attest.test.mjs.
+      const { payload, error: refusal } = buildSelfieVerifyPayload({
+        digest,
+        result,
+        action: process.env.WORLD_ACTION,
+      });
+      if (refusal) return json(res, 400, { error: refusal });
 
       const r = await fetch(VERIFY_URL, {
         method: "POST",
