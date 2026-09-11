@@ -108,3 +108,31 @@ test("renderRules survives a null budget and a null policy", () => {
   assert.equal(r.policyShort, "—");
   assert.equal(r.approved, false);
 });
+
+test("a spend under one percent is not reported as zero", () => {
+  // 5 of 1000 is 0.5%. Truncating integer division rendered it as 0% — indistinguishable
+  // from having spent nothing, which is the one thing this panel exists to disprove.
+  const r = renderRules({ ...state(), budget: { token: TOKEN, limit: "1000000000", spent: "5000000", periodEnd: 0 } });
+  assert.equal(r.pct, 0.5);
+  assert.equal(r.hasSpent, true);
+});
+
+test("any non-zero spend is distinguishable from none", () => {
+  const at = (spent) => renderRules({ ...state(), budget: { token: TOKEN, limit: "1000000000", spent, periodEnd: 0 } });
+  assert.equal(at("0").hasSpent, false);
+  assert.equal(at("0").pct, 0);
+  for (const s of ["1", "5000000", "10000000", "999000000"]) {
+    assert.equal(at(s).hasSpent, true, `hasSpent for ${s}`);
+  }
+});
+
+test("whole percentages stay whole", () => {
+  const at = (spent) => renderRules({ ...state(), budget: { token: TOKEN, limit: "1000000000", spent, periodEnd: 0 } });
+  assert.equal(at("310000000").pct, 31);
+  assert.equal(at("1000000000").pct, 100);
+});
+
+test("a zero or absent limit reports no percentage and no spend", () => {
+  assert.equal(renderRules({ ...state(), budget: { token: TOKEN, limit: "0", spent: "5000000", periodEnd: 0 } }).pct, 0);
+  assert.equal(renderRules({ ...state(), budget: null }).hasSpent, false);
+});

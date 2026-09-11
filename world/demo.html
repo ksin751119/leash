@@ -560,7 +560,11 @@
 
     $("budgetPct").innerHTML = "";
     $("budgetPct").append(Object.assign(document.createElement("b"), { textContent: `${rules.pct}%` }), " used");
-    $("budgetFill").style.width = `${Math.max(0, Math.min(100, rules.pct))}%`;
+    // A real spend must never paint as an empty bar. 0.5% of this track is about four
+    // pixels; below that the floor keeps a sliver visible, and the number beside it still
+    // reports the true figure rather than the floor.
+    const w = rules.hasSpent ? Math.max(0.8, Math.min(100, rules.pct)) : 0;
+    $("budgetFill").style.width = `${w}%`;
     $("budgetSpent").textContent = rules.spent;
     $("budgetLimit").textContent = rules.limit;
 

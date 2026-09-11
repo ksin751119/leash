@@ -67,12 +67,20 @@ export function renderRules(s) {
   const limit = s.budget?.limit ?? null;
   const spent = s.budget?.spent ?? null;
   let pct = 0;
+  let hasSpent = false;
   try {
+    hasSpent = spent != null && BigInt(spent) > 0n;
     if (limit != null && BigInt(limit) > 0n) {
-      pct = Number((BigInt(spent ?? 0) * 100n) / BigInt(limit));
+      // Tenths, then divide. Computing straight into whole percent truncates: 5 USDC of a
+      // 1000 limit came out as 0%, the same reading as having spent nothing at all — which
+      // is precisely the claim this panel exists to disprove. `hasSpent` is carried
+      // separately so the bar can stay visible for an amount too small to round to 0.1%,
+      // without the number having to overstate it.
+      pct = Number((BigInt(spent ?? 0) * 1000n) / BigInt(limit)) / 10;
     }
   } catch {
     pct = 0;
+    hasSpent = false;
   }
   return {
     policy: s.policy?.address ?? null,
@@ -81,6 +89,7 @@ export function renderRules(s) {
     spent: formatUsdc(spent),
     limit: formatUsdc(limit),
     pct,
+    hasSpent,
     payees: Object.entries(s.payees ?? {}).map(([addr, v]) => ({
       addr,
       short: shortHex(addr),
