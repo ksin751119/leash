@@ -123,3 +123,5 @@ dataSources:
           handler: handlePayeeRemoved
         - event: LimitRaised(indexed bytes32,indexed address,uint256,uint256,uint64,bytes32)
           handler: handleLimitRaised
+        - event: LimitLowered(indexed bytes32,indexed address,uint256,uint256,indexed address)
+          handler: handleLimitLowered

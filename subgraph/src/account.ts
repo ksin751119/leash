@@ -8,6 +8,7 @@ import {
   PayeeAllowed,
   PayeeRemoved,
   LimitRaised,
+  LimitLowered,
 } from "../generated/LeashAccount-wallet1/LeashAccount";
 import { AgentBudget, Payee, Spend, Agent, LeashedWallet } from "../generated/schema";
 import { reasonName } from "./reason";
@@ -228,6 +229,24 @@ export function handlePayeeRemoved(event: PayeeRemoved): void {
 /// Create the AgentBudget when a limit is raised, so "has a budget but has not spent
 /// yet" is queryable. Otherwise the agent's very first decision would read null and
 /// have no idea how much it may spend.
+/// Lowering is the one reduction this subgraph used to miss. Every other one — a payee
+/// removed, an agent revoked, a policy revoked, a subname revoked — was already indexed,
+/// so the index agreed with the chain about every way to take authority away except this
+/// one. It mattered in practice: a limit tightened from 1000 to 50 left the index still
+/// answering 1000 until the next spend happened to carry the real figure, and anything
+/// reading the index — the agent's own pre-flight among them — believed the looser number.
+///
+/// Unlike a raise, this never creates the entity. A budget that does not exist has no
+/// limit to lower, and inventing one here would assert a rule that was never set.
+export function handleLimitLowered(event: LimitLowered): void {
+  const bid = budgetId(event.address, event.params.node, event.params.token);
+  const b = AgentBudget.load(bid);
+  if (b == null) return;
+  b.limit = event.params.newLimit;
+  b.remaining = remainingOf(event.params.newLimit, b.spent);
+  b.save();
+}
+
 export function handleLimitRaised(event: LimitRaised): void {
   const bid = budgetId(event.address, event.params.node, event.params.token);
   let b = AgentBudget.load(bid);
