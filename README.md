@@ -112,13 +112,22 @@ short version, with the wallet's real rule:
 **Two payments to strangers, one refused and one allowed, and the only difference is the
 size.**
 
-> **What the wallet is actually running right now.** The set is deployed, but
-> `PolicyApprovals.isApproved` still returns `false` for it and the ENS pointer still
-> resolves to `StandardPolicy`. That is not an oversight — it is the two-lock design working:
-> ADMIN deployed the set and ADMIN cannot approve it, because approval takes a face scan.
-> Installing it is two transactions by two different authorities, and the table above is an
-> `eth_call` against the deployed contract rather than a claim about what the wallet is doing
-> today.
+> **What the wallet is actually running right now.** The set is deployed, but the ENS
+> pointer still resolves to `StandardPolicy`, so the table above is an `eth_call` against the
+> deployed contract — not a claim about what the wallet is doing today.
+>
+> **And one honest caveat about the second lock.** By design, approving a policy takes a
+> human attestation, which is what makes a stolen ADMIN key unable to install rules nobody
+> agreed to. In *this* deployment that lock is installed but not loaded:
+> `PolicyApprovals.attester` is `immutable` and points at `MockAttester`, which returns
+> `true` for any input. So ADMIN can approve a policy here without any face scan.
+>
+> The gate you will watch in the demo is the real one — `LeashAccount.ATTESTER` is
+> `WorldAttester`, so **widening a payee genuinely requires a Selfie Check**. The approval
+> list is the one behind it, and it is mocked. Loading it means deploying a fresh
+> `PolicyApprovals` and re-approving every policy through it, because removing the setter is
+> exactly what made the contract safe to leave unowned. We would rather say this than let a
+> reader infer a guarantee the addresses do not back.
 
 Verify the central claim yourself in four `cast` calls — the recipe is in
 `docs/deployments.md`. It walks `leash.eth` down to a policy address; point the first

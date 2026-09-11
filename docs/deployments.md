@@ -50,8 +50,23 @@ $ cast call $SET   "memberAt(uint256)" 1     → 0x88F2bfF0…  StandardPolicy
 $ cast call $APPROVALS "isApproved(address)(bool)" $SET → false
 ```
 
-That last line is the point of the two-lock design and is **not** an oversight: ADMIN
-deployed the set and ADMIN cannot approve it. Approval needs a World face scan.
+That last line is not an oversight — but read the next paragraph before reading it as a
+security property.
+
+**Approving a policy is not human-gated in this deployment.** `PolicyApprovals.attester` is
+`immutable` and points at `MockAttester` (`0x2689…4124`), whose `verify` returns `true` for
+any input. ADMIN can therefore approve a policy here with no attestation at all. The
+asymmetry is per-contract and worth stating precisely:
+
+| Gate | Attester | Real today? |
+|---|---|---|
+| `LeashAccount.allowPayee` — widening a payee, the face-scan beat | `WorldAttester` | **yes** |
+| `PolicyApprovals.approve` — making a new policy installable | `MockAttester` | no |
+
+So the lock a judge watches on camera is genuine and the one behind it is not. Changing it
+means deploying a fresh `PolicyApprovals` and re-approving every policy through it — the
+setter was deliberately removed (see the contract's own notes on why relocating the key was
+not a fix), and that is the price of having removed it.
 
 The composition was dry-run against the live contract with the wallet's real rule
 (txLimit 500.000000, periodLimit 50.000000, window open all day) — these are `eth_call`s on
