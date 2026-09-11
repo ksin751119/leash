@@ -60,12 +60,65 @@ in [`docs/deployments.md`](docs/deployments.md).
 | `LeashResolver` (ENSIP-10) | [`0x607a4d73…915b`](https://sepolia.etherscan.io/address/0x607a4d7363d9E7511a932F82eAE1e12FB609915b) |
 | `PolicyApprovals` | [`0x7CB9d4Ac…25B4`](https://sepolia.etherscan.io/address/0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4) |
 | `StandardPolicy` | [`0x88F2bfF0…75cc`](https://sepolia.etherscan.io/address/0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b) |
+| `PolicySet` (AND/OR composition) | [`0xec45e967…2490`](https://sepolia.etherscan.io/address/0xec45e967F4e907B92bb1A9a8b4fcF9F041792490) |
+| `MicroPaymentPolicy` (CAP = 1.00 USDC) | [`0x0142BE41…19Df`](https://sepolia.etherscan.io/address/0x0142BE4199942ff40F67c94aF181Cc9A0C9C19Df) |
 | `LeashLens` | [`0xB6eB4C26…7B83`](https://sepolia.etherscan.io/address/0xB6eB4C26AF866057920f7AB6fAFf69A914067B83) |
 | `WorldAttester` | [`0xa4E208dA…5F26`](https://sepolia.etherscan.io/address/0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26) |
 
 The `LeashAccount` impl above is the **current** one — it was redeployed the same day to
 switch its attester; the superseded impl and the full history are in
 [`docs/deployments.md`](docs/deployments.md).
+
+## The rule is composable, and that is not a claim you have to take on trust
+
+`StandardPolicy` ANDs every check together, and one of them is the payee allow-list. So
+**every payment to a payee nobody has vetted is refused, however small** — an agent topping
+up an API for fifty cents needs a human to find their phone and scan their face. That is a
+real limitation, and every corporate card in the world already solves it with an `OR`:
+
+```
+( amount ≤ 1.00 USDC  AND  still inside the period budget )     ← MicroPaymentPolicy
+                            OR
+( the full StandardPolicy rules, payee allow-list included )     ← StandardPolicy
+```
+
+`PolicySet` is that composition: AND inside a clause, OR between clauses. Three properties
+are worth knowing, because each one is a trap that was walked into and backed out of:
+
+- **Members are reached by `staticcall`, not `call`.** The account does not revert when it
+  blocks, so a member that wrote to its ledger on the way to a refusal could never be rolled
+  back. `staticcall` makes that impossible by construction rather than by a comment. The
+  price is stated plainly: a stateful policy can never be a member.
+- **When no clause passes, the *last* clause's reason is reported.** Written as *exception*
+  `OR` *general rule*, the last clause is the general rule, so its code is the one an
+  operator can act on. Reporting the first clause's code would tell an agent "over the micro
+  cap" when the thing to fix is "get this payee vetted".
+- **The member list is fixed at construction, with no setter.** A different composition is a
+  different address, which is a different entry in the approval list, which costs a face scan.
+
+`MicroPaymentPolicy` is the exception half and **is not safe alone** — its own `describe()`
+says so on chain. Alone it would allow any small payment to anyone.
+
+You can check all of this against the deployed contract without cloning anything; the
+`eth_call` recipe and its output are in [`docs/deployments.md`](docs/deployments.md). The
+short version, with the wallet's real rule:
+
+| intent | amount | payee | `PolicySet.check` returns |
+|---|---|---|---|
+| a monthly retainer | 5.00 | vetted | **0** — clause 1 fails on the cap, clause 2 passes |
+| a vendor nobody knows | 5.00 | a stranger | **6** `PAYEE_NOT_ALLOWED` — this is the face scan |
+| an API top-up | 0.50 | a stranger | **0** — clause 1 passes, clause 2 never runs |
+
+**Two payments to strangers, one refused and one allowed, and the only difference is the
+size.**
+
+> **What the wallet is actually running right now.** The set is deployed, but
+> `PolicyApprovals.isApproved` still returns `false` for it and the ENS pointer still
+> resolves to `StandardPolicy`. That is not an oversight — it is the two-lock design working:
+> ADMIN deployed the set and ADMIN cannot approve it, because approval takes a face scan.
+> Installing it is two transactions by two different authorities, and the table above is an
+> `eth_call` against the deployed contract rather than a claim about what the wallet is doing
+> today.
 
 Verify the central claim yourself in four `cast` calls — the recipe is in
 `docs/deployments.md`. It walks `leash.eth` down to a policy address; point the first

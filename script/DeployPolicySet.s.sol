@@ -32,11 +32,23 @@ contract DeployPolicySet is Script {
     ///      immutable with no setter.
     uint256 internal constant CAP = 1_000_000;
 
+    uint256 internal constant SEPOLIA = 11155111;
+
     function run() external {
+        // The wrong RPC deploys to a different chain and still prints two addresses, which
+        // reads as success. Same guard, and the same reasoning, as `script/DeployAccount.s.sol`.
+        require(block.chainid == SEPOLIA, "wrong chain - Sepolia only");
+
+        // `STANDARD_POLICY` is the same value `agent/decide.mjs` is given, so a typo here
+        // and a typo there cannot cancel out: the code-length check below catches this one.
         address standard = vm.envAddress("STANDARD_POLICY");
         require(standard.code.length > 0, "STANDARD_POLICY has no code on this chain");
 
-        vm.startBroadcast();
+        // Read from the environment rather than taken from `--private-key`, so the key never
+        // appears in argv where `ps` can read it. Matches the other three deploy scripts.
+        uint256 pk = vm.envUint("ADMIN_PK");
+
+        vm.startBroadcast(pk);
 
         MicroPaymentPolicy micro = new MicroPaymentPolicy(CAP);
 

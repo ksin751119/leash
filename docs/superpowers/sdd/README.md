@@ -1,6 +1,6 @@
 # Subagent-driven development ledgers
 
-Working records from three features that were built with a spec-driven, subagent-driven
+Working records from four features that were built with a spec-driven, subagent-driven
 workflow. They are published because ETHOnline's AI rules ask for them: *"Spec-driven
 workflows require submission of all spec files and prompts."*
 
@@ -13,10 +13,19 @@ them. Nothing has been cleaned up after the fact.
 | [`2026-09-09-world-attester/`](2026-09-09-world-attester) | `WorldAttester` + EIP-712 attestation issuance | [spec](../specs/2026-09-09-world-attester-design.md) | [plan](../plans/2026-09-09-world-attester.md) |
 | [`2026-09-09-agent-loop/`](2026-09-09-agent-loop) | The agent decision loop | [spec](../specs/2026-09-09-agent-loop-design.md) | [plan](../plans/2026-09-09-agent-loop.md) |
 | [`2026-09-10-demo-frontend/`](2026-09-10-demo-frontend) | The demo page | [spec](../specs/2026-09-10-demo-frontend-design.md) | [plan](../plans/2026-09-10-demo-frontend.md) |
+| [`2026-09-11-policyset/`](2026-09-11-policyset) | `PolicySet` + `MicroPaymentPolicy` — AND/OR composition | [spec](../specs/2026-09-11-policyset-design.md) | [plan](../plans/2026-09-11-policyset.md) |
 
-The demo-frontend directory also keeps the per-task **briefs** — the exact requirements each
-implementer was given, extracted from the plan — beside the reports. The review packages
-(`*.diff`) are not kept; they are git ranges the history already holds.
+The demo-frontend and policyset directories also keep the per-task **briefs** — the exact
+requirements each implementer was given, extracted from the plan — beside the reports. The
+review packages (`*.diff`) are not kept; they are git ranges the history already holds.
+
+The policyset ledger is the one to read if you only read one. Its final review found a
+**Critical that refuted a sentence in its own spec** — the spec said "nothing already
+deployed changes", and the offchain agent turned out to have absorbed a copy of the onchain
+rules — and the ledger records the controller disagreeing with the reviewer twice and being
+right once each way. It also records the **ninth** test this project has found that passed
+without exercising the property its name claimed, and the first one that was actively
+defending a live defect rather than merely proving nothing.
 
 ## What each file is
 

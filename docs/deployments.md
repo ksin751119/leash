@@ -21,6 +21,55 @@ redeployed" below)
 | `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
 | `WorldAttester` | `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` | [`0xec9a06d3…`](https://sepolia.etherscan.io/tx/0xec9a06d398d51868fa5b576bdc54f424d9826acfd461be3226dc2d3720368cfa) |
 
+### Policy composition (deployed 2026-09-11 05:44 UTC)
+
+| Contract | Address | Deployment tx |
+|---|---|---|
+| `MicroPaymentPolicy` (CAP = 1.00 USDC) | `0x0142BE4199942ff40F67c94aF181Cc9A0C9C19Df` | [`0xc7445756…`](https://sepolia.etherscan.io/tx/0xc7445756873c2ef137c050f5865868a61328702da6bf20966630d8fef0a1031c) |
+| `PolicySet` | `0xec45e967F4e907B92bb1A9a8b4fcF9F041792490` | [`0xcdab0935…`](https://sepolia.etherscan.io/tx/0xcdab0935cdd124a605b49454c4153e47a8bb0123c9266e36238aa3b45032bcb7) |
+
+Both in block `0xb238d6`. The set composes
+
+```
+clause 1 = [ MicroPaymentPolicy ]      a small payment, to anyone, still inside the budget
+        OR
+clause 2 = [ StandardPolicy ]          the full rules, including the payee allow-list
+```
+
+**`MicroPaymentPolicy` is not safe on its own and says so in its own `describe()`** — alone
+it would allow any small payment to anyone. It is the exception half of a rule that only
+makes sense as a whole.
+
+Readback, 2026-09-11:
+
+```
+$ cast call $MICRO "CAP()(uint256)"          → 1000000            (1.00 USDC, 6 decimals)
+$ cast call $SET   "clauseCount()(uint256)"  → 2
+$ cast call $SET   "memberAt(uint256)" 0     → 0x0142BE41…  MicroPaymentPolicy
+$ cast call $SET   "memberAt(uint256)" 1     → 0x88F2bfF0…  StandardPolicy
+$ cast call $APPROVALS "isApproved(address)(bool)" $SET → false
+```
+
+That last line is the point of the two-lock design and is **not** an oversight: ADMIN
+deployed the set and ADMIN cannot approve it. Approval needs a World face scan.
+
+The composition was dry-run against the live contract with the wallet's real rule
+(txLimit 500.000000, periodLimit 50.000000, window open all day) — these are `eth_call`s on
+the deployed `PolicySet`, not tests:
+
+| intent | amount | payee | returned |
+|---|---|---|---|
+| `retainer` | 5.00 | `0x…bEEF`, allow-listed | **0** `OK` — clause 1 fails on the cap, clause 2 passes |
+| `newvendor` | 5.00 | `0x…CafE0`, a stranger | **6** `PAYEE_NOT_ALLOWED` — both clauses fail, the **last** clause's reason is reported |
+| `apitopup` | 0.50 | `0x…f00D`, a stranger | **0** `OK` — clause 1 passes, clause 2 never runs |
+
+The third row is the whole argument for `OR` without anyone having to explain disjunctive
+normal form: **two payments to strangers, one refused and one allowed, and the only
+difference is the size.** The `6` in the middle row matters twice — it is what the demo
+page's widen button keys on, and it is the one code a face scan actually fixes.
+
+---
+
 `MockAttester` and `WorldAttester` are **both** live, and that is not a typo: `attester` is
 `immutable` per contract, and `PolicyApprovals` / `LeashRegistry` still point at the mock (see
 the callout below), while `LeashAccount`'s current impl points at `WorldAttester` (see
