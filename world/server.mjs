@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import QRCode from "qrcode";
 import { signRequest } from "@worldcoin/idkit-server";
 import { signAttestation, buildVerifyPayload, buildSelfieVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
-import { widenPlan, checkWidenEnv } from "./widen-plan.mjs";
+import { widenPlan, checkWidenEnv, encodeAllowPayeeCall } from "./widen-plan.mjs";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -239,10 +239,7 @@ const server = createServer(async (req, res) => {
     // endpoint exists to close: an attestation, signed by us and accepted by the chain,
     // for a widening no human face ever approved.
     if (req.method === "POST" && req.url === "/api/attest") {
-      const { digest, result } = await readBody(req);
-      if (!digest || !/^0x[0-9a-fA-F]{64}$/.test(digest)) {
-        return json(res, 400, { error: "digest must be 0x + 64 hex chars" });
-      }
+      const { payee, token, nonce, result } = await readBody(req);
       if (!result) return json(res, 400, { error: "missing result" });
 
       // checkAttestEnv (attest.mjs) also refuses to run without WORLD_ACTION set — the
@@ -252,6 +249,18 @@ const server = createServer(async (req, res) => {
       // stays unreachable even if this guard is ever loosened.
       const attestEnvErr = checkAttestEnv(process.env);
       if (attestEnvErr) return json(res, 500, { error: attestEnvErr });
+
+      // **The caller does not get to name the digest.** It used to send one, and the only
+      // thing stopping it naming someone else's was that World would reject a proof whose
+      // signal_hash disagreed. That held, but it put the security of the widening in an
+      // argument the client controls. Now the server derives the digest from (payee,
+      // token, nonce) through the same `payeeDigest` call the plan used, so the digest the
+      // attestation binds to is the chain's own answer for the widening being described.
+      // If any of the three differ from what the scan was bound to, the derived digest will
+      // not match `result.signal_hash` and buildSelfieVerifyPayload refuses below.
+      const plan = await widenPlan({ payee, token, env: process.env, nonce });
+      if (plan.status !== 200) return json(res, plan.status, plan.body);
+      const digest = plan.body.digest;
 
       // Refuses a non-selfie credential and a proof bound to another signal. See the
       // notes on buildSelfieVerifyPayload - both refusals are load-bearing, and both are
@@ -287,6 +296,14 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         attestation,
         deadline,
+        digest,
+        // What the browser wallet sends. The operator never touches a terminal, and the
+        // wallet - not this server - is what signs it: `allowPayee` is `onlySelf`, so the
+        // key that authorises a widening stays where a wallet key belongs.
+        to: process.env.WALLET_ADDR,
+        calldata: encodeAllowPayeeCall({
+          node: process.env.LEASH_NODE, token, payee, nonce, attestation,
+        }),
         nullifier: result.responses[0].nullifier,
         // Echoed so the page can show WHICH credential gated this widening. It is always
         // "selfie" by the time we get here - buildSelfieVerifyPayload refuses anything

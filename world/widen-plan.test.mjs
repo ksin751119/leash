@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkWidenEnv, encodePayeeDigestCall, buildCommand, redact, widenPlan,
+  checkWidenEnv, encodePayeeDigestCall, encodeAllowPayeeCall, buildCommand, redact, widenPlan,
 } from "./widen-plan.mjs";
 
 const NODE = "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121";
@@ -144,4 +144,50 @@ test("a result that is not 32 bytes fails closed", async () => {
     fetchImpl: async () => ({ ok: true, json: async () => ({ result: "0x1234" }) }),
   });
   assert.equal(r.status, 502);
+});
+
+// --- encodeAllowPayeeCall ---
+//
+// This calldata is what a browser wallet signs, so a mis-encoding is not a failed request:
+// it is a transaction the node accepts and the contract reads as something else. The
+// vectors below were cross-checked with `cast decode-calldata`, which round-tripped all
+// five arguments, so these tests pin the layout against an independent encoder rather than
+// against my own arithmetic.
+const AP = { node: "0x" + "11".repeat(32), token: "0x" + "22".repeat(20), payee: "0x" + "33".repeat(20) };
+const headWord = (cd, i) => cd.slice(10 + i * 64, 10 + (i + 1) * 64);
+
+test("encodeAllowPayeeCall puts the selector and the four static args where cast finds them", () => {
+  const cd = encodeAllowPayeeCall({ ...AP, nonce: 7, attestation: "0x" + "ab".repeat(73) });
+  assert.equal(cd.slice(0, 10), "0xc5bb4cb7", "cast sig allowPayee(bytes32,address,address,uint256,bytes)");
+  assert.equal(headWord(cd, 0), "11".repeat(32));
+  assert.equal(headWord(cd, 1), "0".repeat(24) + "22".repeat(20));
+  assert.equal(headWord(cd, 2), "0".repeat(24) + "33".repeat(20));
+  assert.equal(headWord(cd, 3), "0".repeat(63) + "7");
+});
+
+// The one an eye cannot check and a round-trip test would not isolate.
+test("the bytes offset is 0xa0 - five head words, counted from the args and not the selector", () => {
+  const cd = encodeAllowPayeeCall({ ...AP, nonce: 1, attestation: "0x" + "ab".repeat(73) });
+  assert.equal(BigInt("0x" + headWord(cd, 4)), 160n, "0xa0. 0xc0 would be counting the selector in");
+});
+
+test("the length word is the real byte count, and the tail pads to a whole word", () => {
+  const cd = encodeAllowPayeeCall({ ...AP, nonce: 1, attestation: "0x" + "ab".repeat(73) });
+  assert.equal(BigInt("0x" + headWord(cd, 5)), 73n);
+  const tail = cd.slice(10 + 6 * 64);
+  assert.equal(tail.length, 96 * 2, "73 bytes rounds up to 3 words");
+  assert.equal(tail.slice(0, 146), "ab".repeat(73), "the blob is intact");
+  assert.match(tail.slice(146), /^0+$/, "and the remainder is zero padding, not truncation");
+});
+
+test("an attestation that is exactly one word is not over-padded", () => {
+  const cd = encodeAllowPayeeCall({ ...AP, nonce: 1, attestation: "0x" + "cd".repeat(32) });
+  assert.equal(cd.slice(10 + 6 * 64).length, 32 * 2, "one word in, one word out");
+});
+
+test("an attestation that is not whole bytes is refused rather than silently padded", () => {
+  assert.throws(
+    () => encodeAllowPayeeCall({ ...AP, nonce: 1, attestation: "0xabc" }),
+    /not whole bytes/,
+  );
 });

@@ -909,17 +909,25 @@
   async function handleVerify(result, digest, plan) {
     try {
       setMsg("verifying the proof and signing the attestation…");
+      // The digest is NOT sent. The server derives it from (payee, token, nonce) through
+      // the chain's own `payeeDigest`, so this page cannot name a widening other than the
+      // one it just showed and the scan was bound to.
       const r = await fetch("/api/attest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ digest, result }),
+        body: JSON.stringify({
+          payee: plan.payee, token: plan.token, nonce: plan.nonce, result,
+        }),
       });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error ?? body.detail ?? `attest failed: HTTP ${r.status}`);
 
-      // 4. Substitute the blob into the command. A string replace, not a decision — and the
-      //    only transformation this page performs on anything it was given.
-      showCommand(plan.command.replace("$ATTESTATION", body.attestation), body.deadline);
+      // 5. Send it from the wallet. `allowPayee` is `onlySelf`, so this transaction can
+      //    only come from the wallet itself - which is why the page asks a browser wallet
+      //    to sign rather than printing a command for someone to paste. The face scan and
+      //    the signature are two factors from the same person, seconds apart, and neither
+      //    this page nor the server ever holds the key that moves the money.
+      await sendFromWallet(body, plan);
     } catch (err) {
       // The attempt is over either way, so the box goes back with it. setMsg comes after
       // paintButton because paintButton writes the idle message over whatever is there.
@@ -929,6 +937,68 @@
       setMsg(String(err?.message ?? err), true);
       throw err;
     }
+  }
+
+  // Sepolia. The wallet must be here, and it must be THE wallet: `allowPayee` is
+  // `onlySelf`, so a transaction from any other account reverts. Checking the account
+  // before asking for a signature turns a confusing revert into a sentence.
+  const SEPOLIA_HEX = "0xaa36a7";
+
+  async function sendFromWallet(signed_, plan) {
+    const eth = window.ethereum;
+    if (!eth) {
+      // Not a failure. The attestation is signed and good for fifteen minutes, and the
+      // terminal path still exists - it is simply no longer the one anybody is asked to
+      // take. Falling back to it matters most in the situation it is least convenient to
+      // discover: a wallet extension misbehaving in front of a camera, with a scan already
+      // spent. Everything the operator needs stays on screen.
+      showCommand(plan.command.replace("$ATTESTATION", signed_.attestation), signed_.deadline);
+      setMsg("no browser wallet here — the attestation is signed; run the command below", true);
+      $("qrWrap").hidden = true;
+      return;
+    }
+
+    setMsg("approve the widening in your wallet…");
+
+    const [account] = await eth.request({ method: "eth_requestAccounts" });
+    if (String(account).toLowerCase() !== String(signed_.to).toLowerCase()) {
+      throw new Error(
+        `your wallet is on ${shortHex(account)}, but this widening can only be sent by ` +
+        `${shortHex(signed_.to)} — allowPayee is onlySelf. Switch accounts and press again.`,
+      );
+    }
+
+    const chainId = await eth.request({ method: "eth_chainId" });
+    if (String(chainId).toLowerCase() !== SEPOLIA_HEX) {
+      // Ask rather than refuse: a wallet on the wrong network is one click from right, and
+      // the attestation is ticking.
+      await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: SEPOLIA_HEX }] });
+    }
+
+    let txHash;
+    try {
+      txHash = await eth.request({
+        method: "eth_sendTransaction",
+        params: [{ from: account, to: signed_.to, data: signed_.calldata }],
+      });
+    } catch (err) {
+      // A rejected or failed signature must not throw the attestation away with it. The
+      // scan is spent either way; leaving the command on screen is the difference between
+      // "press the button again" and "scan your face again".
+      showCommand(plan.command.replace("$ATTESTATION", signed_.attestation), signed_.deadline);
+      $("qrWrap").hidden = true;
+      setMsg(`wallet did not send it (${err?.message ?? err}) — the command below still works`, true);
+      return;
+    }
+
+    busy = false;
+    signed = true;
+    $("qrWrap").hidden = true;
+    $("cmdLabel").textContent = "SENT FROM THE WALLET — THE AGENT WILL NOTICE ON ITS NEXT TICK";
+    $("cmd").textContent = txHash;
+    $("copy").hidden = false;
+    paintButton();
+    setMsg("widening sent — nobody will touch the agent");
   }
 
   function showCommand(command, deadline) {

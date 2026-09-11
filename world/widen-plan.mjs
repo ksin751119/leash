@@ -55,6 +55,41 @@ export function encodePayeeDigestCall({ node, token, payee, nonce }) {
   );
 }
 
+const ALLOW_SIG = "allowPayee(bytes32,address,address,uint256,bytes)";
+const ALLOW_SELECTOR = Buffer.from(keccak_256(Buffer.from(ALLOW_SIG))).subarray(0, 4).toString("hex");
+
+/// Calldata for `allowPayee`, so the browser wallet can send the widening itself and the
+/// operator never touches a terminal.
+///
+/// Hand-encoded for the same reason `encodePayeeDigestCall` is: this file has no ABI
+/// library and one function's calldata does not justify one. But `allowPayee` is the
+/// harder shape — its last parameter is dynamic `bytes`, so the head holds an **offset**
+/// where the other four hold values, and the tail holds a length followed by the data
+/// padded up to a whole word.
+///
+/// The offset is `0xa0`: five head words at 32 bytes each, counted from the start of the
+/// arguments and NOT from the start of the calldata — the selector is not part of the
+/// encoding. Getting that wrong produces calldata a node accepts and a contract
+/// misreads, which is why `widen-plan.test.mjs` pins the byte layout rather than only
+/// the round trip.
+export function encodeAllowPayeeCall({ node, token, payee, nonce, attestation }) {
+  const blob = strip(attestation);
+  if (blob.length % 2 !== 0) throw new Error("attestation is not whole bytes");
+  const len = blob.length / 2;
+  const padded = blob.padEnd(Math.ceil(len / 32) * 64, "0");
+  return (
+    "0x" +
+    ALLOW_SELECTOR +
+    word(node) +
+    word(token) +
+    word(payee) +
+    word(BigInt(nonce).toString(16)) +
+    word((5 * 32).toString(16)) + // offset to the bytes tail
+    word(len.toString(16)) +
+    padded
+  );
+}
+
 export function buildCommand({ walletAddr, node, token, payee, nonce }) {
   return [
     `cast send ${walletAddr} \\`,
