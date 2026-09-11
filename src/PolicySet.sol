@@ -23,6 +23,25 @@ import { Reason } from "./Reason.sol";
 ///      stateful policy can never be a member; that is a deliberate trade, taken because a
 ///      composer that can silently leak a pooled budget is worse than one that cannot hold
 ///      one.
+///
+///      **`_ask` does not consult `PolicyApprovals`, and that is the ruling, not an
+///      oversight.** Revoking a *member* does not disable the set: the set keeps calling it.
+///      Three reasons:
+///
+///      1. `PolicyApprovals` approves the address the account POINTS AT. A `PolicySet` is its
+///         own address with its own approval, and its member list is immutable — so approving
+///         the set is approving the whole composition, once, with the members it was built
+///         with. There is no second thing to approve.
+///      2. A revoked member surfacing as `12 POLICY_FAILED` would read as "this policy is
+///         broken, replace it" and send the operator looking at the composer when the truth
+///         is somewhere else entirely.
+///      3. The brake still exists and is still permissionless: **revoke the SET.** `revoke`
+///         in `PolicyApprovals` is open to anyone, with no attestation, precisely so that
+///         stopping a rule needs no authority — and the account refuses a policy that is not
+///         approved, whatever its members say.
+///
+///      `test_revoking_a_member_does_not_disable_the_set` pins this, so the behaviour is
+///      deliberate rather than incidental.
 contract PolicySet is IPolicy {
     /// @dev Per-member gas ceiling. This does not protect the set from a runaway member —
     ///      with the account's own 200,000-gas budget for the whole call, enough runaway

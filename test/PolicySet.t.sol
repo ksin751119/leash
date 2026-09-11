@@ -5,6 +5,8 @@ import { Test } from "forge-std/Test.sol";
 import { PolicySet } from "../src/PolicySet.sol";
 import { IPolicy, SpendContext } from "../src/IPolicy.sol";
 import { Reason } from "../src/Reason.sol";
+import { PolicyApprovals } from "../src/PolicyApprovals.sol";
+import { MockAttester } from "../src/MockAttester.sol";
 import {
     AlwaysOK, AlwaysBlock, StatefulPolicy, RevertingPolicy,
     LongReturnPolicy, HugeReturnPolicy, GasBurnerPolicy
@@ -165,6 +167,29 @@ contract PolicySetTest is Test {
     function test_a_zero_member_is_refused() public {
         vm.expectRevert(PolicySet.ZeroMember.selector);
         new PolicySet(_clauses1(_one(address(0))));
+    }
+
+    // --- revoking a member is deliberately a no-op ---
+
+    /// **This pins a ruling; it is not a bug to be fixed.** `_ask` does not consult
+    /// `PolicyApprovals`, so revoking a member leaves the set running it. The supported brake
+    /// is to **revoke the SET** — `PolicyApprovals.revoke` is open to anyone and needs no
+    /// attestation, and the account refuses a policy that is not approved, so stopping the
+    /// composition needs no authority and no change here. The other two reasons are in
+    /// `PolicySet`'s contract doc: approval attaches to the address the account points at,
+    /// and a revoked member surfacing as `12 POLICY_FAILED` would send an operator looking
+    /// at the composer when the truth is elsewhere.
+    function test_revoking_a_member_does_not_disable_the_set() public {
+        PolicyApprovals list = new PolicyApprovals(new MockAttester());
+        list.approve(address(ok1), "a member, approved in its own right", 1, hex"c0ffee");
+        assertTrue(list.isApproved(address(ok1)));
+
+        PolicySet s = _set(_clauses1(_one(address(ok1))));
+        assertEq(s.check(_ctx()), Reason.OK);
+
+        list.revoke(address(ok1));
+        assertFalse(list.isApproved(address(ok1)), "the member really is revoked");
+        assertEq(s.check(_ctx()), Reason.OK, "the set keeps running it; revoke the SET instead");
     }
 
     // --- shape is readable and fixed ---
