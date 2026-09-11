@@ -50,7 +50,22 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
       }),
     });
     // Never put cfg.url in an error: a subgraph url can carry an API key.
-    if (!res.ok) return { ok: false, error: `subgraph returned HTTP ${res.status}` };
+    if (!res.ok) {
+      // 429 is reported distinctly because it is the one failure the agent can make worse.
+      // Studio rate-limits per deployment, and a loop that keeps asking every TICK_MS while
+      // being told to stop keeps the window from ever clearing. `retryAfterMs` tells the
+      // caller how long to hold off; nothing else in this module knows about time.
+      if (res.status === 429) {
+        const header = Number(res.headers?.get?.("retry-after"));
+        return {
+          ok: false,
+          rateLimited: true,
+          retryAfterMs: Number.isFinite(header) && header > 0 ? header * 1000 : null,
+          error: "subgraph is rate-limiting us (HTTP 429)",
+        };
+      }
+      return { ok: false, error: `subgraph returned HTTP ${res.status}` };
+    }
     body = await res.json();
   } catch (err) {
     // Never put cfg.url in an error: a subgraph url can carry an API key.

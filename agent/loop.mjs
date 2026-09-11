@@ -364,6 +364,11 @@ let ticking = false;
 // actually gets used everywhere, not just at the startup check.
 let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY;
 
+// Rate-limit backoff. Module state rather than a parameter: `advance` is the pure half and
+// has no business knowing the clock, and `tick` is the only caller that does.
+let backoffMs = TICK_MS;
+let backoffUntil = 0;
+
 export function publicState(s) {
   return {
     tick: s.tick,
@@ -395,6 +400,13 @@ export function publicState(s) {
 }
 
 async function tick() {
+  if (backoffUntil && Date.now() < backoffUntil) {
+    // Say so, rather than skipping silently: a page showing a frozen tick counter with no
+    // explanation is the thing this whole project is trying not to be.
+    const left = Math.ceil((backoffUntil - Date.now()) / 1000);
+    state.readError = `subgraph is rate-limiting us; retrying in ${left}s`;
+    return;
+  }
   if (ticking) return;
   ticking = true;
   try {
@@ -413,6 +425,18 @@ async function tick() {
       chainBlock = undefined; // lag becomes 0; the read itself still decides
     }
     const snapshot = await fetchSnapshot({ ...cfg, chainBlock });
+
+    // Back off when told to. Without this the loop answers a 429 by asking again TICK_MS
+    // later, forever, which is how a rate-limit window stops clearing — and on a stage it
+    // reads as "the demo is broken" rather than "we are being throttled". Doubles from one
+    // tick up to two minutes, and any successful read resets it.
+    if (snapshot?.rateLimited) {
+      backoffMs = Math.min(Math.max(snapshot.retryAfterMs ?? backoffMs * 2, TICK_MS), 120_000);
+      backoffUntil = Date.now() + backoffMs;
+    } else if (snapshot?.ok) {
+      backoffMs = TICK_MS;
+      backoffUntil = 0;
+    }
     const nowSec = Math.floor(Date.now() / 1000);
     const advanced = advance(state, snapshot, intents, nowSec, STANDARD_POLICY);
     state = advanced.state;

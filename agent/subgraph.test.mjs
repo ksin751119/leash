@@ -163,3 +163,37 @@ test("hostname in err.cause does not leak through redaction", async () => {
   assert.ok(!s.error.includes("api.example.com"), "the hostname must not leak");
   assert.ok(s.error.includes("ENOTFOUND"), "the error reason must be present");
 });
+
+// A 429 must be distinguishable from every other failure, because it is the only one the
+// agent can make worse by retrying. Studio rate-limits per deployment, so a loop that keeps
+// asking while being told to stop keeps its own window from clearing.
+const throttled = (retryAfter) => async () => ({
+  ok: false,
+  status: 429,
+  headers: { get: (h) => (h.toLowerCase() === "retry-after" ? retryAfter : null) },
+});
+
+test("a 429 is reported as rate-limiting, not as a generic HTTP failure", async () => {
+  const s = await fetchSnapshot(CFG, throttled(null));
+  assert.equal(s.ok, false);
+  assert.equal(s.rateLimited, true, "the caller must be able to tell this apart");
+  assert.match(s.error, /rate-limit/i);
+});
+
+test("a Retry-After header is honoured and converted to milliseconds", async () => {
+  const s = await fetchSnapshot(CFG, throttled("30"));
+  assert.equal(s.retryAfterMs, 30_000);
+});
+
+test("a missing or nonsense Retry-After leaves the caller to choose", async () => {
+  assert.equal((await fetchSnapshot(CFG, throttled(null))).retryAfterMs, null);
+  assert.equal((await fetchSnapshot(CFG, throttled("soon"))).retryAfterMs, null);
+  assert.equal((await fetchSnapshot(CFG, throttled("-5"))).retryAfterMs, null);
+});
+
+test("other HTTP failures stay generic and do not claim to be rate limits", async () => {
+  const s = await fetchSnapshot(CFG, stub({}, 502));
+  assert.equal(s.ok, false);
+  assert.equal(s.rateLimited, undefined);
+  assert.match(s.error, /502/);
+});
