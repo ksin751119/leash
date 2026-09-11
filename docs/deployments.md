@@ -58,11 +58,22 @@ Approved in tx
 see the caveat below for why that verifies. The description string is what the frontend and
 the demo page show as "what this rule is", which is why it is written for a person.
 
-**The ENS pointer was deliberately not moved.** `vendors.leash.eth` still resolves to
-`StandardPolicy`. Installing the set is a separate `setPolicy`, and it is the demo's finale
-for a reason worth recording: `world/demo.html` lights its face-scan button on the *agent's*
-predicted refusal, and under the composition the agent no longer predicts that refusal — the
-chain does. Swap the pointer before the face-scan beat and the button never appears.
+**The ENS pointer is moved as the demo's finale, and the ordering is load-bearing.**
+Installing the set is a separate `setPolicy`, deliberately run *after* the face-scan beat:
+`world/demo.html` lights its face-scan button on the **agent's** predicted refusal, and
+under the composition the agent no longer predicts that refusal — the chain does. Swap the
+pointer before the face-scan beat and the button never appears.
+
+It was moved for the first time on 2026-09-11 in
+[`0x53b16bbb…`](https://sepolia.etherscan.io/tx/0x53b16bbb90b3c32cd54b04096a65bf08cbaacd3785300f82842bd226327d6c0c),
+and one tick later the agent paid an intent it had been refusing for the previous 460 ticks
+([`0x0335f905…`](https://sepolia.etherscan.io/tx/0x0335f9058ea926397707ed30e6f8a652bd55ea2d1e6505bfce1cf2137def476e)).
+Nothing about the agent changed. Only the rule did.
+
+**Between rehearsals the pointer is reset to `StandardPolicy`**, so whichever policy
+`vendors.leash.eth` resolves to when you read this is whatever the last run left. Ask the
+chain rather than this document: `LeashResolver.resolve` on the node, or read the demo
+page's POLICY panel.
 
 That last line is not an oversight — but read the next paragraph before reading it as a
 security property.
@@ -84,12 +95,19 @@ not a fix), and that is the price of having removed it.
 
 The composition was dry-run against the live contract with the wallet's real rule
 (txLimit 500.000000, periodLimit 50.000000, window open all day) — these are `eth_call`s on
-the deployed `PolicySet`, not tests:
+the deployed `PolicySet`, not tests.
+
+**`SpendContext` is passed in whole, so these rows reproduce regardless of what the
+allow-list says today.** `payeeAllowed` is a field of the struct the account assembles and
+hands to the policy, so an `eth_call` supplies it directly; the third column below is the
+value passed, not a lookup. `0x…CafE0` has since been allow-listed by a real face scan, and
+the middle row still returns `6` when you pass `payeeAllowed: false` — which is the point of
+a policy being a total function of its inputs.
 
 | intent | amount | payee | returned |
 |---|---|---|---|
 | `retainer` | 5.00 | `0x…bEEF`, allow-listed | **0** `OK` — clause 1 fails on the cap, clause 2 passes |
-| `newvendor` | 5.00 | `0x…CafE0`, a stranger | **6** `PAYEE_NOT_ALLOWED` — both clauses fail, the **last** clause's reason is reported |
+| `newvendor` | 5.00 | `0x…CafE0`, `payeeAllowed: false` | **6** `PAYEE_NOT_ALLOWED` — both clauses fail, the **last** clause's reason is reported |
 | `apitopup` | 0.50 | `0x…f00D`, a stranger | **0** `OK` — clause 1 passes, clause 2 never runs |
 
 The third row is the whole argument for `OR` without anyone having to explain disjunctive
@@ -526,14 +544,34 @@ World's live API. The World action behind it, `expand-policy-demo1`
 unspent as of this deployment — it is reserved for the demo itself, because
 `max_verifications` cannot be raised once set. So the static calls above prove the *contract*
 correctly rejects a malformed or missing attestation and would accept a well-formed signature
-from `SIGNER` — not yet that a live Selfie Check produced that signature end to end. The first
-live proof of that full chain will be the demo.
+from `SIGNER`.
 
-**The three actions, and which scan each is for.** Every action allows exactly one
-verification, cannot be reset, and cannot be raised — so a scan is a consumable and there are
-three of them. Created and verified via `precheck` (which consumes nothing) on 2026-09-09;
-all three came back `status: active`, `max_verifications: 1`, `enable_face_check: true`,
-`can_user_verify: yes`.
+**The full chain ran for the first time on 2026-09-11, with a real face.** World App opened
+the camera, the proof returned `identifier: "selfie"`, the backend verified it at the v4
+endpoint and signed, and `allowPayee` landed in tx
+[`0x53d31784…`](https://sepolia.etherscan.io/tx/0x53d317849a08c1cdb0614028ef1a99d0b6f59ebf542b1b142afbac1dc5d7ca63).
+The agent noticed the widening on its next tick and paid the vendor it had been refusing, in
+[`0x00a9080f…`](https://sepolia.etherscan.io/tx/0x00a9080f4b649eb2d90d66edd6fc40a66c1012c50dacf5cb2168ca710a67a392),
+without anyone touching the agent.
+
+**The three actions, and which scan each is for.**
+
+> **Corrected 2026-09-11 — actions are not scarce, and `max_verifications` does not do what
+> we assumed.** This section used to say "a scan is a consumable and there are three of
+> them". Two measurements refute it. First, `precheck` **creates** an action rather than
+> looking one up: posting a randomly generated string returns a real, active action with its
+> own id and `external_nullifier`, so you can mint as many as you like without the Portal.
+> Second, re-verifying an already-used action still returned `success: true`, with the
+> message `"Proof verified successfully (nullifier reuse)"`. Whatever `max_verifications: 1`
+> limits, it is not "can this person produce another valid proof for this action" — and we
+> did not measure what it does limit, so we are not guessing. See `docs/world-feedback.md`
+> §6.3 and §7.6.
+>
+> The practical consequence is the opposite of what this table implied: **rehearse freely.**
+> The reserved actions below are a naming convention now, not a budget.
+
+Created and verified via `precheck` on 2026-09-09; all three came back `status: active`,
+`max_verifications: 1`, `enable_face_check: true`, `can_user_verify: yes`.
 
 | Action | Action id | Reserved for | Spent |
 |---|---|---|---|
@@ -556,6 +594,20 @@ Two more limits worth restating rather than letting the good news above imply pa
   that the RP signer signed this exact digest before its deadline — `describe()` on the
   contract says as much. The link to a live human is offchain: World App runs Selfie Check →
   World's v4 endpoint verifies the proof → the backend signs only after that call returns
-  HTTP 200. Even a successful proof reports `credential_type` and `verification_level` as
-  `"device"`, identical to a passcode-only session; the liveness guarantee lives in the app's
-  `enable_face_check` setting, not in the credential. See `docs/world-feedback.md`.
+  HTTP 200. **That last hop is where the guarantee lives, and as of 2026-09-11 it is
+  checked rather than assumed:** `world/attest.mjs` refuses to sign unless the result says
+  `identifier: "selfie"`, and refuses again unless the proof's `signal_hash` equals the
+  digest being widened.
+
+  > **Corrected 2026-09-11.** This bullet used to end: "Even a successful proof reports
+  > `credential_type` and `verification_level` as `"device"`, identical to a passcode-only
+  > session; the liveness guarantee lives in the app's `enable_face_check` setting, not in
+  > the credential."
+  >
+  > That was measured false. A proof reports `device` when a **device credential** is what
+  > was requested — which is all `@worldcoin/idkit-standalone` can request, since its
+  > `verification_level` vocabulary contains no face check. Requested properly, as a World
+  > ID 4.0 `SelfieCheckLegacy` credential through `@worldcoin/idkit-core`, the camera opens
+  > and the proof comes back `identifier: "selfie"`. The credential does say which one was
+  > exercised; we had never asked for the one we wanted. See `docs/world-feedback.md` §7.5
+  > and §7.9.

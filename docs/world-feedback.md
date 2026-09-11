@@ -470,6 +470,12 @@ significant gap, and it is the direct cause of the five days.
 
 ### 6.2 One undocumented request answered what five days of email could not
 
+> **Corrected 2026-09-11 — this endpoint is not a lookup.** We described it below as the
+> place you can *ask* what an app supports. It also **writes**: posting a randomly
+> generated action string returns a real, active action with its own id and
+> `external_nullifier`, created on the spot. See §7.6. Everything below about what it told
+> us stands; "read-only" was our inference, not something the endpoint claims.
+
 ```
 POST https://developer.worldcoin.org/api/v1/precheck/{app_id}
 Content-Type: application/json
@@ -504,23 +510,53 @@ Two observations:
 Configuration page, with an explicit state for *not enabled — request access*, linking to
 whatever the current request channel is.
 
-### 6.3 `max_verifications` defaults to 1, and that silently breaks hackathon demos
+### 6.3 `max_verifications` defaults to 1, and nothing in the product says what that means
+
+*Logged 2026-09-07. **Corrected 2026-09-11** — the claim this section originally made is
+quoted below rather than deleted.*
 
 The action we created defaulted to `max_verifications: 1` and
-`max_accounts_per_user: 1` — one verification per person, ever, for that action.
+`max_accounts_per_user: 1`. What we wrote here on 09-07 was that this default "silently
+breaks hackathon demos": the first verification succeeds, so nothing looks broken, and you
+discover it during judging when the second attempt fails against a spent nullifier.
 
-For a production sybil-resistance use case that default is correct. For **every**
-hackathon project it is wrong, and it fails in the worst possible way: the first
-verification succeeds, so nothing looks broken. You discover it while recording your
-demo video, or during live judging, when the second attempt fails and the nullifier is
-already spent and cannot be reset.
+**We had not measured that.** On 09-11 we did, and neither half of it held up.
 
-We caught this by reading the `precheck` response, not from any warning in the Portal.
+- **Re-verifying a consumed action still succeeded.** Scanning the same action a second
+  time returned
+  `{"success":true, …, "message":"Proof verified successfully (nullifier reuse)"}`.
+  A fresh action returned the same `success: true` without the parenthetical. So
+  `max_verifications: 1` did not cause the second verification to fail. We are not going to
+  say what it *does* limit — we did not measure that, and guessing is how this section went
+  wrong the first time.
+- **A developer is never actually stuck for want of an action.**
+  `POST https://developer.worldcoin.org/api/v1/precheck/{app_id}` with a randomly generated
+  action string we had never created — `zzz-b3d399cdd91670da` — came back with a real,
+  active action, `status: "active"`, complete with an `external_nullifier`:
 
-**Suggested fixes:** (a) surface `max_verifications` in the action-creation form with a
-one-line explanation of what "1" means for repeat testing; (b) for hackathon-issued apps,
-default it to unlimited; (c) at minimum, warn when an action's only verification has been
-consumed, instead of returning a generic failure.
+  ```json
+  {"action": {"id": "action_cc653b71e1a6682826ac3b5e5c0f908b",
+              "action": "zzz-b3d399cdd91670da",
+              "external_nullifier": "0x00cc653b71e1a6682826ac3b5e5c0f908b014b30fa0a2c1850892f924a89b926",
+              "max_verifications": 1, "max_accounts_per_user": 1, "status": "active"}}
+  ```
+
+  `precheck` mints actions on demand. The Portal is not required to create one.
+
+**What survives is a documentation complaint, and it is a real one.** Neither behaviour is
+documented anywhere we could find: not that a consumed action re-verifies and reports
+`(nullifier reuse)`, and not that `precheck` creates an action that does not exist. A
+developer who reads `max_verifications: 1`, cannot set it anywhere in the Portal (§7.6),
+and does not stumble onto the minting behaviour — we found `precheck` at all only by
+reasoning about what IDKit must call before rendering (§6.2) — will conclude they have one
+shot per action and no way to get another. That belief is wrong, and nothing in the product
+corrects it.
+
+**Suggested fixes, cheapest first:** (a) document what `max_verifications` counts and what
+happens when it is exhausted, next to the action-creation form; (b) document `precheck`,
+including that it returns an active action for an action string that does not exist yet
+(§6.2 asks for a `precheck` page for other reasons too); (c) surface the value in the
+Portal, where §7.6 could not find it.
 
 ### 6.4 The app configuration flow leads to an app-store listing, not to configuration
 
@@ -554,12 +590,32 @@ If one change comes out of this document, we would like it to be the one in 6.1.
 
 ## 7. Integrating it: what the four official sources each got wrong
 
-*Logged 2026-09-07, immediately after a successful end-to-end verification.
-`{"success": true, ..., "message": "Proof verified successfully"}`*
+*Logged 2026-09-07, immediately after a verification that returned
+`{"success": true, ..., "message": "Proof verified successfully"}`. **Corrected
+2026-09-11**; the original framing is stated and marked below rather than reworded away.*
 
-**Selfie Check works, and it does exactly what we needed.** This section is about the
-four hours between "the flag is on" and "the proof verified", almost all of which went to
-reconciling official sources that contradict each other.
+**What we claimed.** That the 09-07 run was a working Selfie Check — "Selfie Check works,
+and it does exactly what we needed" — and that this section therefore records the four
+hours between "the flag is on" and "Selfie Check verified".
+
+**What we ran on 09-11.** The two verifications in §7.5, and a read of
+`@worldcoin/idkit-standalone@2.2.5`'s published bundle (§7.9).
+
+**The truth.** The 09-07 proof was a **device** credential. We requested it through the
+standalone widget at `verification_level: "device"`, and that widget cannot request a face
+check at all — its bundle contains no Selfie Check (§7.9). Repeating that request shape on
+09-11 opened no camera and returned `identifier: "device"` (§7.5). So the four hours below
+were spent getting a *device* verification to the right endpoint, not a Selfie Check one.
+
+**What stands.** Everything in §7.1 through §7.4 and §7.7 — they are findings about the
+verify endpoint, the payload shape and `signal_hash` on the legacy 3.0 path, and none of
+them depended on which credential we had asked for. And Selfie Check does work and does
+exactly what we needed: the run that establishes that is the 09-11 one in §7.5, where the
+camera opened, a face record was enrolled, and the verify API returned
+`"identifier":"selfie"`, `"success":true`.
+
+This section is about those four hours, almost all of which went to reconciling official
+sources that contradict each other.
 
 ### 7.1 Four sources, four answers, and only a real proof can tell you which is right
 
@@ -640,41 +696,64 @@ verification disagreeing on the outcome.
 declined this verification". Even "The app couldn't complete verification" instead of
 "We couldn't complete your request" would point the developer at their own code.
 
-### 7.5 The proof does not say a face was checked
+### 7.5 "The proof does not say a face was checked" — corrected 2026-09-11: it does
 
-This is the finding with real security consequences, and we want to state it plainly
-because our project depends on it.
+*Logged 2026-09-07. **Corrected 2026-09-11**, after finally running the experiment that
+should have come first. We are stating the original claim and marking it wrong rather than
+quietly rewording the section into something that was never wrong, for the same reason the
+Summary keeps its earlier wrong versions.*
 
-A successful Selfie Check proof comes back as:
+**What we claimed on 09-07.** Our successful verification came back as
+`verification_level: "device"`, `credential_type: "device"` — no `selfie`, no `face`, no
+`face_check`. From that we inferred that a face *had* been checked and the proof simply
+failed to say so, and therefore that the assurance "a live human face was checked" was
+carried entirely by the app-level `enable_face_check` flag rather than by anything a
+verifier receives. We called it the finding with real security consequences and asked
+World to return the credential that was actually exercised.
 
-```json
-{ "verification_level": "device", "credential_type": "device", ... }
-```
+**What we ran on 09-11.** Two verifications, same app, `enable_face_check: true`,
+`is_staging: false`, each against a brand-new action:
 
-There is no `selfie`, no `face`, no `face_check`. **The proof is byte-shaped identically
-to one from `deviceLegacy`** — the credential the docs mark deprecated and tell you to
-replace with Selfie Check.
+1. Requested through `@worldcoin/idkit-standalone` at `verification_level: "device"`,
+   action `expand-policy-facetest-1`. The human who scanned reports that **World App
+   opened no camera** — it performed a device verification. World's verify API returned
+   `"protocol_version":"3.0"`, `"results":[{"identifier":"device","success":true}]`.
+2. Requested through `@worldcoin/idkit-core`'s credential request `selfieCheckLegacy()`,
+   with `allow_legacy_proofs: false`, action `expand-policy-facetest-2`. **The front camera
+   opened, took a photo, and enrolled a face record** (first scan only; the enrollment is
+   one-time). World's verify API returned `"protocol_version":"3.0"`,
+   `"results":[{"identifier":"selfie","success":true}]`.
 
-So the assurance "a live human face was checked" is carried **entirely** by the app-level
-`enable_face_check` flag, not by anything in the credential the verifier receives. A
-backend holding a verified proof cannot tell the two apart. Concretely, that means:
+**The truth: the observation was right and the inference was wrong.** No face was checked
+on 09-07 — not because the proof omitted it, but because we never asked for one, and the
+standalone widget we asked through cannot ask for one at all (§7.9). `enable_face_check:
+true` on the app does not turn a `device` request into a face check. When a face *is*
+checked, the proof says so: the `identifier` is `"selfie"`, not `"device"`.
 
-- The guarantee is a property of *app configuration*, revocable by whoever administers the
-  app, not a property of the proof.
-- Nothing in the verify response lets a relying party assert "this specific approval was
-  backed by a face check" — which is precisely the claim an audit log would need.
-- Two apps, one with the flag and one without, produce indistinguishable proofs at the
-  same `verification_level`.
+So the fix we asked for at the end of this section already exists. **World's API reported
+the truth at every step**, and we read its accurate answer to the wrong question as a
+missing security property. The confusion was ours; the surface that made it easy to fall
+into is §7.9.
 
-For **Leash** this is load-bearing: our whole design is that *expanding* an agent's
-spending authority requires a live human, while *reducing* it never does. We can state
-that the expansion path runs through Selfie Check, and we do — but we cannot prove it from
-the proof alone, and our documentation says so rather than overclaiming.
+**What this changed in our own code.** `buildSelfieVerifyPayload` now refuses any result
+whose `identifier` is not `"selfie"` — a device credential is not a face — pinned by a
+mutation-tested case. That check is only possible *because* the proof distinguishes them.
+It also refuses a result whose `signal_hash` is not the one we computed for the digest: the
+4.0 result carries its own `signal_hash`, so a caller could present a proof genuinely bound
+to signal X and claim digest Y. World cannot catch that — the proof really does match its
+own `signal_hash` — so the binding is checked on our side and the value we forward is the
+one we computed.
 
-**Suggested fix:** return the credential that was actually exercised. If `enable_face_check`
-caused a face check, say `face_check` (or set a boolean alongside `verification_level`).
-Verifiers should not have to trust out-of-band configuration for the security property that
-is the entire point of the credential.
+**One thing worth recording for §7.1's benefit:** the 4.0 `SelfieCheckLegacy` result still
+reports `protocol_version: "3.0"`, and it arrives in the same envelope shape the v4 verify
+endpoint takes.
+
+**Suggested fix, now that the API is not the problem:** say this on the credential page.
+One sentence stating that Selfie Check returns `identifier: "selfie"`, and that a `device`
+credential requested under an app with `enable_face_check` enabled is still a device
+credential, would have stopped us writing four days of security analysis about a proof we
+never requested. A second sentence telling relying parties to check `identifier` rather
+than trusting app configuration would document the check we ended up writing anyway.
 
 ### 7.6 `max_verifications` cannot be changed after an action is created
 
@@ -683,10 +762,18 @@ Following on from §6.3: we looked for the setting. It is not on the action, not
 action we created for testing also came out `max_verifications: 1`. As far as we can find,
 the Portal provides no way to set or change it.
 
-The workaround, for anyone reading this with the same problem: **`max_verifications` is
-scoped to the action, not to the person.** Creating a fresh action resets it. That is what
-we will do before recording our demo. It works, but it means the nullifier changes, so
-anything the integration persisted against the old nullifier is orphaned.
+The workaround we recorded on 09-07 was: create a fresh action before recording the demo.
+
+*Corrected 2026-09-11.* Two things about that paragraph need amending, both measured in
+§6.3. First, the failure it works around did not reproduce — re-verifying a consumed action
+returned `success: true` with `(nullifier reuse)`. Second, the workaround is cheaper than we
+described: a fresh action does not require the Portal at all, because `precheck` returns an
+active action for any action string you send it.
+
+What still stands is the part this section is actually about — the Portal offers no way to
+set or change `max_verifications` — and the caveat that a fresh action carries a fresh
+`external_nullifier`, so anything the integration persisted against the old nullifier is
+orphaned.
 
 ### 7.7 `signal_hash` has two hashing branches depending on the signal's shape, and §7.3 only documented one
 
@@ -782,10 +869,11 @@ where the CDN fails; it could not help here, because IDKit *had* loaded and the 
 2. **Reject unknown keys and unknown values loudly**, naming the four accepted values in
    the message. The current message names what was wrong but not what would have been
    right.
-3. **Say in the Selfie Check docs which `verification_level` the standalone widget needs.**
-   The React preset's name is the discoverable one, and it is not a value any API accepts.
-   The value that works is `device` — which, as §7.5 notes, also reads as though it were
-   the wrong one.
+3. **Say in the Selfie Check docs which package can request Selfie Check at all.** The
+   React preset's name is the discoverable one, and it is not a value any `verification_level`
+   accepts. *Corrected 2026-09-11:* this point originally read "the value that works is
+   `device`". There is no `verification_level` that works — §7.9 measures why. `device` makes
+   the widget run, but it requests a device credential and opens no camera (§7.5).
 
 This is the third item in this document (with §7.2 and §7.5) where the React path's
 vocabulary and the wire/standalone path's vocabulary differ silently. One table mapping
@@ -793,29 +881,167 @@ preset → `verification_level` → returned `credential_type` would close all t
 
 ---
 
+### 7.9 Selfie Check cannot be requested from `@worldcoin/idkit-standalone` at all
+
+*Logged 2026-09-11. This is the root cause of §7.5 and §7.8, and the thing we would have
+paid most to read in the docs.*
+
+`@worldcoin/idkit-standalone@2.2.5` — the CDN widget, and the **latest** published version
+(npm dist-tags: `latest: 2.2.5`) — **contains no Selfie Check.** Grepping its published
+bundle for any form of the word "selfie" returns zero matches.
+
+Its only credential vocabulary is `verification_level`, and the function that maps it
+accepts exactly four values before throwing:
+
+```js
+var verification_level_to_credential_types = (verification_level) => {
+  switch (verification_level) {
+    case "device":          return ["orb", "device"];
+    case "document":        return ["document", "secure_document", "orb"];
+    case "secure_document": return ["secure_document", "orb"];
+    case "orb":             return ["orb"];
+    default: throw new Error(`Unknown verification level: ${verification_level}`);
+  }
+};
+```
+
+None of the four is a face check. There is no value you can pass this widget that produces
+one, and §7.5 confirms the behaviour end to end: `device`, under an app with
+`enable_face_check: true`, opens no camera and returns `identifier: "device"`.
+
+**Selfie Check lives in a different package and a different vocabulary.**
+`@worldcoin/idkit-core@4.2.4` defines it as a **credential request**, not a verification
+level:
+
+```js
+function deviceLegacy(opts = {})      { return { type: "DeviceLegacy",      signal: opts.signal }; }
+function selfieCheckLegacy(opts = {}) { return { type: "SelfieCheckLegacy", signal: opts.signal }; }
+```
+
+`@worldcoin/idkit` (the React package, v4.2.3) re-exports these from `idkit-core`; the
+standalone widget does not have them. A non-React path does exist — `idkit-core` ships a
+browser global build (`dist/idkit.global.js`, setting `globalThis.IDKit`) exposing
+`request`, `createSession`, `proveSession`, `CredentialRequest`, `any`, `all`, `orbLegacy`,
+`deviceLegacy`, `selfieCheckLegacy`, `proofOfHuman`, `passport`, `mnc` and
+`identityCheck`. It loads `idkit_wasm_bg.wasm` **relative to itself**, which anyone serving
+it from a CDN has to account for. Its request API:
+
+```js
+const request = await IDKit.request({ app_id, action, rp_context, allow_legacy_proofs })
+  .preset(IDKit.selfieCheckLegacy({ signal }))
+// request.connectorURI      — a URI for the page to render as a QR itself
+// request.pollUntilCompletion()
+```
+
+Note what that means for the host page: there is no widget and no modal. You render
+`connectorURI` as a QR code yourself and poll for completion. That is a different
+integration shape from the one the standalone quickstart teaches, not a different argument
+to the same call.
+
+**First, the part the docs get right, because it matters to what we are actually asking
+for.** The credentials page names the correct packages: it tells you to import
+`selfieCheckLegacy` from `@worldcoin/idkit-core` (JavaScript) or `@worldcoin/idkit`
+(React). We are not reporting that the docs sent us to the wrong place. We are reporting
+that **a developer already standing somewhere else gets no signal at all.**
+
+`@worldcoin/idkit-standalone` is its own documented integration path — the vanilla-JS,
+drop-in-a-CDN-script option, which is where a project without React starts. Nothing on that
+path says Selfie Check is out of reach from it. The widget's options object is the only
+place a credential is named, so `selfieCheckLegacy` — the one handle you have been given —
+appears to belong there. And passing it fails *after* `IDKit.open()` has mounted the widget
+and the dialog has rendered, in an unawaited promise, with no `onError`:
+
+```
+Uncaught (in promise) Error: Unknown verification level: selfieCheckLegacy
+    at verification_level_to_credential_types (index.global.js:14818)
+    at createClient (index.global.js:14955)
+```
+
+§7.8 describes what that looks like from the operator's side. The point here is the one
+step earlier: there was never a correct value to pass. A developer can only discover that
+by reading the bundle, which is what we ended up doing.
+
+**And here is the sentence that actively kept us on the wrong path,** which we want to be
+precise about because the statement itself is true. The credential page says:
+
+> "The preset currently uses World ID 3.0; World ID 4.0 support is not yet available."
+
+That is correct — E5's result reports `protocol_version: "3.0"`. But **"World ID 3.0" is
+describing the proof, while the thing you cannot reach without 4.0 is the API shape.**
+Selfie Check is requested through the 4.0-style surface (`IDKit.request({ ..., rp_context })
+.preset(...)`) and comes back as a 3.0-protocol proof. Two axes, both documented honestly,
+in different places.
+
+Reading "uses World ID 3.0" while holding a 3.0-speaking widget, we concluded the widget
+was the right tool. It is the most reasonable wrong conclusion available, and nothing
+corrected it: the widget accepted our call, opened its modal, and returned a valid proof
+for a different credential.
+
+**Suggested fixes, cheapest first:**
+
+1. **One sentence, but on the `idkit-standalone` side rather than the credentials page.**
+   The credentials page already names `idkit-core` and `idkit`; what is missing is the
+   other direction. `@worldcoin/idkit-standalone`'s own documentation should say which
+   credentials it *cannot* request — that its `verification_level` vocabulary has no face
+   check in it, and that Selfie Check requires `idkit-core`. A reader on the credentials
+   page is already being helped. A reader on the standalone page is not.
+2. **A table mapping preset → package → `verification_level` (where one exists) →
+   returned `identifier`.** §7.8 asked for a version of this table for a different reason;
+   it is the same table, and it closes §7.2, §7.5, §7.8 and this section together.
+3. **Show the non-React path.** `idkit-core`'s global build, `request().preset(...)`,
+   `connectorURI`, `pollUntilCompletion()` — including the detail that the WASM is fetched
+   relative to the script. Not every integration is React, and the standalone widget is the
+   documented answer for those that are not.
+4. **Make `idkit-standalone` reject the preset name by name.** Its current message names
+   what was wrong but not what would have been right; "`selfieCheckLegacy` is a credential
+   request from @worldcoin/idkit-core, not a verification level" would have ended this in
+   one page load.
+
+**Positive feedback, from the same day's work:** wiring the `idkit-core` path means
+supplying `rp_context`, and `@worldcoin/idkit-server` has an official helper for it —
+`signRequest({ signingKeyHex, action?, ttl? })` returning `{ sig, nonce, createdAt,
+expiresAt }`, alongside `computeRpSignatureMessage`. Its own doc comment states the exact
+byte layout:
+
+```
+version(1) || nonce(32) || createdAt_u64_be(8) || expiresAt_u64_be(8) || action?(32)
+```
+
+signed as an EIP-191 message, with session proofs omitting `action` and uniqueness proofs
+appending it. It is pure JS with no WASM. We want to record this explicitly because it is
+the opposite of everything else in this section: the message format is World's, stated by
+World, and we did not have to reverse-engineer it from a bundle to trust it. That is how
+the rest of the credential surface should feel.
+
+---
+
 ## Summary
 
-*Rewritten 2026-09-07, after Selfie Check verified end to end. Two earlier versions of
-this summary were wrong in ways worth keeping visible: the first said we were blocked by
-"an unbounded, un-SLA'd wait on a hard access gate"; the second said the gate had never
-been closed. Both were about access. The real story is that **nothing was ever gated
-against us — every hour we lost went to surfaces that could not tell us what was true.**
-The corrections are the most useful thing in this document.*
+*Rewritten 2026-09-07. Amended 2026-09-11. Three earlier versions of this summary were
+wrong in ways worth keeping visible: the first said we were blocked by "an unbounded,
+un-SLA'd wait on a hard access gate"; the second said the gate had never been closed; the
+third said a Selfie Check proof cannot tell a verifier that a face was checked. The first
+two were about access, and the real story there is that **nothing was ever gated against
+us — every hour we lost went to surfaces that could not tell us what was true.** The third
+was not about World at all: we had never requested a face check, and the proof told us so
+accurately (§7.5). The corrections are the most useful thing in this document.*
 
 **Selfie Check itself is not the problem anywhere in this document.** It does precisely
 what our project needs: a medium-assurance human check that gates privilege *expansion*
 in an AI-agent wallet, without demanding an Orb from someone approving a payment on their
-phone. We chose it on the merits, it verified on the first attempt that reached the right
-endpoint, and we would choose it again.
+phone. We chose it on the merits, it does exactly what it says once you request the right
+credential, and we would choose it again.
 
 **What worked well:** the 3.0-vs-4.0 version story is stated plainly rather than left
 implicit; the credential's limits are described honestly, including what it explicitly
 does not guarantee; the Sandbox coverage matrix and the disclosed known limitations saved
 us from re-reporting them; `.md` URL suffixes make the docs greppable; v4's error messages
 are specific and actionable (`attribute` naming the offending field is genuinely good);
-and the Portal's **Install World ID Sandbox** panel is the best-built thing we
-touched — clear steps, visible pending state, tells you what happens next. It is exactly
-the pattern the credential gate needs and does not have.
+`@worldcoin/idkit-server`'s `signRequest` helper means the RP-context message format is
+World's own, stated in World's own code, rather than something an integrator reverse-engineers
+from a bundle (§7.9); and the Portal's **Install World ID Sandbox** panel is the best-built
+thing we touched — clear steps, visible pending state, tells you what happens next. It is
+exactly the pattern the credential gate needs and does not have.
 
 **What cost us the most time,** in order:
 
@@ -840,28 +1066,40 @@ the pattern the credential gate needs and does not have.
 6. **A relying-party 500 is reported to the user as "Verification Declined"**, sending you
    to investigate World instead of your own stack trace — and the phone and the browser can
    disagree about whether the same verification succeeded. (§7.4)
-7. `max_verifications: 1` is a silent default that breaks the second demo run, is not
-   settable anywhere we can find, and is discoverable only through an undocumented API.
-   (§6.3, §7.6)
-8. **`selfieCheckLegacy` is a React preset name, not a `verification_level` value**, and
-   passing it to the standalone widget throws *after* the modal has opened — an empty
-   dialog, no `onError`, and a host page whose state has already advanced. The failure
-   reads as "the QR code did not appear". (§7.8)
+7. **`max_verifications: 1` is an undocumented default whose behaviour is also
+   undocumented.** It is not settable anywhere in the Portal and is visible only through an
+   undocumented API. We assumed it burned the second demo run; re-verifying a consumed
+   action in fact returned `success: true` with `(nullifier reuse)`, and `precheck` hands
+   you a fresh active action for any string you send it. Neither behaviour is written down,
+   so a developer reasonably concludes they are stuck when they are not. (§6.3, §7.6)
+8. **Selfie Check cannot be requested from `@worldcoin/idkit-standalone` at all**, and the
+   only name the docs give you — the React preset `selfieCheckLegacy()` — is not a value
+   any `verification_level` accepts. The widget's bundle contains no Selfie Check; its four
+   accepted values do not include a face check; and passing the preset name throws *after*
+   the modal has opened — an empty dialog, no `onError`, a host page whose state has already
+   advanced, and a failure that reads as "the QR code did not appear". Reaching Selfie Check
+   means `@worldcoin/idkit-core` and a 4.0 credential request. (§7.8, §7.9)
 
-**And one finding that is not about time at all** (§7.5): a Selfie Check proof arrives as
-`verification_level: "device"`, `credential_type: "device"` — **indistinguishable from the
-deprecated `deviceLegacy` credential.** The assurance that a live human face was checked
-rests entirely on the app-level `enable_face_check` flag, not on anything in the proof.
-A verifier cannot assert "this approval was backed by a face check", which is exactly the
-claim an audit trail needs. For a project whose security model is "expanding an agent's
-spending power requires a live human", that gap is the difference between a guarantee and
-a configuration setting. We document it honestly rather than overclaim.
+**And one correction we think is worth more than any item above** (§7.5). This document
+argued for four days that a Selfie Check proof arrives indistinguishable from a
+`deviceLegacy` one, and that the assurance "a live human face was checked" therefore rested
+on app configuration rather than on the proof. That was wrong. On 09-11 we measured both
+paths against the same app with `enable_face_check: true`: a `device` request opens no
+camera and returns `identifier: "device"`; a `selfieCheckLegacy()` credential request opens
+the camera, enrolls a face, and returns `identifier: "selfie"`. **World's API reported the
+truth at every step** — we had asked for the wrong credential and read its accurate answer
+as an omission. Our backend now refuses any result whose `identifier` is not `"selfie"`. We
+have left the original claim in §7.5 marked rather than edited away, because the mistake is
+the useful part: the only name the docs offer for Selfie Check belongs to a vocabulary the
+widget we were using does not speak (§7.9).
 
 **The two changes we would ask for:**
 
 1. **Show a developer, in the Developer Portal, which credentials their app can use.** The
    data is already public and unauthenticated — it simply is not rendered. (§6.1)
-2. **Return the credential that was actually exercised.** If `enable_face_check` caused a
-   face check, say so in the proof. Verifiers should not have to trust out-of-band
-   configuration for the security property that is the entire point of the credential.
-   (§7.5)
+2. **Say where Selfie Check can actually be requested from.** The one name the docs give a
+   reader, `selfieCheckLegacy()`, is a React preset; `@worldcoin/idkit-standalone` contains
+   no Selfie Check at all, and none of its four `verification_level` values is a face check.
+   One sentence saying Selfie Check is a 4.0 credential request from
+   `@worldcoin/idkit-core`, plus a table mapping preset → package → returned `identifier`,
+   closes this and three other findings in this document. (§7.9)

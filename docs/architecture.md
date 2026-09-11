@@ -37,6 +37,7 @@ AGENT calls spend(token, payee, amount) on the WALLET
   ├─ 3. resolve the policy address through ENS     → reason 3
   ├─ 4. is that policy on the approval list?       → reason 4
   ├─ 5. ask the policy: check(SpendContext)        → reason 5-9, 11
+  │     that policy may itself be a composition of policies
   │
   ├─ blocked → emit SpendBlocked, return normally, MOVE NO MONEY
   └─ OK      → write the ledger, transfer, emit SpendExecuted
@@ -53,7 +54,7 @@ recognises, nothing more.
 |---|---|---|
 | **Control** | `LeashRegistry`, `LeashResolver`, `PolicyApprovals` | ADMIN, plus a human attestation for anything that widens |
 | **Execution** | `LeashAccount` (an EIP-7702 delegate impl) | The wallet itself, per-wallet, in the wallet's own storage |
-| **Judgement** | `StandardPolicy` and any other `IPolicy` | Nobody at runtime — it is `pure` and reads only its inputs |
+| **Judgement** | `StandardPolicy`, `MicroPaymentPolicy`, `PolicySet`, and any other `IPolicy` | Nobody at runtime — all three deployed policies are `pure` or `view` and read only their inputs |
 
 The separation is what makes the claim hold. The wallet has no control-plane
 authority, so a compromised policy can at most drain that one wallet; it cannot
@@ -175,12 +176,76 @@ pooled budget" needs no account change at all.** Because a policy may keep its o
 storage, that requirement collapses into a single contract holding the shared ledger,
 with three agents' ENS records pointing at the same address. No new contract type, no
 new account field, no new event — and reason code 11 is already reserved for it. Such
-a `SharedBudgetPolicy` is a design consequence, not shipped code: only
-`StandardPolicy` is implemented and deployed.
+a `SharedBudgetPolicy` is a design consequence, not shipped code. The three policies that
+are implemented and deployed — `StandardPolicy`, `MicroPaymentPolicy` and `PolicySet` — keep
+no ledger at all.
 
 The cost is stated in the interface: a policy with side effects **may only write its
 ledger when it returns `OK`**. The account does not revert when it blocks, so a
 policy that debits and *then* returns "over limit" leaks the shared budget forever.
+
+### A policy may itself be a composition
+
+`StandardPolicy` ANDs every check together, and the payee allow-list is one of them, so a
+fifty-cent API top-up to an address nobody vetted is refused exactly as hard as a five-dollar
+payment to a stranger. Every corporate card already answers that with an `OR`, and
+`PolicySet` is that `OR` onchain: **AND inside a clause, OR between clauses**, in disjunctive
+normal form with no nesting — `(A ∧ B) ∨ (C ∧ D)` covers every rule anyone has asked for,
+and nesting would need a parser onchain.
+
+Nothing else in the system changes to accommodate it, because `PolicySet` implements
+`IPolicy` itself: the account calls it through the same interface, ENS points at it through
+the same record, and the approval list gates it through the same single entry. The deployed
+composition is two clauses:
+
+```
+clause 1 = [ MicroPaymentPolicy ]   0x0142BE41…19Df, CAP = 1.00 USDC
+                OR
+clause 2 = [ StandardPolicy ]       the full rules, payee allow-list included
+```
+
+`PolicySet` at `0xec45e967…2490`; the pointer at `vendors.leash.eth` was moved to it on
+2026-09-11 and the payment path ran through it end to end that day.
+
+Three properties are load-bearing, and each is documented in the contract itself rather than
+only here:
+
+- **Members are reached by `staticcall`, not `call`.** The paragraph above is the reason: a
+  member may write its ledger when it returns `OK`, and under an `OR` a member can return
+  `OK`, write, and then have a sibling clause fail — leaving the write standing, with no
+  revert to roll it back and no way for the composer to undo it. `staticcall` removes the
+  hazard by construction instead of warning about it. The price is stated plainly: a stateful
+  policy can never be a member, so the `SharedBudgetPolicy` sketched above could not be
+  composed this way.
+- **When no clause passes, the *last* clause's reason is reported** — and within a clause,
+  its first failing member's. Clauses read as *exception* `OR` *general rule*, so the last
+  clause is the general rule and its code is the one an operator can act on. Reporting the
+  first clause's code would tell an agent "over the micro cap" when the thing to fix is "get
+  this payee vetted". One code is never routed around: a member answering `12 POLICY_FAILED`
+  returns immediately, because letting a later clause rescue a set containing a broken member
+  would hide the breakage.
+- **The member list is fixed at construction, with no setter**, and a well-formed set is the
+  only kind that can exist — an empty set or an empty clause is refused in the constructor,
+  because a clause with no members passes vacuously and one vacuous clause returns `OK` for
+  every payment ever submitted. A different composition is therefore a different address,
+  which needs its own entry in the approval list — by design a fresh human attestation, and
+  in this deployment a mocked one; see *What this does not claim*.
+
+`_ask` deliberately does **not** consult `PolicyApprovals` for members: approving the set is
+approving the whole composition once, with the members it was built with, and there is no
+second thing to approve. The brake is unchanged and still permissionless — **revoke the
+set**, and the account refuses it whatever its members say. Members are also called under a
+60,000-gas ceiling, which is an eligibility limit rather than a defence: a policy costing
+more than that works fine as the account's direct policy and reads as `POLICY_FAILED` inside
+a set.
+
+`MicroPaymentPolicy` is the exception half and **is not safe alone** — its own `describe()`
+says `NOT SAFE ALONE` on chain, because alone it would allow any small payment to anyone. It
+relaxes exactly one thing, the payee allow-list; the token allow-list, the period budget and
+the time window are all still checked, and its `CAP` does not repeal the owner's own
+per-transaction limit — both hold, so the effective ceiling is the lower of the two. Under an
+`OR`, a check the exception omits is a check the composition no longer has for any sub-cap
+payment, which is why the omission is one field and it is named.
 
 ### Two guarantees the account has to hold
 
@@ -256,11 +321,20 @@ loading it means deploying a fresh `PolicyApprovals` and re-approving every poli
 it. Stated here rather than fixed, because the asymmetry is the honest state of the deploy:
 the gate a judge will watch on camera is real, and the one behind it is not yet.
 
-**A World ID proof cannot prove it came from Selfie Check.** A successful proof
-returns `credential_type: "device"` — identical to the deprecated `deviceLegacy`.
-"A real human's face was checked" exists only in the app's `enable_face_check`
-setting, not in the proof. Leash's human-in-the-loop guarantee is therefore a
-**configuration-level** guarantee, not a cryptographic one.
+**A World ID proof does say which credential was exercised — and this document claimed the
+opposite until 2026-09-11.** It said a successful proof returns `credential_type: "device"`
+whatever happened in front of the camera, and concluded that the human-in-the-loop guarantee
+was configuration-level rather than cryptographic. Measured: a World ID **4.0
+`SelfieCheckLegacy`** request opens the front camera and comes back `identifier: "selfie"`,
+and World's verify endpoint echoes that identifier. The old `device` reading came from asking
+for a device credential — which was the only thing the widget in use could ask for. The
+backend now refuses to sign an attestation for any other identifier, so "this widening was
+approved by a face" is checked rather than assumed.
+
+What stays narrow is the onchain half. `WorldAttester.verify` proves that the RP signer
+signed this exact digest before its deadline, not that a human did anything; the link to a
+face is the offchain sequence — Selfie Check → World's verify endpoint → the backend signs
+only after that call returns HTTP 200.
 
 **Gas is outside the policy's jurisdiction.** The rules govern token transfers, but
 the wallet pays gas in ETH and no policy can see it. Strictly, "100 USDC per day" is
@@ -287,8 +361,8 @@ objection no longer holds — but it is an address, and that is what "approved" 
 | `src/Reason.sol` | The frozen reason codes |
 | `src/LeashLens.sol` | "Is the leash still on?" — reads the 23-byte delegation |
 | `src/IAttester.sol`, `src/MockAttester.sol`, `src/WorldAttester.sol` | The human-attestation gate; `WorldAttester` gates the account's widening, `MockAttester` still gates the approval list |
-| `src/PolicySet.sol` | Composition: AND inside a clause, OR between clauses, members reached by `staticcall` |
-| `src/MicroPaymentPolicy.sol` | The exception half of `(small payment) OR (the full rules)` — never safe alone |
+| `src/PolicySet.sol` | Composition: AND inside a clause, OR between clauses; members reached by `staticcall`, immutable member list, and the **last** clause's reason reported when none passes |
+| `src/MicroPaymentPolicy.sol` | The exception half of `(small payment) OR (the full rules)` — relaxes the payee allow-list and nothing else; never safe alone |
 | `subgraph/` | Indexes the control plane and every spend attempt, blocked ones included |
 | `world/` | The Selfie Check backend, verified end-to-end offchain |
 
@@ -297,6 +371,7 @@ objection no longer holds — but it is an address, and that is what "approved" 
 1. This file.
 2. [`deployments.md`](deployments.md) — run the four `cast` calls; watch the walk
    resolve, then break it.
-3. `src/LeashAccount.sol` — `spend` and `resolvePolicy`.
+3. `src/LeashAccount.sol` — `spend` and `resolvePolicy`; then `src/PolicySet.sol` for the
+   composition and why its members are reached by `staticcall`.
 4. [`world-feedback.md`](world-feedback.md) — a dated running log of the World
    integration, written as it happened and not flattering.

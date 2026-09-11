@@ -96,7 +96,10 @@ are worth knowing, because each one is a trap that was walked into and backed ou
   operator can act on. Reporting the first clause's code would tell an agent "over the micro
   cap" when the thing to fix is "get this payee vetted".
 - **The member list is fixed at construction, with no setter.** A different composition is a
-  different address, which is a different entry in the approval list, which costs a face scan.
+  different address, which needs its own entry in the approval list. By design that entry
+  costs a face scan; in *this* deployment `PolicyApprovals` is wired to `MockAttester`, so
+  today it costs a transaction — see the caveat below, which we would rather repeat than let
+  you infer a lock the addresses do not back.
 
 `MicroPaymentPolicy` is the exception half and **is not safe alone** — its own `describe()`
 says so on chain. Alone it would allow any small payment to anyone.
@@ -459,7 +462,7 @@ unedited:
 | [`docs/superpowers/plans/`](docs/superpowers/plans) | *(counted above)* | Task-by-task implementation plans |
 | [`docs/superpowers/sdd/`](docs/superpowers/sdd) | 4,791 | The working ledgers: every dispatch, every review, every ruling |
 
-100 of the 106 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
+138 of the 144 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
 first `.gitignore` commit and five documentation commits from 2026-09-09, made while the
 trailer format was being changed mid-session — an omission, not a claim of authorship.
 
