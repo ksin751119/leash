@@ -189,8 +189,7 @@ const server = createServer(async (req, res) => {
             identifier: proof.credential_type ?? proof.verification_level,
             signal_hash: proof.signal_hash ?? hashSignal(signal ?? ""),
             merkle_root: proof.merkle_root,
-            nullifier: result.responses[0].nullifier,
-        credential: result.responses[0].identifier,
+            nullifier: proof.nullifier_hash,
             proof: proof.proof,
           },
         ],
@@ -288,7 +287,12 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         attestation,
         deadline,
-        nullifier: proof.nullifier_hash,
+        nullifier: result.responses[0].nullifier,
+        // Echoed so the page can show WHICH credential gated this widening. It is always
+        // "selfie" by the time we get here - buildSelfieVerifyPayload refuses anything
+        // else - but saying it out loud is the point: for two days this said "device" and
+        // nobody was looking.
+        credential: result.responses[0].identifier,
       });
     }
 
