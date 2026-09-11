@@ -69,6 +69,22 @@ contract LeashAccount {
     bytes32 private constant PAYEE_TYPEHASH = keccak256(
         "AllowPayee(address impl,bytes32 node,address token,address payee,uint256 nonce)"
     );
+    /// @dev Distinct from `PAYEE_TYPEHASH` on purpose, and it carries the nullifier. Two
+    ///      reasons, both load-bearing. The struct name differs, so an attestation issued
+    ///      for the `onlySelf` path can never be replayed against the face path or the
+    ///      other way round. And the nullifier is INSIDE the signed struct, so the RP's
+    ///      signature is a statement about *whose* face approved this widening — not just
+    ///      that some face did.
+    bytes32 private constant PAYEE_FACE_TYPEHASH = keccak256(
+        "AllowPayeeByFace(address impl,bytes32 node,address token,address payee,uint256 nonce,uint256 nullifier)"
+    );
+    /// @dev Carries BOTH nullifiers. The RP signs "the face currently registered here
+    ///      approved handing this wallet to that one", which is a different sentence from
+    ///      "some face approved something" — and the `previous` field is what makes it
+    ///      un-reusable once the registered value has moved on.
+    bytes32 private constant REBIND_TYPEHASH = keccak256(
+        "RebindOwnerFace(address impl,uint256 previous,uint256 next,uint256 nonce)"
+    );
     bytes32 private constant RESTORE_TYPEHASH = keccak256(
         "RestoreAgent(address impl,address agent,bytes32 node,string label,uint256 nonce)"
     );
@@ -103,6 +119,11 @@ contract LeashAccount {
     );
     event PayeeAllowed(bytes32 indexed node, address indexed payee, bytes32 attestationHash);
     event PayeeRemoved(bytes32 indexed node, address indexed payee, address indexed by);
+    /// @dev The nullifier is not indexed and is emitted in the clear. It is already public
+    ///      — it travels in every proof — and it is anonymous: it identifies a (person,
+    ///      action) pair to anyone who can already see this wallet's transactions, and
+    ///      nothing else.
+    event OwnerFaceSet(uint256 previous, uint256 current, address indexed by);
 
     /// @dev `node` is deliberately not indexed — the three indexed slots go to `agent` /
     ///      `payee` / `token`, the fields subgraph queries filter on most (see
@@ -143,6 +164,8 @@ contract LeashAccount {
     error NotTighter();
     error Reentrant();
     error BadTarget();
+    error NoOwnerFace();
+    error NotTheOwnersFace(uint256 expected, uint256 got);
     error ZeroAmount();
     error TransferFailed();
 
@@ -360,6 +383,121 @@ contract LeashAccount {
         );
         LeashStorage.layout().payees[node][token][payee] = true;
         emit PayeeAllowed(node, payee, keccak256(attestation));
+    }
+
+    /// @notice Registers which human's face governs this wallet's widenings.
+    /// @param nullifier The World ID nullifier from a proof this wallet's owner produced.
+    /// @param nonce Chosen by the caller; makes a retry after a failed rebind possible.
+    /// @param attestation Ignored on the FIRST registration. Required for every one after.
+    ///
+    /// @dev **The first registration costs the wallet key. Every change after it costs the
+    ///      face already registered.** That asymmetry is the whole design:
+    ///
+    ///      - first call, `ownerNullifier == 0` — nobody is being displaced, and the key is
+    ///        the only authority that exists yet.
+    ///      - every later call — the **currently registered face** must have approved being
+    ///        replaced. The RP signs a digest naming both the outgoing and incoming
+    ///        nullifiers, so a stolen wallet key cannot point this account at a face of its
+    ///        own choosing. It can spend within the limits already set, and it can tighten
+    ///        anything; it cannot change who is allowed to loosen.
+    ///
+    ///      🔴 **The price, stated plainly: losing access to that World ID permanently ends
+    ///      widening on this wallet.** There is no key that overrides it, because a key that
+    ///      overrode it would be the thing this function exists to rule out. You cannot have
+    ///      "the face outranks the key" and "the key can recover a lost face" at once — they
+    ///      are the same permission asked twice. Everything that makes the wallet *stricter*
+    ///      keeps working without a face: paying inside existing limits, removing a payee,
+    ///      lowering a limit, revoking an agent, pausing.
+    function setOwnerNullifier(uint256 nullifier, uint256 nonce, bytes calldata attestation)
+        external
+        onlySelf
+    {
+        LeashStorage.AccountStorage storage $ = LeashStorage.layout();
+        uint256 previous = $.ownerNullifier;
+        if (previous != 0) {
+            _consumeAttestation(
+                keccak256(abi.encode(REBIND_TYPEHASH, SELF, previous, nullifier, nonce)),
+                attestation
+            );
+        }
+        $.ownerNullifier = nullifier;
+        emit OwnerFaceSet(previous, nullifier, msg.sender);
+    }
+
+    /// @notice The digest a rebind must be attested over, signed only after the RP has seen
+    ///         a live proof whose nullifier equals `previous`.
+    function rebindDigest(uint256 previous, uint256 next, uint256 nonce)
+        public
+        view
+        returns (bytes32)
+    {
+        return _digest(keccak256(abi.encode(REBIND_TYPEHASH, SELF, previous, next, nonce)));
+    }
+
+    /// @notice The registered owner's World ID nullifier, or 0 if none.
+    function ownerNullifier() external view returns (uint256) {
+        return LeashStorage.layout().ownerNullifier;
+    }
+
+    /// @notice Allows a payee because **the wallet's registered human scanned their face**.
+    ///
+    /// @dev **No `onlySelf`, and that is the entire point.** `allowPayee` needs the wallet
+    ///      key AND an attestation, which means a face scan alone accomplishes nothing and
+    ///      somebody still has to go and send a transaction. That makes the scan feel like
+    ///      paperwork: if the key has to act anyway, the face is decoration.
+    ///
+    ///      Here the authorisation travels inside the attestation, so the sender is only
+    ///      paying gas. Anyone can relay it — the server, the wallet, a stranger — and none
+    ///      of them can change a single field, because all of them are inside the digest
+    ///      the RP signed.
+    ///
+    ///      🔴 **What stops anyone with any World ID from widening this wallet** is the
+    ///      nullifier check below. A nullifier is `hash(person, action)`, so the registered
+    ///      value names one human for one action. The RP signs a digest that contains it;
+    ///      an attestation naming a different one simply does not verify against this
+    ///      struct. Remove that check and the function becomes "any live human may widen
+    ///      any wallet", which is the opposite of the design.
+    ///
+    ///      This is strictly stronger than the `onlySelf` path for the attack that matters:
+    ///      a stolen wallet key cannot produce a face.
+    ///
+    ///      `allowPayee` is deliberately left in place, unchanged. It is the fallback if
+    ///      anything about this path misbehaves, and it costs nothing to keep.
+    function allowPayeeByFace(
+        bytes32 node,
+        address token,
+        address payee,
+        uint256 nonce,
+        uint256 nullifier,
+        bytes calldata attestation
+    ) external {
+        LeashStorage.AccountStorage storage $ = LeashStorage.layout();
+        uint256 owner_ = $.ownerNullifier;
+        if (owner_ == 0) revert NoOwnerFace();
+        if (nullifier != owner_) revert NotTheOwnersFace(owner_, nullifier);
+
+        _consumeAttestation(
+            keccak256(
+                abi.encode(PAYEE_FACE_TYPEHASH, SELF, node, token, payee, nonce, nullifier)
+            ),
+            attestation
+        );
+        $.payees[node][token][payee] = true;
+        emit PayeeAllowed(node, payee, keccak256(attestation));
+    }
+
+    /// @notice The digest a face-backed widening must be attested over. Same role as
+    ///         `payeeDigest`, for the other path.
+    function payeeFaceDigest(
+        bytes32 node,
+        address token,
+        address payee,
+        uint256 nonce,
+        uint256 nullifier
+    ) public view returns (bytes32) {
+        return _digest(
+            keccak256(abi.encode(PAYEE_FACE_TYPEHASH, SELF, node, token, payee, nonce, nullifier))
+        );
     }
 
     /// @notice Reads the current rule for (node, token).

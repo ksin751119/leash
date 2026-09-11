@@ -48,6 +48,18 @@ library LeashStorage {
         bool paused; // SLOT + 5
         bool entered; // SLOT + 5 (shares the slot with `paused`, one byte each)
         bool leashedEmitted; // SLOT + 5 - `Leashed` fires once; see LeashAccount.bindAgent
+        /// @dev The World ID nullifier of the human who owns this wallet, or 0 if none has
+        ///      been registered. **Appended at SLOT + 6**, which was unused — every field
+        ///      above keeps its slot, so an account that has already delegated to an older
+        ///      impl reads back identically after re-delegating to a newer one.
+        ///
+        ///      A nullifier is `hash(person, action)`: anonymous, but **stable for one
+        ///      person and one action**, which is the property this leans on. Measured
+        ///      2026-09-11: two scans of `expand-policy-facetest-1` returned the same
+        ///      `0x1218592f…`, while `expand-policy-facetest-2` returned a different one.
+        ///      So every widening has to be scanned against the SAME action, and the
+        ///      registered value belongs to that action alone.
+        uint256 ownerNullifier; // SLOT + 6
     }
 
     /// @dev ERC-7201: `keccak256(abi.encode(uint256(keccak256(id)) - 1)) & ~0xff`.
