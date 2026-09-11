@@ -823,7 +823,7 @@ happens to take the UTF-8 branch, so on its own it documents only half the rule.
 
 ---
 
-### 7.8 `selfieCheckLegacy` is a React preset, not a `verification_level`, and passing it to the standalone widget fails *after* the modal opens
+### 7.8 `selfieCheckLegacy` is a credential request, not a `verification_level`, and passing it to the standalone widget fails *after* the modal opens
 
 *Logged 2026-09-11, found by driving our own demo page with Playwright rather than by
 reading it.*
@@ -870,15 +870,19 @@ where the CDN fails; it could not help here, because IDKit *had* loaded and the 
 2. **Reject unknown keys and unknown values loudly**, naming the four accepted values in
    the message. The current message names what was wrong but not what would have been
    right.
-3. **Say in the Selfie Check docs which package can request Selfie Check at all.** The
-   React preset's name is the discoverable one, and it is not a value any `verification_level`
-   accepts. *Corrected 2026-09-11:* this point originally read "the value that works is
-   `device`". There is no `verification_level` that works — §7.9 measures why. `device` makes
-   the widget run, but it requests a device credential and opens no camera (§7.5).
+3. **Say on the `idkit-standalone` side that it cannot request Selfie Check at all.** The
+   credentials page already names `idkit-core` and `idkit`; the gap is in the other
+   direction, for a reader who never visits that page because they are already holding the
+   standalone widget. *Corrected 2026-09-11:* this point originally read "the value that
+   works is `device`". There is no `verification_level` that works — §7.9 measures why.
+   `device` makes the widget run, but it requests a device credential and opens no camera
+   (§7.5).
 
-This is the third item in this document (with §7.2 and §7.5) where the React path's
-vocabulary and the wire/standalone path's vocabulary differ silently. One table mapping
-preset → `verification_level` → returned `credential_type` would close all three.
+This is the third item in this document (with §7.2 and §7.5) where the credential-request
+vocabulary and the `verification_level` vocabulary differ silently — the split runs between
+packages, not between React and everything else, since `idkit-core` serves both. One table
+mapping credential request → package → `verification_level` (where one exists) → returned
+`identifier` would close all three.
 
 ---
 
