@@ -3,11 +3,13 @@ pragma solidity 0.8.28;
 
 import { Test } from "forge-std/Test.sol";
 import { MicroPaymentPolicy } from "../src/MicroPaymentPolicy.sol";
+import { StandardPolicy } from "../src/StandardPolicy.sol";
 import { SpendContext } from "../src/IPolicy.sol";
 import { Reason } from "../src/Reason.sol";
 
 contract MicroPaymentPolicyTest is Test {
     MicroPaymentPolicy policy;
+    StandardPolicy standard;
 
     address constant AGENT = address(0xA6E17);
     address constant STRANGER = address(0xF00D);
@@ -17,6 +19,7 @@ contract MicroPaymentPolicyTest is Test {
 
     function setUp() public {
         policy = new MicroPaymentPolicy(CAP);
+        standard = new StandardPolicy();
     }
 
     /// A small payment to a payee the allow-list has never heard of, well inside a
@@ -117,6 +120,66 @@ contract MicroPaymentPolicyTest is Test {
         c.amount = CAP + 1;
         c.spentSoFar = 50e6;
         assertEq(policy.check(c), Reason.OVER_TX_LIMIT);
+    }
+
+    // --- the owner's other controls still hold ---
+
+    /// `CAP` substitutes for the owner's per-transaction limit; it does not repeal it. A
+    /// payment under the cap but over `txLimit` is refused, so deploying this policy with a
+    /// cap above the owner's limit cannot be used to widen it.
+    function test_under_the_cap_but_over_the_owners_tx_limit_is_over_tx_limit() public view {
+        SpendContext memory c = _ok();
+        c.txLimit = 4e5; // 0.40 USDC, below the 1 USDC CAP
+        c.amount = 5e5; // 0.50: inside CAP, outside txLimit
+        assertEq(policy.check(c), Reason.OVER_TX_LIMIT);
+    }
+
+    /// The window is one of the five fields `tightenRule` writes. Without this check a
+    /// sub-cap payment would run at any hour, and "nothing outside business hours" would
+    /// quietly stop being true the moment this policy joined the set.
+    function test_outside_the_time_window_is_outside_time_window() public view {
+        SpendContext memory c = _ok();
+        c.windowStart = 540; // 09:00 UTC
+        c.windowEnd = 1020; // 17:00 UTC
+        c.nowTs = uint64(3 * 3600); // 03:00 UTC
+        assertEq(policy.check(c), Reason.OUTSIDE_TIME_WINDOW);
+    }
+
+    /// The differential proof that the verbatim `_inWindow` copy is honest. `StandardPolicy`
+    /// is deployed and approved on Sepolia, so the duplication cannot be refactored away —
+    /// this test is what it is paid for. Inside the cap and with the payee allowed, the two
+    /// contracts are answering the same question, so they must return the **same uint8**:
+    /// not both-OK-or-both-not, which would let the reason codes drift apart unnoticed.
+    ///
+    /// `bound(amount, 0, CAP)` keeps the CAP branch out of it, so any difference this finds
+    /// is a difference in a rule both contracts are meant to share.
+    function testFuzz_inside_the_cap_and_with_an_allowed_payee_it_agrees_with_StandardPolicy(
+        uint64 nowTs,
+        uint16 windowStart,
+        uint16 windowEnd,
+        uint256 amount,
+        uint256 txLimit,
+        uint256 periodLimit,
+        uint256 spentSoFar
+    ) public view {
+        SpendContext memory c = SpendContext({
+            agent: AGENT,
+            payee: STRANGER,
+            token: USDC,
+            amount: bound(amount, 0, CAP),
+            tokenAllowed: true,
+            payeeAllowed: true, // the one rule they are allowed to disagree about
+            txLimit: txLimit,
+            periodLimit: periodLimit,
+            spentSoFar: spentSoFar,
+            nowTs: nowTs,
+            // A minute of the day. Values above 1439 are unreachable through
+            // `tightenRule`, and feeding them in would only compare two copies of the
+            // same arithmetic on inputs neither can receive.
+            windowStart: uint16(bound(windowStart, 0, 1439)),
+            windowEnd: uint16(bound(windowEnd, 0, 1439))
+        });
+        assertEq(policy.check(c), standard.check(c));
     }
 
     function test_a_zero_cap_is_refused_at_construction() public {

@@ -14,6 +14,13 @@ import { Reason } from "./Reason.sol";
 ///         On its own it would allow any small payment to anyone; composed under `PolicySet`
 ///         as `(this) OR (StandardPolicy)` it says what every corporate card already says —
 ///         under the threshold, no approval; over it, the full rules.
+///
+///         **It relaxes exactly one thing: the payee allow-list.** It substitutes its own
+///         `CAP` for the per-transaction limit, and every other control the owner set still
+///         holds — the token allow-list, the period budget, and the time window. Under an
+///         OR, a check this contract omits is a check the composition no longer has for any
+///         sub-cap payment, so an omission here silently deletes one of the five fields
+///         `LeashAccount.tightenRule` writes.
 /// @dev `view` rather than the interface's non-`view`, which the interface explicitly
 ///      permits. It cannot be `pure`: reading the `CAP` immutable requires `view`.
 contract MicroPaymentPolicy is IPolicy {
@@ -40,6 +47,12 @@ contract MicroPaymentPolicy is IPolicy {
         // that is the one an agent can act on by asking for less.
         if (ctx.amount > CAP) return Reason.OVER_TX_LIMIT;
 
+        // The owner's own per-transaction limit, which `CAP` substitutes for but does not
+        // repeal. Both must hold, so the effective ceiling is the lower of the two: a cap
+        // deployed above the owner's `txLimit` cannot be used to widen it. Same reason code
+        // as the line above, and immediately after it, because both say "ask for less".
+        if (ctx.txLimit != 0 && ctx.amount > ctx.txLimit) return Reason.OVER_TX_LIMIT;
+
         // **Not optional.** Without it the exception swallows the rule — an agent drains a
         // whole period budget in sub-cap slices and never meets a human.
         if (ctx.periodLimit != 0) {
@@ -48,8 +61,36 @@ contract MicroPaymentPolicy is IPolicy {
             if (ctx.amount > ctx.periodLimit - ctx.spentSoFar) return Reason.OVER_PERIOD_LIMIT;
         }
 
+        // The window is one of the owner's controls, not a payee rule: "nothing outside
+        // business hours" is a statement about when the agent may act at all, and a sub-cap
+        // exception that ignored it would run at 3am. Checked last, matching
+        // `StandardPolicy`'s order, so the reason codes rank the same way under either
+        // branch of the OR.
+        if (!_inWindow(ctx.nowTs, ctx.windowStart, ctx.windowEnd)) {
+            return Reason.OUTSIDE_TIME_WINDOW;
+        }
+
         // `payeeAllowed` is deliberately never read. That is the entire point of this policy.
         return Reason.OK;
+    }
+
+    /// @dev `start == end` means open all day. `start > end` is a window that crosses
+    ///      midnight (say 22:00-06:00). Computed in UTC — timezone conversion is the
+    ///      frontend's job; the chain does not guess.
+    ///
+    ///      Copied verbatim from `StandardPolicy._inWindow`, and deliberately not extracted
+    ///      into a shared library: `StandardPolicy` is deployed and **approved** on Sepolia,
+    ///      and extracting it would change its bytecode, which means redeploying it, which
+    ///      invalidates both its approval and the ENS record pointing at it. The duplication
+    ///      is paid for by
+    ///      `testFuzz_inside_the_cap_and_with_an_allowed_payee_it_agrees_with_StandardPolicy`,
+    ///      which fuzzes both contracts against each other and fails on the exact uint8 the
+    ///      moment the two copies diverge.
+    function _inWindow(uint64 nowTs, uint16 start, uint16 end) private pure returns (bool) {
+        if (start == end) return true;
+        uint256 minuteOfDay = (uint256(nowTs) % 1 days) / 60;
+        if (start < end) return minuteOfDay >= start && minuteOfDay < end;
+        return minuteOfDay >= start || minuteOfDay < end;
     }
 
     function describe() external pure returns (string memory) {
