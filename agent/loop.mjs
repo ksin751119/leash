@@ -132,11 +132,20 @@ export function routePath(url) {
 // Addresses are lower-cased for the same reason `decide` compares them that way: the index
 // reports them lower-cased and the environment carries them checksummed.
 //
-// `nowSec` is deliberately not in here: it changes every tick, so including it would re-arm
-// the latch continuously and the whole mechanism would be decorative.
-export function inputFingerprint(snapshot, intent) {
+// `nowSec` is read but never put in directly: it changes every tick, so including it would
+// re-arm the latch continuously and the whole mechanism would be decorative. What goes in is
+// the one thing `decide` derives from it - whether the budget period has rolled over - which
+// flips once per period instead. Leaving it out would have been a hole with a date on it: an
+// intent blocked with 8 OVER_PERIOD_LIMIT at 23:59 would stay latched past midnight, because
+// the chain resets the budget at the boundary while the index keeps reporting the old `spent`
+// until some spend is indexed, so nothing else in this string moves at the moment the answer
+// changes.
+export function inputFingerprint(snapshot, intent, nowSec) {
   const payee = String(intent?.payee ?? "").toLowerCase();
   const budget = snapshot?.budget;
+  // Read exactly as `decide` reads it (agent/decide.mjs), so the two cannot disagree about
+  // when a period has ended.
+  const periodEnd = Number(budget?.periodEnd ?? 0);
   // The payee address itself is not a field: the allow-flag below is looked up with it, so
   // the string is already about this intent's payee, and fingerprints are only ever compared
   // with another fingerprint for the same intent.
@@ -147,6 +156,7 @@ export function inputFingerprint(snapshot, intent) {
     `limit=${String(budget?.limit ?? "")}`,
     `spent=${String(budget?.spent ?? "")}`,
     `periodEnd=${String(budget?.periodEnd ?? "")}`,
+    `rolled=${periodEnd > 0 && periodEnd <= nowSec}`,
   ].join("|");
 }
 
@@ -172,7 +182,7 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
   const queued = new Set();
   for (const intent of intents) {
     const prev = next.intents[intent.id] ?? { inFlight: false, lastAction: null };
-    const fingerprint = inputFingerprint(snapshot, intent);
+    const fingerprint = inputFingerprint(snapshot, intent, nowSec);
     // payee/token/amount are copied onto the record so the state endpoint can say who an
     // intent pays and how much. They are inputs, not decisions: nothing below reads them,
     // and no branch in this function changes because they exist.
@@ -213,12 +223,24 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       rec.reason = null;
       rec.reasonName = null; // same reason as above
       rec.explain = "waiting for the receipt of the transaction just sent";
-    } else if (prev.lastAction?.outcome === "blocked" && prev.sentFingerprint === fingerprint) {
-      // The chain refused this payment, and nothing it depends on has moved since it was
-      // submitted - so submitting it again would buy the same refusal, once every TICK_MS,
-      // for as long as the agent runs. Five of the twelve reason codes are not indexed at
-      // all, so `decide` cannot see most of the reasons a send comes back blocked; the
-      // chain's own answer is the better evidence, and this is where it is used.
+    } else if (
+      (prev.lastAction?.outcome === "blocked" || prev.lastAction?.outcome === "no-event") &&
+      prev.sentFingerprint === fingerprint
+    ) {
+      // The chain gave an answer - a refusal, or a receipt with nothing in it - and nothing
+      // this payment depends on has moved since it was submitted. Asking again would buy the
+      // same answer, once every TICK_MS, for as long as the agent runs. Five of the twelve
+      // reason codes are not indexed at all, so `decide` cannot see most of the reasons a
+      // send comes back blocked; the chain's own answer is the better evidence, and this is
+      // where it is used.
+      //
+      // `no-event` is latched for a second reason: it means "sent, outcome unknown" - a
+      // status-1 receipt carrying neither SpendExecuted nor SpendBlocked - so resending it
+      // risks paying twice for one instruction. That is the same hazard the `unconfirmed`
+      // branch above exists to avoid, arriving through a different door. It is also the
+      // shape a missing EIP-7702 delegation makes: `spend` calldata sent to an account with
+      // no code succeeds and emits nothing, which is precisely what `LeashLens` exists to
+      // detect, so this is a designed-for state rather than a hypothetical.
       //
       // Compared against the fingerprint recorded at SEND time, not one taken when the block
       // was observed, so the latch engages after exactly one block rather than two.
@@ -227,15 +249,30 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       // renders unstyled on stage. `verdict`, `reason` and `reasonName` are left exactly as
       // the tick that decided them wrote them, arriving here through `...prev`; only the
       // explanation changes.
-      const code = prev.lastAction.reasonName
-        ? `${prev.lastAction.reason} ${prev.lastAction.reasonName}`
-        : "no reason code in the receipt";
-      rec.explain =
-        `the chain refused this payment (${code}), so the agent has stopped asking. ` +
-        "Sending it again against the same rules would only be refused again, twelve times a minute. " +
+      // The two cases get different sentences because the operator's next move is different:
+      // a refusal is something to fix, an empty receipt is something to look up.
+      const willRetry =
         "It will try once more on its own as soon as the index shows something that could change the " +
         "answer: this payee allow-listed, the budget moved, or a different policy installed. " +
         "Restarting the agent also clears this, because it is remembered in memory and not on disk.";
+      if (prev.lastAction.outcome === "blocked") {
+        const code = prev.lastAction.reasonName
+          ? `${prev.lastAction.reason} ${prev.lastAction.reasonName}`
+          : "no reason code in the receipt";
+        rec.explain =
+          `the chain refused this payment (${code}), so the agent has stopped asking. ` +
+          "Sending it again against the same rules would only be refused again, twelve times a minute. " +
+          willRetry;
+      } else {
+        const where = prev.lastAction.tx ? `transaction ${prev.lastAction.tx}` : "the transaction";
+        rec.explain =
+          `this payment went through, but its receipt says neither paid nor refused, so the agent ` +
+          `cannot tell whether the money moved and has stopped resending it rather than risk paying ` +
+          `twice for one instruction. Look up ${where} to see what happened. An empty receipt is also ` +
+          `what it looks like when the leash is no longer on this wallet at all - a spend sent to a ` +
+          `plain account succeeds and does nothing - so it is worth checking that the wallet still ` +
+          `delegates to LeashAccount. ` + willRetry;
+      }
     } else {
       let d;
       try {

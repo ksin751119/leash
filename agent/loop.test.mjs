@@ -55,7 +55,7 @@ test("an executed intent is terminal and never sent again", () => {
 // widening half is the part worth keeping, and it now has a test of its own below.
 test("a blocked intent is not sent again while nothing it depends on has changed", () => {
   let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
-  assert.deepEqual(state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0]),
+  assert.deepEqual(state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0], NOW),
     "the first tick sent it, so it must have recorded what it sent under");
   state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", tx: "0x1" };
 
@@ -144,7 +144,7 @@ test("the latch survives the per-tick record rebuild", () => {
   // written at send time is still on the record after a rebuild.
   const second = advance(state, okSnap(), intents, NOW, KNOWN);
   const third = advance(second.state, okSnap(), intents, NOW + 5, KNOWN);
-  assert.equal(third.state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0]));
+  assert.equal(third.state.intents.a.sentFingerprint, inputFingerprint(okSnap(), intents[0], NOW + 5));
   assert.deepEqual(third.toSend, []);
 });
 
@@ -162,15 +162,15 @@ test("the fingerprint is stable across snapshots that differ only in key order o
     ok: true,
     block: { subgraph: 1, chain: 1, lag: 0 },
   };
-  assert.equal(inputFingerprint(a, intents[0]), inputFingerprint(b, intents[0]));
+  assert.equal(inputFingerprint(a, intents[0], NOW), inputFingerprint(b, intents[0], NOW));
 });
 
 test("the fingerprint moves when any fact decide reads moves", () => {
-  const baseline = inputFingerprint(okSnap(), intents[0]);
+  const baseline = inputFingerprint(okSnap(), intents[0], NOW);
   const vary = (f) => {
     const s = okSnap();
     f(s);
-    return inputFingerprint(s, intents[0]);
+    return inputFingerprint(s, intents[0], NOW);
   };
   assert.notEqual(vary((s) => (s.policy.address = POLICYSET)), baseline);
   assert.notEqual(vary((s) => (s.payees[PAYEE].allowed = false)), baseline);
@@ -179,6 +179,84 @@ test("the fingerprint moves when any fact decide reads moves", () => {
   assert.notEqual(vary((s) => (s.budget.limit = "1")), baseline);
   assert.notEqual(vary((s) => (s.budget.spent = "1")), baseline);
   assert.notEqual(vary((s) => (s.budget.periodEnd = 1)), baseline);
+});
+
+// The clock is an input `decide` reads - `rolledOver = periodEnd > 0 && periodEnd <= nowSec` -
+// and it is the only one that changes without the index changing. It goes in as the derived
+// boolean, not as the time: a fingerprint carrying `nowSec` itself would differ on every tick
+// and the latch would never hold at all.
+test("the fingerprint ignores the clock ticking but not the period ending", () => {
+  const s = okSnap();
+  s.budget.periodEnd = NOW + 60;
+  assert.equal(inputFingerprint(s, intents[0], NOW), inputFingerprint(s, intents[0], NOW + 30),
+    "a later tick inside the same period is the same inputs");
+  assert.notEqual(inputFingerprint(s, intents[0], NOW), inputFingerprint(s, intents[0], NOW + 61),
+    "the period ending is a change decide can act on");
+});
+
+// The hole the seventh field closes, end to end. The chain refused this payment for being
+// over the period budget; the period then ends. The chain has reset the budget, but the index
+// reports the same `spent` and the same `periodEnd` until some spend is indexed - so if the
+// fingerprint were built from index fields alone, NOTHING would move at the moment the answer
+// changes and the intent would stay latched until someone restarted the agent.
+test("a latched over-budget intent re-arms when its period ends, with the index unchanged", () => {
+  const snap = okSnap();
+  snap.budget.periodEnd = NOW + 60; // the period is still running when it is sent
+
+  let { state, toSend } = advance(initialState(), snap, intents, NOW, KNOWN);
+  assert.deepEqual(toSend.map((i) => i.id), ["a"], "the index showed room, so it was sent");
+  state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 8, reasonName: "OVER_PERIOD_LIMIT", tx: "0x1" };
+
+  // Still inside the period: latched, and the clock moving on its own must not re-arm it.
+  assert.deepEqual(advance(state, snap, intents, NOW + 30, KNOWN).toSend, [],
+    "a later tick in the same period is not a change");
+
+  // Past periodEnd, and the snapshot is the same object - not merely equal - so the only
+  // thing that has moved is the clock crossing the boundary.
+  const after = advance(state, snap, intents, NOW + 61, KNOWN);
+  assert.deepEqual(after.toSend.map((i) => i.id), ["a"],
+    "the chain has reset the budget; the agent must be willing to ask again");
+});
+
+// --- an empty receipt is latched too, and says something different ---
+
+// `no-event` is a status-1 receipt carrying neither SpendExecuted nor SpendBlocked. It reaches
+// none of the three older terminal branches, so before this it was resubmitted every tick
+// forever, showing the operator nothing. It is a designed-for state, not a hypothesis: `spend`
+// calldata sent to an account whose EIP-7702 delegation is gone succeeds and emits nothing,
+// which is the condition LeashLens exists to detect.
+test("a send that came back with an empty receipt is not repeated either", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "no-event", reason: null, reasonName: null, tx: "0xfeed" };
+
+  const second = advance(state, okSnap(), intents, NOW, KNOWN);
+  assert.deepEqual(second.toSend, [], "the outcome is unknown; resending risks paying twice");
+  const third = advance(second.state, okSnap(), intents, NOW + 5, KNOWN);
+  assert.deepEqual(third.toSend, []);
+});
+
+// The operator's next move differs between the two latched cases - a refusal is something to
+// fix, an empty receipt is something to look up - so the sentence has to differ too.
+test("an empty receipt explains itself differently from a refusal", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "no-event", reason: null, reasonName: null, tx: "0xfeed" };
+
+  const rec = advance(state, okSnap(), intents, NOW, KNOWN).state.intents.a;
+  assert.match(rec.explain, /0xfeed/, "the hash is the thing to look up");
+  assert.match(rec.explain, /neither paid nor refused/i);
+  assert.match(rec.explain, /delegates to LeashAccount/i, "the missing-leash case has to be named");
+  assert.doesNotMatch(rec.explain, /refused this payment/, "this is not the blocked sentence");
+});
+
+// And an empty receipt re-arms on the same signal as a refusal: something that could change
+// the answer actually moved.
+test("a re-delegated wallet re-arms an intent latched on an empty receipt", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.lastAction = { kind: "sent", outcome: "no-event", reason: null, reasonName: null, tx: "0xfeed" };
+
+  const restored = okSnap();
+  restored.policy.address = POLICYSET; // the name is repointed as part of putting it right
+  assert.deepEqual(advance(state, restored, intents, NOW, KNOWN).toSend.map((i) => i.id), ["a"]);
 });
 
 // A failed read must not look like a changed input that re-arms everything: it produces one
