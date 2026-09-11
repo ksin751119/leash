@@ -914,9 +914,28 @@ None of the four is a face check. There is no value you can pass this widget tha
 one, and §7.5 confirms the behaviour end to end: `device`, under an app with
 `enable_face_check: true`, opens no camera and returns `identifier: "device"`.
 
-**Selfie Check lives in a different package and a different vocabulary.**
-`@worldcoin/idkit-core@4.2.4` defines it as a **credential request**, not a verification
-level:
+**Corrected 2026-09-11, later the same day.** We first wrote this section as "two different
+vocabularies". `IDKitRequest.getDebugReport()` on a successful scan shows that is not what
+is happening, and the truth is both smaller and more actionable:
+
+```json
+"request_payload":  { "verification_level": "face", "package_name": "idkit_js_core" }
+"response_payload": { "credential_type": "face", "verification_level": "face",
+                      "user_presence_completed": true }
+```
+
+**`idkit-core` sends `verification_level: "face"`.** It is the *same* vocabulary — Selfie
+Check is a fifth value in it, and `idkit-standalone`'s switch knows only four. The widget's
+table is **incomplete**, not different in kind. We would rather report the smaller true
+thing: adding `face` to that switch is one line, where "please document the difference
+between two vocabularies" is a writing project for a distinction that does not exist.
+
+(`idkit-core` then normalises `face` → `selfie` in the result it hands back, which is why a
+backend consuming the library checks for `selfie` while the wire says `face`. Both are right
+at their own layer; it is worth one sentence in the docs.)
+
+**Selfie Check is expressed as a credential request rather than a level.**
+`@worldcoin/idkit-core@4.2.4` defines it as:
 
 ```js
 function deviceLegacy(opts = {})      { return { type: "DeviceLegacy",      signal: opts.signal }; }
@@ -984,12 +1003,13 @@ for a different credential.
 
 **Suggested fixes, cheapest first:**
 
-1. **One sentence, but on the `idkit-standalone` side rather than the credentials page.**
-   The credentials page already names `idkit-core` and `idkit`; what is missing is the
-   other direction. `@worldcoin/idkit-standalone`'s own documentation should say which
-   credentials it *cannot* request — that its `verification_level` vocabulary has no face
-   check in it, and that Selfie Check requires `idkit-core`. A reader on the credentials
-   page is already being helped. A reader on the standalone page is not.
+1. **Add `face` to `@worldcoin/idkit-standalone`'s `verification_level` switch.** This is
+   the whole fix and it is one line. The wire protocol already carries that value — we
+   measured `idkit-core` sending it — so the widget is not missing a capability, only an
+   entry in a table. Until then, a second sentence in its own documentation saying which
+   credentials it cannot request would close the gap: the credentials page already names
+   `idkit-core` and `idkit`, and a reader who arrives there is being helped. A reader
+   already holding the standalone widget is not.
 2. **A table mapping preset → package → `verification_level` (where one exists) →
    returned `identifier`.** §7.8 asked for a version of this table for a different reason;
    it is the same table, and it closes §7.2, §7.5, §7.8 and this section together.
@@ -1077,9 +1097,10 @@ exactly the pattern the credential gate needs and does not have.
    action in fact returned `success: true` with `(nullifier reuse)`, and `precheck` hands
    you a fresh active action for any string you send it. Neither behaviour is written down,
    so a developer reasonably concludes they are stuck when they are not. (§6.3, §7.6)
-8. **Selfie Check cannot be requested from `@worldcoin/idkit-standalone` at all**, and
-   `selfieCheckLegacy()` — the name the credentials page correctly gives for `idkit-core`
-   and `idkit` — is not a value any `verification_level` accepts. The widget's bundle contains no Selfie Check; its four
+8. **`@worldcoin/idkit-standalone` cannot request Selfie Check**, because its
+   `verification_level` switch is missing the value the wire protocol actually uses. We
+   measured `idkit-core` sending `verification_level: "face"`; the widget accepts four
+   values and that is not one of them. The widget's bundle contains no Selfie Check; its four
    accepted values do not include a face check; and passing the preset name throws *after*
    the modal has opened — an empty dialog, no `onError`, a host page whose state has already
    advanced, and a failure that reads as "the QR code did not appear". Reaching Selfie Check
@@ -1102,10 +1123,9 @@ the widget we were standing in does not speak (§7.9).
 
 1. **Show a developer, in the Developer Portal, which credentials their app can use.** The
    data is already public and unauthenticated — it simply is not rendered. (§6.1)
-2. **Say on the `idkit-standalone` side which credentials it cannot request.**
-   `@worldcoin/idkit-standalone` contains no Selfie Check at all, and none of its four
-   `verification_level` values is a face check. The credentials page already names the right
-   packages — it is the standalone path that says nothing, and that is the path a
-   non-React project starts from. One sentence there, plus a table mapping
-   preset → package → returned `identifier`, closes this and three other findings in this
-   document. (§7.9)
+2. **Add `face` to `@worldcoin/idkit-standalone`'s `verification_level` switch.** One
+   line. The protocol already carries that value — we watched `idkit-core` send it — so the
+   widget is short a table entry rather than a capability, and a non-React project starting
+   from the standalone path currently has no way to reach Selfie Check and nothing telling
+   it so. A table mapping credential request → package → `verification_level` → returned
+   `identifier` would close this and three other findings in this document. (§7.9)

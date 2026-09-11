@@ -213,3 +213,59 @@ case in `world/attest.test.mjs`:
    so a caller could present a proof genuinely bound to signal X and claim digest Y.
    World cannot catch that (the proof really does match its own `signal_hash`), so the
    binding is checked here and the forwarded value is the one we computed.
+
+---
+
+## E9 — the wire protocol DOES have a face verification level; the standalone widget's table is incomplete
+
+*Added later on 2026-09-11, from `request.getDebugReport()` on a successful Selfie Check.*
+
+```json
+"request_payload": {
+  "action": "leash-owner",
+  "allow_legacy_proofs": false,
+  "package_name": "idkit_js_core",
+  "package_version": "4.2.4",
+  "signal": "0x00c1d49ba85f98bb87aeaa6b62d12e78d4e0739d22a1c8a44a9a49005433254f",
+  "verification_level": "face"
+}
+```
+
+```json
+"response_payload": {
+  "credential_type": "face",
+  "verification_level": "face",
+  "user_presence_completed": true,
+  "nullifier_hash": "0x180f9ee15bedaa3c1912ea178de159e0997ecaea8751f1b3f9f880601b49e881"
+}
+```
+
+**`idkit-core` sends `verification_level: "face"`.** So Selfie Check is not a separate
+vocabulary from `verification_level` after all — it is a **fifth value in the same one**,
+and `@worldcoin/idkit-standalone@2.2.5`'s switch (E1) knows only four of them. The widget's
+table is incomplete, not different in kind.
+
+`idkit-core` then normalises `face` → `selfie` in the result it returns to the caller
+(E5's `identifier: "selfie"`), which is why a backend consuming the library's result checks
+for `selfie` while the wire says `face`. Both are correct at their own layer.
+
+> ⚠️ This **refines and partly corrects** what was written earlier today in
+> `docs/world-feedback.md` §7.9, which framed the split as "two vocabularies". That framing
+> is not supported by E9 and is less fair to World than the truth: it is one vocabulary with
+> a missing entry in one package. The corrected ask is smaller and far more actionable —
+> **add `face` to `idkit-standalone`'s `verification_level` switch** — rather than a
+> documentation request.
+
+`user_presence_completed: true` also appears in the response and has no equivalent in the
+3.0 path.
+
+## E10 — a scan can fail transiently, and the failure is invisible to the relying party
+
+A scan against `leash-owner` failed in World App ("please try again") with **nothing
+reaching our server** — no `/api/verify`, no `/api/attest`, no log line at all. `precheck`
+reported `can_user_verify: yes` throughout. Retrying the same action a few minutes later
+succeeded.
+
+Nothing is diagnosable from the relying-party side, because until a proof exists there is no
+request to observe. `IDKitRequest.getDebugReport()` is the only visible surface, and it is
+available regardless of debug mode.

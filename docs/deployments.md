@@ -21,6 +21,55 @@ redeployed" below)
 | `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
 | `WorldAttester` | `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` | [`0xec9a06d3…`](https://sepolia.etherscan.io/tx/0xec9a06d398d51868fa5b576bdc54f424d9826acfd461be3226dc2d3720368cfa) |
 
+### `LeashAccount` v3 — the face outranks the key (2026-09-11)
+
+| What | Value |
+|---|---|
+| Impl | `0xbB488f01b10cAc1572F16E82682Ba512375f3B85` ([`0x47de7cf8…`](https://sepolia.etherscan.io/tx/0x47de7cf8304d927915751a3deb2b6e4848756625a0aff768a11d33c42d638497)) |
+| Wallet re-delegation | [`0xb5cc1e0b…`](https://sepolia.etherscan.io/tx/0xb5cc1e0bf21716cead45003a1c2e314834f327ee8e4a774ad45ece7d74f9a36b) — type 4, block 11682652, **36,844 gas**, identical to the 09-09 re-delegation |
+| Owner's face registered | [`0x3a2f7ebe…`](https://sepolia.etherscan.io/tx/0x3a2f7ebe47cb242245be9d23f560ae7a80b2937da651598bb314d1517437222b) |
+| `ownerNullifier()` | `0x180f9ee15bedaa3c1912ea178de159e0997ecaea8751f1b3f9f880601b49e881` |
+
+Adds `allowPayeeByFace` — **no `onlySelf`** — and `setOwnerNullifier`. `allowPayee` is
+untouched and still works; it is the fallback if anything about the new path misbehaves,
+and keeping it cost nothing.
+
+**Storage survived the re-delegation**, which is the thing to check and not assume. The
+layout is ERC-7201 and `ownerNullifier` was appended at `SLOT + 6`, which was unused. Read
+back immediately after:
+
+```
+ruleOf        → 1, 500000000, 50000000, 86400, 0, 0, 0   ← unchanged
+isPayeeAllowed(…bEEF)  → true                            ← unchanged
+balanceOf(wallet)      → 653000000                       ← unchanged
+bindingOf(agent)       → (node, true)                    ← unchanged
+ownerNullifier()       → 0                               ← the new field, at its new slot
+```
+
+**The property, verified against the live contract rather than a test.** The wallet, using
+its own private key, asked the account to point at a different face:
+
+```
+$ cast call $WALLET "setOwnerNullifier(uint256,uint256,bytes)" \
+    0x219b2715…b540c9 1 0xc0ffee --from $WALLET
+Error: execution reverted, data: "0x99efb890"
+
+$ cast sig "NotAttested()"
+0x99efb890
+```
+
+Sepolia refused the key that owns it. Changing the registered face needs an attestation
+from the face currently registered — the first registration is the only one the key can
+make alone.
+
+The price is stated in the contract's own notes: **losing that World ID permanently ends
+widening on this wallet.** There is no key that overrides it, because a key that overrode
+it would be the thing the function exists to rule out. Tightening paths — paying inside
+existing limits, removing a payee, lowering a limit, revoking an agent, pausing — all keep
+working with no face at all.
+
+---
+
 ### Policy composition (deployed 2026-09-11 05:44 UTC)
 
 | Contract | Address | Deployment tx |
@@ -405,7 +454,7 @@ does not burn itself out on one run.
 ## The subgraph is live
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.7
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.8
 ```
 
 Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742

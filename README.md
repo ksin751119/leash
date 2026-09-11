@@ -30,6 +30,28 @@ moves.
 The agent has no way around this, because the check happens inside its own execution
 path rather than beside it.
 
+**The agent is a real one.** You type an instruction in English on the demo page; Claude
+turns it into payments; the chain decides which of them happen:
+
+```
+you:    "We just hired Bluefin Design for the rebrand. Pay their first invoice."
+model:  bluefin  5.00 USDC     (3.9s)
+chain:  SpendBlocked — 6 PAYEE_NOT_ALLOWED
+```
+
+A person asked an AI to send money, the AI agreed, and the chain said no. **That is the
+whole project in three lines,** and none of it is staged: the model chose the vendor and
+the amount, and the refusal is an onchain event you can look up.
+
+The model never writes an address. It picks an id from a vendor directory and
+`agent/plan.mjs` looks the address up, so there is no field in which a hallucinated payee
+could appear. It never sees a key, an RPC url, or the chain.
+
+**None of that is what makes the wallet safe.** The chain is. An agent that has to be
+well-behaved for your money to be safe is not safe — so this one is free to propose
+whatever it likes, and the interesting demo is the one where it proposes something the
+rules refuse.
+
 ```
 agent ──▶ EOA.spend(token, payee, amount)
              │
@@ -57,7 +79,7 @@ transaction hashes and a copy-pasteable verification recipe are in
 
 | Contract | Address |
 |---|---|
-| `LeashAccount` (EIP-7702 delegate impl) | [`0x55528C70…7f23`](https://sepolia.etherscan.io/address/0x55528C707Bff43175CC7d7fCe6D9767060C67f23) |
+| `LeashAccount` (EIP-7702 delegate impl, v3) | [`0xbB488f01…3B85`](https://sepolia.etherscan.io/address/0xbB488f01b10cAc1572F16E82682Ba512375f3B85) |
 | `LeashRegistry` (ENSv2 `IRegistry`) | [`0x6fB6CB4a…2A51`](https://sepolia.etherscan.io/address/0x6fB6CB4a789067b2283C4d4C657d3422ce742A51) |
 | `LeashResolver` (ENSIP-10) | [`0x607a4d73…915b`](https://sepolia.etherscan.io/address/0x607a4d7363d9E7511a932F82eAE1e12FB609915b) |
 | `PolicyApprovals` | [`0x7CB9d4Ac…25B4`](https://sepolia.etherscan.io/address/0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4) |
@@ -67,9 +89,11 @@ transaction hashes and a copy-pasteable verification recipe are in
 | `LeashLens` | [`0xB6eB4C26…7B83`](https://sepolia.etherscan.io/address/0xB6eB4C26AF866057920f7AB6fAFf69A914067B83) |
 | `WorldAttester` | [`0xa4E208dA…5F26`](https://sepolia.etherscan.io/address/0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26) |
 
-The `LeashAccount` impl above is the **current** one — it was redeployed the same day to
-switch its attester; the superseded impl and the full history are in
-[`docs/deployments.md`](docs/deployments.md).
+The `LeashAccount` impl above is the **current** one. It has been redeployed twice: once to
+switch its attester from the mock to `WorldAttester`, and once on 2026-09-11 to add the
+face-authorised widening path. Every superseded impl and the full history are in
+[`docs/deployments.md`](docs/deployments.md) — nothing is deleted there, because a
+redeployment is a fact about the system and not an embarrassment.
 
 ## The rule is composable, and that is not a claim you have to take on trust
 
@@ -162,15 +186,46 @@ because the wallet has no control-plane authority to lend it.
 | Action | `msg.sender == address(this)` | Attestation |
 |---|---|---|
 | Issue a new agent subname | — | ✅ |
-| Raise a limit, allow a token or payee | ✅ | ✅ |
+| **Allow a payee — the face path** | ❌ **anyone may relay it** | ✅ **and it must be the registered face** |
+| Raise a limit, allow a token | ✅ | ✅ |
 | Restore a revoked agent | ✅ | ✅ |
 | **Tighten a rule, remove a payee** | ✅ | ❌ |
 | **Revoke or unbind an agent** | self **or that agent** | ❌ |
 | **Pause the whole wallet** | any bound agent | ❌ |
 
-Expansion is two-of-two: the wallet itself **and** a human. Reduction is free, because
-when something has gone wrong nobody should have to find their phone and scan their
-face before pulling the brake.
+Reduction is free, because when something has gone wrong nobody should have to find their
+phone and scan their face before pulling the brake.
+
+### The face outranks the key
+
+That second row is the one worth reading twice. A scan that still needed the wallet owner
+to go and send a transaction was paperwork: **if the key has to act anyway, the face is
+decoration.** So `allowPayeeByFace` has no `onlySelf` at all. The authorisation rides
+inside the attestation, and whoever submits the transaction is paying gas and nothing more
+— the server, the wallet, a stranger. None of them can alter a field, because every field
+is inside the digest the relying party signed.
+
+What stops any live human from widening any wallet is the **nullifier**. A World ID
+nullifier is `hash(person, action)` — anonymous, but stable for one person and one action.
+The account registers one, the digest carries it, and an attestation naming a different one
+does not verify.
+
+Registering the first face costs the wallet key. **Changing it costs the face already
+registered.** A stolen key can spend inside the limits it finds and can tighten anything,
+but it cannot change who is allowed to loosen. Verified against the live contract, not a
+test:
+
+```
+$ cast call $WALLET "setOwnerNullifier(uint256,uint256,bytes)" <another face> 1 0xc0ffee --from $WALLET
+Error: execution reverted: 0x99efb890     # NotAttested()
+```
+
+That is Sepolia refusing the key that owns it.
+
+**The price, and we would rather state it than discover it:** losing access to that World
+ID permanently ends widening on this wallet. You cannot have "the face outranks the key"
+and "the key can recover a lost face" at the same time — they are the same permission asked
+twice. Everything that makes the wallet *stricter* keeps working with no face at all.
 
 One exception to "unbind is free": `unbindAgent` refuses a binding that is currently
 revoked (`RevokedNeedsRestore`), rather than deleting it for free. Deleting a revoked
@@ -270,7 +325,7 @@ the holder rather than belonging to them.
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.7
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.8
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it
@@ -323,6 +378,18 @@ returning `results: [{"identifier":"selfie","success":true}]`. (A 4.0 `SelfieChe
 result still reports `protocol_version: "3.0"` — that is World's shape, not a slip here.) No
 Sandbox App is involved: Sandbox exists to simulate the Orb, and Selfie Check does not use
 one.
+
+**And the wallet knows whose face.** `LeashAccount` stores one World ID nullifier, and
+`allowPayeeByFace` accepts an attestation only when it names that one. A nullifier is
+`hash(person, action)`: anonymous — it tells the chain nothing about who you are — but
+stable for one person and one action, which is exactly enough to mean "the same human as
+last time". Every widening is therefore scanned against a single action, `leash-owner`;
+scanning a different action produces a different nullifier and a different person as far as
+this wallet is concerned.
+
+That is the difference between "a human approved this" and "**the** human approved this",
+and it is what lets the `onlySelf` requirement come off. See
+[The face outranks the key](#the-face-outranks-the-key).
 
 **This README used to claim the opposite of all that, and the claim was wrong.** It said a
 proof cannot prove it came from Selfie Check, because a successful verification returns
