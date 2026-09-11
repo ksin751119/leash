@@ -828,10 +828,11 @@ happens to take the UTF-8 branch, so on its own it documents only half the rule.
 *Logged 2026-09-11, found by driving our own demo page with Playwright rather than by
 reading it.*
 
-The docs introduce Selfie Check through the React preset `selfieCheckLegacy()`. That name
-is the only handle a reader is given, so when we wired the same flow with
-`@worldcoin/idkit-standalone@2.2.5` — which has no presets, only an options object — we
-passed it where it seemed to belong:
+The credentials page names `selfieCheckLegacy()` and tells you to import it from
+`@worldcoin/idkit-core` or `@worldcoin/idkit`. We were not on either: we were on
+`@worldcoin/idkit-standalone@2.2.5`, the drop-in CDN widget, which has no presets and only
+an options object. So we passed the one credential name we had been given into the one
+place that names a credential:
 
 ```js
 IDKit.init({ app_id, action, signal, verification_level: "selfieCheckLegacy", handleVerify })
@@ -1072,9 +1073,9 @@ exactly the pattern the credential gate needs and does not have.
    action in fact returned `success: true` with `(nullifier reuse)`, and `precheck` hands
    you a fresh active action for any string you send it. Neither behaviour is written down,
    so a developer reasonably concludes they are stuck when they are not. (§6.3, §7.6)
-8. **Selfie Check cannot be requested from `@worldcoin/idkit-standalone` at all**, and the
-   only name the docs give you — the React preset `selfieCheckLegacy()` — is not a value
-   any `verification_level` accepts. The widget's bundle contains no Selfie Check; its four
+8. **Selfie Check cannot be requested from `@worldcoin/idkit-standalone` at all**, and
+   `selfieCheckLegacy()` — the name the credentials page correctly gives for `idkit-core`
+   and `idkit` — is not a value any `verification_level` accepts. The widget's bundle contains no Selfie Check; its four
    accepted values do not include a face check; and passing the preset name throws *after*
    the modal has opened — an empty dialog, no `onError`, a host page whose state has already
    advanced, and a failure that reads as "the QR code did not appear". Reaching Selfie Check
@@ -1090,16 +1091,17 @@ the camera, enrolls a face, and returns `identifier: "selfie"`. **World's API re
 truth at every step** — we had asked for the wrong credential and read its accurate answer
 as an omission. Our backend now refuses any result whose `identifier` is not `"selfie"`. We
 have left the original claim in §7.5 marked rather than edited away, because the mistake is
-the useful part: the only name the docs offer for Selfie Check belongs to a vocabulary the
-widget we were using does not speak (§7.9).
+the useful part: the name the docs correctly give for `idkit-core` belongs to a vocabulary
+the widget we were standing in does not speak (§7.9).
 
 **The two changes we would ask for:**
 
 1. **Show a developer, in the Developer Portal, which credentials their app can use.** The
    data is already public and unauthenticated — it simply is not rendered. (§6.1)
-2. **Say where Selfie Check can actually be requested from.** The one name the docs give a
-   reader, `selfieCheckLegacy()`, is a React preset; `@worldcoin/idkit-standalone` contains
-   no Selfie Check at all, and none of its four `verification_level` values is a face check.
-   One sentence saying Selfie Check is a 4.0 credential request from
-   `@worldcoin/idkit-core`, plus a table mapping preset → package → returned `identifier`,
-   closes this and three other findings in this document. (§7.9)
+2. **Say on the `idkit-standalone` side which credentials it cannot request.**
+   `@worldcoin/idkit-standalone` contains no Selfie Check at all, and none of its four
+   `verification_level` values is a face check. The credentials page already names the right
+   packages — it is the standalone path that says nothing, and that is the path a
+   non-React project starts from. One sentence there, plus a table mapping
+   preset → package → returned `identifier`, closes this and three other findings in this
+   document. (§7.9)
