@@ -78,9 +78,20 @@ contract MicroPaymentPolicyTest is Test {
         assertEq(policy.check(c), Reason.OVER_PERIOD_LIMIT);
     }
 
-    function test_already_at_the_period_limit_is_refused_without_underflowing() public view {
+    function test_already_at_the_period_limit_is_refused() public view {
         SpendContext memory c = _ok();
-        c.spentSoFar = 50e6;
+        c.spentSoFar = 50e6; // exactly at the limit
+        c.amount = 1;
+        assertEq(policy.check(c), Reason.OVER_PERIOD_LIMIT);
+    }
+
+    /// Past the limit, not merely at it. This is the only shape that underflows if the
+    /// `spentSoFar >= periodLimit` guard is removed, and it is reachable in practice:
+    /// tightening a period limit below what has already been spent this period is a
+    /// permitted reduction (`LeashAccount.tightenRule`).
+    function test_over_the_period_limit_is_refused_without_underflowing() public view {
+        SpendContext memory c = _ok();
+        c.spentSoFar = 50e6 + 1; // past it
         c.amount = 1;
         assertEq(policy.check(c), Reason.OVER_PERIOD_LIMIT);
     }
