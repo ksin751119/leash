@@ -120,6 +120,45 @@ export function redact(text, rpcUrl) {
   return safe;
 }
 
+const FACE_SIG = "payeeFaceDigest(bytes32,address,address,uint256,uint256)";
+const FACE_SELECTOR = Buffer.from(keccak_256(Buffer.from(FACE_SIG))).subarray(0, 4).toString("hex");
+const OWNER_SELECTOR =
+  Buffer.from(keccak_256(Buffer.from("ownerNullifier()"))).subarray(0, 4).toString("hex");
+
+const ALLOW_FACE_SIG = "allowPayeeByFace(bytes32,address,address,uint256,uint256,bytes)";
+const ALLOW_FACE_SELECTOR =
+  Buffer.from(keccak_256(Buffer.from(ALLOW_FACE_SIG))).subarray(0, 4).toString("hex");
+
+export function encodePayeeFaceDigestCall({ node, token, payee, nonce, nullifier }) {
+  return (
+    "0x" + FACE_SELECTOR + word(node) + word(token) + word(payee) +
+    word(BigInt(nonce).toString(16)) + word(BigInt(nullifier).toString(16))
+  );
+}
+
+export const encodeOwnerNullifierCall = () => "0x" + OWNER_SELECTOR;
+
+/// Calldata for the face-authorised widening. Same dynamic-`bytes` shape as
+/// `encodeAllowPayeeCall`, with one extra static word, so the offset is 0xc0 rather
+/// than 0xa0 — six head words instead of five.
+export function encodeAllowPayeeByFaceCall({ node, token, payee, nonce, nullifier, attestation }) {
+  const blob = strip(attestation);
+  if (blob.length % 2 !== 0) throw new Error("attestation is not whole bytes");
+  const len = blob.length / 2;
+  return (
+    "0x" +
+    ALLOW_FACE_SELECTOR +
+    word(node) +
+    word(token) +
+    word(payee) +
+    word(BigInt(nonce).toString(16)) +
+    word(BigInt(nullifier).toString(16)) +
+    word((6 * 32).toString(16)) +
+    word(len.toString(16)) +
+    blob.padEnd(Math.ceil(len / 32) * 64, "0")
+  );
+}
+
 export async function widenPlan({ payee, token, env, nonce, fetchImpl = fetch }) {
   if (!ADDR_RE.test(String(payee ?? ""))) {
     return { status: 400, body: { error: "payee must be 0x + 40 hex chars" } };
@@ -134,45 +173,80 @@ export async function widenPlan({ payee, token, env, nonce, fetchImpl = fetch })
   if (envErr) return { status: 500, body: { error: envErr } };
 
   const node = env.LEASH_NODE;
-  const data = encodePayeeDigestCall({ node, token, payee, nonce });
 
-  let body;
-  try {
-    const res = await fetchImpl(env.SEPOLIA_RPC, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "eth_call",
-        params: [{ to: env.WALLET_ADDR, data }, "latest"],
-      }),
-    });
-    if (!res.ok) return { status: 502, body: { error: `rpc returned HTTP ${res.status}` } };
-    body = await res.json();
-  } catch (err) {
-    const raw = String(err?.message ?? err) + (err?.cause?.message ? ` (${err.cause.message})` : "");
-    return { status: 502, body: { error: `rpc unreachable: ${redact(raw, env.SEPOLIA_RPC)}` } };
+  // Which face governs this wallet. Read from the chain rather than configured, because a
+  // configured copy is a second source of truth for the one value the whole gate turns on
+  // - and if it ever disagreed with the chain, every scan would produce an attestation the
+  // account refuses, with nothing on screen saying why.
+  const owner = await ethCall({ to: env.WALLET_ADDR, data: encodeOwnerNullifierCall(), env, fetchImpl });
+  if (owner.error) return owner.error;
+  if (!NODE_RE.test(owner.result)) {
+    return { status: 502, body: { error: "ownerNullifier did not return a 32-byte value" } };
   }
+  if (BigInt(owner.result) === 0n) {
+    return {
+      status: 409,
+      body: {
+        error:
+          "this wallet has no registered face yet. Until one is registered the face path " +
+          "cannot authorise anything - see setOwnerNullifier.",
+      },
+    };
+  }
+  const nullifier = owner.result;
 
-  if (body?.error) {
-    return { status: 502, body: { error: `rpc error: ${redact(body.error.message ?? "unknown", env.SEPOLIA_RPC)}` } };
-  }
+  // The digest the scan binds to now carries the nullifier, so the RP's signature is a
+  // statement about WHOSE face approved this widening, not merely that a face did.
+  const d = await ethCall({
+    to: env.WALLET_ADDR,
+    data: encodePayeeFaceDigestCall({ node, token, payee, nonce, nullifier }),
+    env,
+    fetchImpl,
+  });
+  if (d.error) return d.error;
   // Fail closed on anything that is not exactly one 32-byte word. A short or absent result
   // would otherwise become a signal IDKit happily binds a real face scan to.
-  if (!NODE_RE.test(String(body?.result ?? ""))) {
-    return { status: 502, body: { error: "payeeDigest did not return a 32-byte value" } };
+  if (!NODE_RE.test(d.result)) {
+    return { status: 502, body: { error: "payeeFaceDigest did not return a 32-byte value" } };
   }
 
   return {
     status: 200,
     body: {
-      digest: body.result,
+      digest: d.result,
       nonce: String(nonce),
       node,
       token,
       payee,
+      nullifier,
       command: buildCommand({ walletAddr: env.WALLET_ADDR, node, token, payee, nonce }),
     },
   };
+}
+
+/// One `eth_call`, with this file's error shape. Returns `{ result }` or `{ error }` where
+/// `error` is already a `{status, body}` the caller can return verbatim.
+async function ethCall({ to, data, env, fetchImpl }) {
+  let body;
+  try {
+    const res = await fetchImpl(env.SEPOLIA_RPC, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+    });
+    if (!res.ok) return { error: { status: 502, body: { error: `rpc returned HTTP ${res.status}` } } };
+    body = await res.json();
+  } catch (err) {
+    const raw = String(err?.message ?? err) + (err?.cause?.message ? ` (${err.cause.message})` : "");
+    return { error: { status: 502, body: { error: `rpc unreachable: ${redact(raw, env.SEPOLIA_RPC)}` } } };
+  }
+  if (body?.error) {
+    return {
+      error: {
+        status: 502,
+        body: { error: `rpc error: ${redact(body.error.message ?? "unknown", env.SEPOLIA_RPC)}` },
+      },
+    };
+  }
+  return { result: String(body?.result ?? "") };
 }

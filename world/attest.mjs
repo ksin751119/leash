@@ -245,7 +245,7 @@ export function checkAttestEnv(env) {
 ///      the one we computed, never the one we were handed.
 ///
 /// @returns `{ error }` on refusal, or `{ payload }` ready to POST to the v4 endpoint.
-export function buildSelfieVerifyPayload({ digest, result, action }) {
+export function buildSelfieVerifyPayload({ digest, result, action, expectedNullifier }) {
   if (!result || typeof result !== "object") return { error: "missing result" };
 
   const responses = result.responses;
@@ -255,6 +255,21 @@ export function buildSelfieVerifyPayload({ digest, result, action }) {
     return { error: "expected exactly one response in the World ID result" };
   }
   const r = responses[0];
+
+  // Whose face. The chain refuses a mismatch anyway - `allowPayeeByFace` compares against
+  // its registered `ownerNullifier` - but refusing here means the operator is told "that is
+  // not the face this wallet answers to" instead of watching a transaction revert with a
+  // selector. The scan is spent either way; only one of those two tells them why.
+  if (expectedNullifier !== undefined && expectedNullifier !== null) {
+    const got = BigInt(r.nullifier ?? 0);
+    if (got !== BigInt(expectedNullifier)) {
+      return {
+        error:
+          "that is a real face, but not the one registered to this wallet. Widening is " +
+          "governed by the face registered with setOwnerNullifier, and no other.",
+      };
+    }
+  }
 
   if (r.identifier !== "selfie") {
     return {

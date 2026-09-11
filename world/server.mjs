@@ -15,7 +15,10 @@ import { randomBytes } from "node:crypto";
 import QRCode from "qrcode";
 import { signRequest } from "@worldcoin/idkit-server";
 import { signAttestation, buildVerifyPayload, buildSelfieVerifyPayload, hashSignal, checkAttestEnv } from "./attest.mjs";
-import { widenPlan, checkWidenEnv, encodeAllowPayeeCall } from "./widen-plan.mjs";
+import { widenPlan, checkWidenEnv, encodeAllowPayeeCall, encodeAllowPayeeByFaceCall, redact } from "./widen-plan.mjs";
+import { createWalletClient, createPublicClient, http as viemHttp } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { sepolia } from "viem/chains";
 
 const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
@@ -63,6 +66,42 @@ const readBody = (req) =>
       }
     });
   });
+
+/// Sends the widening. **Not an authority — a courier.**
+///
+/// `allowPayeeByFace` has no `onlySelf`, so whoever submits it is only paying gas: every
+/// field is inside the digest the RP signed, and the account compares the nullifier
+/// against the one it has registered. This key could be anyone's; it is ADMIN's because
+/// ADMIN already holds Sepolia ETH for deploys.
+///
+/// It is deliberately NOT `WALLET_PK`. The point of the whole change is that widening no
+/// longer needs the key that holds the money, and a relayer holding that key would give
+/// the property back while appearing to keep it.
+///
+/// Failure here is reported, never thrown: the attestation is already signed and the scan
+/// already spent, so the caller gets the calldata and can send it from anywhere.
+async function relayWidening({ node, token, payee, nonce, nullifier, attestation }) {
+  const pk = process.env.ADMIN_PK;
+  if (!pk) return { sent: false, error: "ADMIN_PK is not set; send the calldata yourself" };
+  try {
+    const transport = viemHttp(process.env.SEPOLIA_RPC);
+    const account = privateKeyToAccount(pk);
+    const wallet = createWalletClient({ account, chain: sepolia, transport });
+    const pub = createPublicClient({ chain: sepolia, transport });
+    const hash = await wallet.sendTransaction({
+      to: process.env.WALLET_ADDR,
+      data: encodeAllowPayeeByFaceCall({ node, token, payee, nonce, nullifier, attestation }),
+    });
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    return { sent: true, tx: hash, status: receipt.status, by: account.address };
+  } catch (err) {
+    // redactUrls, not the raw message: SEPOLIA_RPC carries an API key.
+    return {
+      sent: false,
+      error: redact(String(err?.shortMessage ?? err?.message ?? err), process.env.SEPOLIA_RPC),
+    };
+  }
+}
 
 const server = createServer(async (req, res) => {
   try {
@@ -142,14 +181,20 @@ const server = createServer(async (req, res) => {
     // **The signing key never leaves this process.** The browser gets the signature, the
     // nonce and the two timestamps - which is all a credential request needs, and none of
     // which lets anyone sign a different one.
-    if (req.method === "GET" && req.url === "/api/rp-context") {
+    if (req.method === "GET" && req.url.startsWith("/api/rp-context")) {
       const pk = process.env.WORLD_RP_SIGNER_PK;
       if (!pk) return json(res, 500, { error: "WORLD_RP_SIGNER_PK is not set" });
+      // An `action` override exists only so the probe page can bisect a failing scan
+      // without a server restart. It changes nothing about safety: the signature covers
+      // whatever action is named, and /api/attest never reads this parameter - it uses
+      // process.env.WORLD_ACTION, so a widening can only ever be attested for the real one.
+      const want = new URL(req.url, "http://x").searchParams.get("action") || ACTION;
       try {
         // `action` is hashed into the signed message for a non-session proof, which binds
         // the context to this action. Omitting it would produce a signature World rejects.
-        const r = signRequest({ signingKeyHex: pk, action: ACTION, ttl: 900 });
+        const r = signRequest({ signingKeyHex: pk, action: want, ttl: 900 });
         return json(res, 200, {
+          action: want,
           rp_id: RP_ID,
           nonce: r.nonce,
           created_at: r.createdAt,
@@ -269,6 +314,8 @@ const server = createServer(async (req, res) => {
         digest,
         result,
         action: process.env.WORLD_ACTION,
+        // Whose face this wallet answers to, read from the chain by widenPlan above.
+        expectedNullifier: plan.body.nullifier,
       });
       if (refusal) return json(res, 400, { error: refusal });
 
@@ -297,12 +344,26 @@ const server = createServer(async (req, res) => {
         attestation,
         deadline,
         digest,
-        // What the browser wallet sends. The operator never touches a terminal, and the
-        // wallet - not this server - is what signs it: `allowPayee` is `onlySelf`, so the
-        // key that authorises a widening stays where a wallet key belongs.
         to: process.env.WALLET_ADDR,
-        calldata: encodeAllowPayeeCall({
-          node: process.env.LEASH_NODE, token, payee, nonce, attestation,
+        // `allowPayeeByFace` has no `onlySelf`, so this calldata is valid from any sender.
+        // It is returned even when the relay below succeeds: it is the artefact that makes
+        // "anyone can send this" checkable rather than asserted, and the fallback if the
+        // relay fails.
+        calldata: encodeAllowPayeeByFaceCall({
+          node: process.env.LEASH_NODE,
+          token,
+          payee,
+          nonce,
+          nullifier: plan.body.nullifier,
+          attestation,
+        }),
+        relay: await relayWidening({
+          node: process.env.LEASH_NODE,
+          token,
+          payee,
+          nonce,
+          nullifier: plan.body.nullifier,
+          attestation,
         }),
         nullifier: result.responses[0].nullifier,
         // Echoed so the page can show WHICH credential gated this widening. It is always

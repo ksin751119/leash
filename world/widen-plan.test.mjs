@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkWidenEnv, encodePayeeDigestCall, encodeAllowPayeeCall, buildCommand, redact, widenPlan,
+  checkWidenEnv, encodePayeeDigestCall, encodeAllowPayeeCall, encodePayeeFaceDigestCall,
+  encodeAllowPayeeByFaceCall, buildCommand, redact, widenPlan,
 } from "./widen-plan.mjs";
 
 const NODE = "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121";
@@ -190,4 +191,72 @@ test("an attestation that is not whole bytes is refused rather than silently pad
     () => encodeAllowPayeeCall({ ...AP, nonce: 1, attestation: "0xabc" }),
     /not whole bytes/,
   );
+});
+
+// --- the face path ---
+//
+// `widenPlan` makes TWO eth_calls now: who governs this wallet, then the digest that names
+// them. A mock that answers both identically - which is what `okFetch` above does - cannot
+// tell the difference, so these drive the calls apart deliberately.
+const OWNER = "0x180f9ee15bedaa3c1912ea178de159e0997ecaea8751f1b3f9f880601b49e881";
+const ZERO32 = "0x" + "00".repeat(32);
+
+/// Answers by selector, so a test can prove which call got which answer.
+const byCall = (ownerResult, digestResult) => {
+  const calls = [];
+  const impl = async (_url, init) => {
+    const data = JSON.parse(init.body).params[0].data;
+    calls.push(data.slice(0, 10));
+    // ownerNullifier() takes no arguments, so it is exactly the 4-byte selector.
+    const isOwner = data.length === 10;
+    return { ok: true, json: async () => ({ result: isOwner ? ownerResult : digestResult }) };
+  };
+  impl.calls = calls;
+  return impl;
+};
+
+test("the plan reads who governs the wallet and binds the digest to them", async () => {
+  const impl = byCall(OWNER, DIGEST);
+  const r = await widenPlan({ payee: PAYEE, token: TOKEN, env, nonce: 7, fetchImpl: impl });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.nullifier, OWNER, "the plan must report whose face this binds to");
+  assert.equal(r.body.digest, DIGEST);
+  assert.equal(impl.calls.length, 2, "one call for the owner, one for the digest");
+});
+
+// Without this the page would show a digest, spend a real face scan against it, and only
+// then discover the account refuses every face - with nothing on screen explaining why.
+test("a wallet with no registered face is refused before any scan is offered", async () => {
+  const impl = byCall(ZERO32, DIGEST);
+  const r = await widenPlan({ payee: PAYEE, token: TOKEN, env, nonce: 7, fetchImpl: impl });
+  assert.equal(r.status, 409);
+  assert.match(r.body.error, /no registered face/);
+  assert.equal(impl.calls.length, 1, "and it does not go on to ask for a digest");
+});
+
+test("a short answer from ownerNullifier fails closed rather than becoming a signal", async () => {
+  const impl = byCall("0x1234", DIGEST);
+  const r = await widenPlan({ payee: PAYEE, token: TOKEN, env, nonce: 7, fetchImpl: impl });
+  assert.equal(r.status, 502);
+  assert.match(r.body.error, /ownerNullifier/);
+});
+
+test("encodePayeeFaceDigestCall carries the nullifier as its fifth word", () => {
+  const cd = encodePayeeFaceDigestCall({
+    node: "0x" + "11".repeat(32), token: "0x" + "22".repeat(20),
+    payee: "0x" + "33".repeat(20), nonce: 7, nullifier: OWNER,
+  });
+  assert.equal(cd.length, 10 + 5 * 64, "selector plus five static words");
+  assert.equal(cd.slice(10 + 4 * 64), OWNER.slice(2));
+});
+
+test("encodeAllowPayeeByFaceCall offsets to 0xc0 - six head words, not five", () => {
+  const cd = encodeAllowPayeeByFaceCall({
+    node: "0x" + "11".repeat(32), token: "0x" + "22".repeat(20),
+    payee: "0x" + "33".repeat(20), nonce: 7, nullifier: OWNER,
+    attestation: "0x" + "ab".repeat(73),
+  });
+  assert.equal(cd.slice(0, 10), "0xf9e0d27d", "cast sig allowPayeeByFace(...)");
+  assert.equal(BigInt("0x" + cd.slice(10 + 5 * 64, 10 + 6 * 64)), 192n, "0xc0, one word past the other path's 0xa0");
+  assert.equal(BigInt("0x" + cd.slice(10 + 6 * 64, 10 + 7 * 64)), 73n);
 });

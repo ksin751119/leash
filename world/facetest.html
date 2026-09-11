@@ -35,6 +35,11 @@
   page exists to answer one question.
 </p>
 
+<p>
+  <label>action <input id="action" size="28" /></label>
+  &nbsp;
+  <label><input type="checkbox" id="legacy" /> allow_legacy_proofs (accepts a device credential)</label>
+</p>
 <button id="go">Request a Selfie Check</button>
 <div class="msg" id="msg"></div>
 <div id="qr"></div>
@@ -51,6 +56,8 @@
     $("out").textContent = label + "\n" + JSON.stringify(v, (k, x) => typeof x === "bigint" ? String(x) : x, 2);
   };
 
+  fetch("/api/config").then((r) => r.json()).then((c) => { $("action").value = c.action; });
+
   $("go").addEventListener("click", async () => {
     $("go").disabled = true;
     $("qr").innerHTML = "";
@@ -59,25 +66,30 @@
       if (typeof IDKit === "undefined") throw new Error("idkit-core did not load from /idkit.global.js");
 
       say("building the RP context…");
-      const [cfg, rp] = await Promise.all([
-        fetch("/api/config").then((r) => r.json()),
-        fetch("/api/rp-context").then((r) => r.json()),
-      ]);
+      const cfg = await fetch("/api/config").then((r) => r.json());
+      const want = $("action").value.trim() || cfg.action;
+      $("action").value = want;
+      const rp = await fetch("/api/rp-context?action=" + encodeURIComponent(want)).then((r) => r.json());
       if (rp.error) throw new Error("rp-context: " + rp.error);
+      // The signature covers the action, so these two must agree or World rejects it.
+      const { action: signedFor, ...rpContext } = rp;
 
       say("creating the credential request…");
       // The signal is arbitrary for this test — the real page binds it to the widening digest.
       const request = await IDKit.request({
         app_id: cfg.app_id,
-        action: cfg.action,
-        rp_context: rp,
+        action: signedFor,
+        rp_context: rpContext,
         // false = v4 only. The whole point is to refuse the 3.0 device credential that the
         // old widget silently gave us; accepting legacy proofs here would let the same
         // camera-less path answer and we would learn nothing.
-        allow_legacy_proofs: false,
+        allow_legacy_proofs: $("legacy").checked,
       }).preset(IDKit.selfieCheckLegacy({ signal: "facetest" }));
 
-      dump("request created:", { requestId: request.requestId, connectorURI: request.connectorURI });
+      dump("request created:", {
+        action: signedFor, allow_legacy_proofs: $("legacy").checked,
+        requestId: request.requestId, connectorURI: request.connectorURI,
+      });
 
       // We draw the QR ourselves — a 4.0 request hands back a URI, not a modal.
       const svg = await fetch("/api/qr?data=" + encodeURIComponent(request.connectorURI)).then((r) => r.text());
@@ -87,7 +99,12 @@
 
       say("scan it with World App — WATCH WHETHER THE FRONT CAMERA OPENS");
       const result = await request.pollUntilCompletion();
-      dump(result.success ? "SUCCESS:" : "FAILED:", result);
+      // idkit-core keeps a debug report regardless of debug mode, and it is the only place
+      // a World-side failure is visible: nothing reaches our server until a proof exists,
+      // so a scan that fails in the app leaves no trace anywhere else.
+      let report = null;
+      try { report = request.getDebugReport(); } catch (e) { report = { unavailable: String(e?.message ?? e) }; }
+      dump(result.success ? "SUCCESS:" : "FAILED:", { result, debugReport: report });
       say(result.success ? "verification returned — check the raw result below" : "verification failed — see below", !result.success);
     } catch (err) {
       dump("THREW:", { message: String(err?.message ?? err), stack: String(err?.stack ?? "").split("\n").slice(0, 6) });

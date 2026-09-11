@@ -922,12 +922,15 @@
       const body = await r.json();
       if (!r.ok) throw new Error(body.error ?? body.detail ?? `attest failed: HTTP ${r.status}`);
 
-      // 5. Send it from the wallet. `allowPayee` is `onlySelf`, so this transaction can
-      //    only come from the wallet itself - which is why the page asks a browser wallet
-      //    to sign rather than printing a command for someone to paste. The face scan and
-      //    the signature are two factors from the same person, seconds apart, and neither
-      //    this page nor the server ever holds the key that moves the money.
-      await sendFromWallet(body, plan);
+      // 5. Nothing left to do. `allowPayeeByFace` has no `onlySelf`, so the widening was
+      //    already relayed by the time this response came back - the authorisation rides
+      //    inside the attestation and the sender is only paying gas.
+      //
+      //    This is the whole point of the beat. A scan that still needed the wallet owner
+      //    to go and send a transaction was paperwork: if the key has to act anyway, the
+      //    face is decoration. Here the face IS the authority, and the account will not
+      //    accept any other one - it compares against the nullifier it has registered.
+      showRelayed(body, plan);
     } catch (err) {
       // The attempt is over either way, so the box goes back with it. setMsg comes after
       // paintButton because paintButton writes the idle message over whatever is there.
@@ -999,6 +1002,33 @@
     $("copy").hidden = false;
     paintButton();
     setMsg("widening sent — nobody will touch the agent");
+  }
+
+  function showRelayed(signed_, plan) {
+    busy = false;
+    signed = true;
+    $("qrWrap").hidden = true;
+
+    if (signed_.relay?.sent && signed_.relay.status === "success") {
+      $("cmdLabel").textContent = "YOUR FACE APPROVED IT — THE AGENT WILL NOTICE ON ITS NEXT TICK";
+      $("cmd").textContent = signed_.relay.tx;
+      $("copy").hidden = false;
+      paintButton();
+      setMsg("widening is on chain — nobody touched the agent, and nobody signed with a wallet key");
+      return;
+    }
+
+    // The relay is a courier, not an authority, so its failure costs a transaction and not
+    // the scan. The calldata is valid from ANY sender - that is what having no `onlySelf`
+    // means - so showing it is a real recovery path rather than a consolation.
+    const why = signed_.relay?.error ?? `reverted (${signed_.relay?.status ?? "unknown"})`;
+    showCommand(
+      `# the relay did not land: ${why}\n` +
+      `# this calldata is valid from ANY sender - allowPayeeByFace has no onlySelf\n` +
+      `cast send ${signed_.to} ${signed_.calldata} \\\n  --private-key $ANY_FUNDED_KEY --rpc-url $SEPOLIA_RPC`,
+      signed_.deadline,
+    );
+    setMsg(`signed, but the relay failed: ${why} — anyone can send the command below`, true);
   }
 
   function showCommand(command, deadline) {

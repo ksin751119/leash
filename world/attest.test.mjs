@@ -102,3 +102,35 @@ test("the action comes from the server, not from the result", () => {
   });
   assert.equal(payload.action, ACTION);
 });
+
+// --- whose face ---
+const OWNER = "0x180f9ee15bedaa3c1912ea178de159e0997ecaea8751f1b3f9f880601b49e881";
+
+test("a real Selfie Check from the WRONG person is refused", () => {
+  const r = ok({ nullifier: "0x" + "99".repeat(32) });
+  const { payload, error } = buildSelfieVerifyPayload({
+    digest: DIGEST, result: r, action: ACTION, expectedNullifier: OWNER,
+  });
+  assert.equal(payload, undefined);
+  assert.match(error, /not the one registered to this wallet/);
+});
+
+test("the registered person passes", () => {
+  const r = ok({ nullifier: OWNER });
+  const { payload, error } = buildSelfieVerifyPayload({
+    digest: DIGEST, result: r, action: ACTION, expectedNullifier: OWNER,
+  });
+  assert.equal(error, undefined);
+  assert.equal(payload.responses[0].identifier, "selfie");
+});
+
+// Leading zeros, casing, and a 0x-less form are all the same number. Comparing the strings
+// instead of the values would refuse the right person for a formatting difference.
+test("the comparison is numeric, not textual", () => {
+  const r = ok({ nullifier: OWNER });
+  const { error } = buildSelfieVerifyPayload({
+    digest: DIGEST, result: r, action: ACTION,
+    expectedNullifier: BigInt(OWNER).toString(10),
+  });
+  assert.equal(error, undefined);
+});
