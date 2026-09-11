@@ -4,13 +4,13 @@
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
     "payee": "0x000000000000000000000000000000000000beef",
     "amount": "5000000",
-    "note": "monthly retainer - inside the policy, no human in the loop"
+    "note": "monthly retainer, already allow-listed"
   },
   {
     "id": "newvendor",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
     "payee": "0x00000000000000000000000000000000000cafe0",
     "amount": "5000000",
-    "note": "a vendor the policy has never seen - needs a face scan"
+    "note": "a vendor the policy has never seen"
   }
 ]
