@@ -93,7 +93,12 @@ contract MicroPaymentPolicy is IPolicy {
         return minuteOfDay >= start || minuteOfDay < end;
     }
 
+    /// @dev This string is the only human-readable text a person sees at approval time and on
+    ///      the demo's POLICY panel, so it has to say the dangerous half out loud. The
+    ///      previous wording ("payee allow-list ignored") described the hole as a feature and
+    ///      read like a complete rule, which is exactly what someone approving this alone
+    ///      would need to be warned about.
     function describe() external pure returns (string memory) {
-        return "MicroPaymentPolicy/1: per-tx cap and period budget, payee allow-list ignored";
+        return "MicroPaymentPolicy/1: any payee under a per-tx cap; NOT SAFE ALONE - use only inside a PolicySet OR";
     }
 }

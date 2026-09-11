@@ -190,4 +190,14 @@ contract MicroPaymentPolicyTest is Test {
     function test_the_cap_is_readable_and_has_no_setter() public view {
         assertEq(policy.CAP(), CAP);
     }
+
+    /// `describe()` is the only human-readable text at approval time and on the demo's POLICY
+    /// panel. Approving this policy on its own allows any payee under the cap, so the string
+    /// has to say so rather than describing the hole as a feature.
+    function test_describe_warns_that_this_policy_is_not_safe_alone() public view {
+        assertEq(
+            policy.describe(),
+            "MicroPaymentPolicy/1: any payee under a per-tx cap; NOT SAFE ALONE - use only inside a PolicySet OR"
+        );
+    }
 }
