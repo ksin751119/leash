@@ -47,8 +47,22 @@ $ cast call $MICRO "CAP()(uint256)"          → 1000000            (1.00 USDC, 
 $ cast call $SET   "clauseCount()(uint256)"  → 2
 $ cast call $SET   "memberAt(uint256)" 0     → 0x0142BE41…  MicroPaymentPolicy
 $ cast call $SET   "memberAt(uint256)" 1     → 0x88F2bfF0…  StandardPolicy
-$ cast call $APPROVALS "isApproved(address)(bool)" $SET → false
+$ cast call $APPROVALS "isApproved(address)(bool)" $SET → true
+$ cast call $APPROVALS "descriptionOf(address)(string)" $SET
+    → "Under 1.00 USDC to any payee, or the full StandardPolicy rules"
 ```
+
+Approved in tx
+[`0x37865cec…`](https://sepolia.etherscan.io/tx/0x37865cec176071f8120593b9b8c1d8872f80796d665f9fb41bfbdc49f2bea2a1)
+(block `0xb23928`) by `script/ApprovePolicySet.s.sol`, with an **empty attestation** —
+see the caveat below for why that verifies. The description string is what the frontend and
+the demo page show as "what this rule is", which is why it is written for a person.
+
+**The ENS pointer was deliberately not moved.** `vendors.leash.eth` still resolves to
+`StandardPolicy`. Installing the set is a separate `setPolicy`, and it is the demo's finale
+for a reason worth recording: `world/demo.html` lights its face-scan button on the *agent's*
+predicted refusal, and under the composition the agent no longer predicts that refusal — the
+chain does. Swap the pointer before the face-scan beat and the button never appears.
 
 That last line is not an oversight — but read the next paragraph before reading it as a
 security property.
