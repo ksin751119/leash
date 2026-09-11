@@ -395,7 +395,14 @@ if (isMain) {
   AGENT_ADDR = envValues.AGENT_ADDR;
   LEASH_NODE = envValues.LEASH_NODE;
 
-  intents = JSON.parse(await readFile(new URL("./intents.json", import.meta.url), "utf8"));
+  // AGENT_INTENTS points the loop at a different payment list. It exists because this loop
+  // has no read-only mode — a tick is read, decide, SEND — so inspecting the HTTP endpoints
+  // used to mean emptying the tracked intents.json and remembering to put it back. That cost
+  // 5 test USDC twice. Pointing at an empty file touches nothing and cannot be forgotten.
+  const intentsPath = process.env.AGENT_INTENTS
+    ? new URL(process.env.AGENT_INTENTS, `file://${process.cwd()}/`)
+    : new URL("./intents.json", import.meta.url);
+  intents = JSON.parse(await readFile(intentsPath, "utf8"));
   const intentErrors = validateIntents(intents);
   if (intentErrors.length) {
     for (const e of intentErrors) console.error(e);

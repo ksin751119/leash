@@ -27,15 +27,17 @@ Extract single variables as above. **Never source `.env` wholesale** — it also
 > This has cost 5 test USDC twice, on 2026-09-09 and again on 2026-09-10, both times to someone
 > who knew exactly what the loop does and was thinking of it as a read.
 >
-> To inspect the endpoints without paying, empty the intents first:
+> To inspect the endpoints without paying, point `AGENT_INTENTS` at an empty list:
 >
 > ```bash
-> cp intents.json /tmp/intents.bak && echo '[]' > intents.json
-> #  … start the loop, curl the endpoints, stop it …
-> cp /tmp/intents.bak intents.json
+> echo '[]' > /tmp/no-intents.json
+> AGENT_INTENTS=/tmp/no-intents.json  …  node loop.mjs
 > ```
 >
 > An empty array passes validation and the loop runs normally with nothing to send.
+> `intents.json` is never written, so there is nothing to restore and nothing to forget —
+> the earlier advice here was to empty the tracked file and put it back afterwards, which is
+> one interrupted run away from leaving the demo with no payments in it.
 
 Startup validates more than presence: `WALLET_ADDR`/`AGENT_ADDR` must be a 20-byte hex
 address and `LEASH_NODE` a 32-byte hex hash, after trimming whitespace and a trailing CR (the
