@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import { createPublicClient, http as viemHttp } from "viem";
 import { sepolia } from "viem/chains";
 import { fetchSnapshot } from "./subgraph.mjs";
+import { planPayments } from "./plan.mjs";
 import { decide } from "./decide.mjs";
 import { sendSpend } from "./send.mjs";
 
@@ -16,7 +17,7 @@ const PORT = Number(process.env.PORT || 8788);
 const TICK_MS = Number(process.env.AGENT_TICK_MS || 5000);
 const SUBGRAPH_URL =
   process.env.SUBGRAPH_URL ||
-  "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.7";
+  "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.8";
 
 const AMOUNT_RE = /^[0-9]+$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -362,15 +363,22 @@ let ticking = false;
 // Populated by the startup validation below, after trimming. tick() reads these instead of
 // process.env directly, so a healed value (a trailing CR stripped by validateEnvVar) is what
 // actually gets used everywhere, not just at the startup check.
-let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY;
+let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY, MOCK_USDC;
 
 // Rate-limit backoff. Module state rather than a parameter: `advance` is the pure half and
 // has no business knowing the clock, and `tick` is the only caller that does.
 let backoffMs = TICK_MS;
 let backoffUntil = 0;
 
+// What a person last asked the agent to do, and what the model made of it. Kept so the page
+// can show the instruction beside the payments it produced - without that pairing, an
+// intent list is just as opaque as the JSON file it replaced.
+let instruction = null;
+let planning = false;
+
 export function publicState(s) {
   return {
+    instruction,
     tick: s.tick,
     at: s.at,
     source: s.source,
@@ -509,6 +517,12 @@ if (isMain) {
     // defaulted: with a PolicySet installed those two rules are no longer the whole story,
     // and a pre-flight that guesses wrong refuses payments the chain would have made.
     [
+      "MOCK_USDC",
+      ADDR_RE,
+      "a 20-byte hex address (0x + 40 hex chars)",
+      "the token the agent pays in. Only /api/agent/instruct needs it - a plan arrives as vendor ids and dollars, and the token is supplied here rather than by the model.",
+    ],
+    [
       "STANDARD_POLICY",
       ADDR_RE,
       "a 20-byte hex address (0x + 40 hex chars)",
@@ -532,6 +546,7 @@ if (isMain) {
   AGENT_ADDR = envValues.AGENT_ADDR;
   LEASH_NODE = envValues.LEASH_NODE;
   STANDARD_POLICY = envValues.STANDARD_POLICY;
+  MOCK_USDC = envValues.MOCK_USDC;
 
   // AGENT_INTENTS points the loop at a different payment list. It exists because this loop
   // has no read-only mode — a tick is read, decide, SEND — so inspecting the HTTP endpoints
@@ -564,6 +579,60 @@ if (isMain) {
     try {
       const pathname = routePath(req.url);
       if (req.method === "GET" && pathname === "/api/agent/state") return json(200, publicState(state));
+      // Give the agent an instruction in English. The model turns it into payments; the
+      // chain decides whether any of them happen. Nothing here can widen anything - and the
+      // model proposing something the chain refuses is the demo, not a bug.
+      if (req.method === "POST" && pathname === "/api/agent/instruct") {
+        if (planning) return json(409, { error: "already thinking about the last instruction" });
+        let body = "";
+        for await (const chunk of req) {
+          body += chunk;
+          if (body.length > 8192) return json(413, { error: "instruction too long" });
+        }
+        let text;
+        try {
+          text = String(JSON.parse(body || "{}").instruction ?? "").trim();
+        } catch {
+          return json(400, { error: "body must be JSON" });
+        }
+        if (!text) return json(400, { error: "say what you want the agent to do" });
+
+        planning = true;
+        instruction = { text, at: new Date().toISOString(), status: "thinking" };
+        try {
+          const { intents: planned, durationMs } = await planPayments({
+            instruction: text,
+            token: MOCK_USDC,
+            vendorsPath: new URL("./vendors.json", import.meta.url),
+          });
+          const errs = validateIntents(planned);
+          if (errs.length) throw new Error(errs.join("; "));
+
+          // A new instruction replaces the old plan AND its history. Keeping records for
+          // payments nobody asked for any more is how a page starts lying about what the
+          // agent is doing.
+          intents = planned;
+          state = { ...initialState(), tick: state.tick };
+          instruction = { text, at: instruction.at, status: "planned", tookMs: durationMs, count: planned.length };
+        } catch (err) {
+          // The model failing must not leave a stale plan running. An agent that keeps
+          // paying from an instruction it could not re-read is worse than one that stops.
+          intents = [];
+          state = { ...initialState(), tick: state.tick };
+          instruction = { text, at: instruction.at, status: "failed", error: String(err?.message ?? err) };
+          return json(502, { error: instruction.error });
+        } finally {
+          planning = false;
+        }
+
+        try {
+          await tick();
+        } catch {
+          // tick records its own error; the plan stands either way.
+        }
+        return json(200, publicState(state));
+      }
+
       if (req.method === "POST" && pathname === "/api/agent/tick") {
         try {
           await tick();
