@@ -9,6 +9,7 @@ get() { grep -m1 "^$1=" "$ENV" | cut -d= -f2-; }
 AGENT_PK="$(get AGENT_PK)" SEPOLIA_RPC="$(get SEPOLIA_RPC)" \
 WALLET_ADDR="$(get WALLET_ADDR)" AGENT_ADDR="$(get AGENT_ADDR)" \
 LEASH_NODE=0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121 \
+STANDARD_POLICY="$(get STANDARD_POLICY)" \
   node loop.mjs
 
 curl -s localhost:8788/api/agent/state | jq     # what it currently believes
@@ -40,7 +41,7 @@ Extract single variables as above. **Never source `.env` wholesale** — it also
 > one interrupted run away from leaving the demo with no payments in it.
 
 Startup validates more than presence: `WALLET_ADDR`/`AGENT_ADDR` must be a 20-byte hex
-address and `LEASH_NODE` a 32-byte hex hash, after trimming whitespace and a trailing CR (the
+address, `STANDARD_POLICY` a 20-byte hex address and `LEASH_NODE` a 32-byte hex hash, after trimming whitespace and a trailing CR (the
 `grep | cut` extraction above preserves both, and either flowing through unchanged produces
 entity ids that match nothing — the demo would show `NO_POLICY`/`PAYEE_NOT_ALLOWED` for every
 intent with no error at all). A quoted value (`"0x46C0…"` with the quotes) is refused by
@@ -48,6 +49,17 @@ name; a value with only a stray trailing CR is healed by the trim and accepted. 
 is validated the same way at load — unique ids, and `token`/`payee` as addresses and `amount`
 as a base-unit integer string — because a duplicate id makes `advance` queue it twice and the
 second send silently overwrites the first transaction's hash.
+
+`STANDARD_POLICY` is the one variable that is not about reaching the chain: it names the
+policy whose rules `decide.mjs` encodes. Two of its checks — the payee allow-list and the
+period budget — are `StandardPolicy`'s, not the account's, so they are only right while
+`StandardPolicy` is what the name points at. Point the name at a `PolicySet` such as
+`(MicroPaymentPolicy) OR (StandardPolicy)` and those two rules stop being the whole rulebook:
+a sub-cap payment to a payee nobody allow-listed is now allowed on chain, and a pre-flight
+still applying the allow-list would refuse it and never even try. So when the installed
+policy is not this address, `decide` skips both and lets the chain answer. There is no
+default — a missing value stops the loop at startup rather than predicting with the wrong
+rulebook.
 
 ## Three things that surprise people
 

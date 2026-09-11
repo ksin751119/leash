@@ -22,6 +22,14 @@
 // shape: a JS reimplementation of a hashing rule diverged from the real one and no test
 // could see it, because both sides were self-consistent. Read conclusions the index states;
 // never recompute them.
+//
+// The two policy-layer rules below (payee allow-list, period budget) are `StandardPolicy`'s,
+// not the account's, so they hold only while `StandardPolicy` is the policy actually
+// installed. `PolicySet` makes that assumption false: `(MicroPaymentPolicy) OR
+// (StandardPolicy)` allows a small payment to a payee nobody allow-listed, and a pre-flight
+// still encoding the allow-list refuses what the chain would have paid - which inverts the
+// direction of trust this module claims about itself two paragraphs up. So the caller must
+// name the policy these rules belong to (`knownPolicy`); anything else skips them.
 import { REASON, reasonName } from "./reason.mjs";
 
 const blocked = (reason, explain) => ({
@@ -43,8 +51,19 @@ const pass = () => ({
 });
 
 const lower = (a) => String(a ?? "").toLowerCase();
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
-export function decide(snapshot, intent, nowSec) {
+// `knownPolicy` is the address of the `StandardPolicy` whose rules the policy layer below
+// encodes. It is required and has no default: a default would be a silent guess about which
+// rulebook applies, and `loop.mjs` turns this throw into verdict `invalid`, which is never
+// sent - so a misconfigured deployment fails closed rather than predicting with the wrong one.
+export function decide(snapshot, intent, nowSec, knownPolicy) {
+  if (!ADDR_RE.test(String(knownPolicy ?? ""))) {
+    throw new Error(
+      `decide() needs knownPolicy: the address of the StandardPolicy whose rules it encodes (got ${JSON.stringify(knownPolicy)})`,
+    );
+  }
+
   if (!snapshot || snapshot.ok !== true) {
     return unknown(
       "unknown-read-failed",
@@ -65,7 +84,23 @@ export function decide(snapshot, intent, nowSec) {
     return blocked(REASON.POLICY_NOT_APPROVED, "no human has approved the policy this name points at");
   }
 
-  // Policy layer, for the two the index can answer.
+  // Everything above is `LeashAccount`'s own (src/Reason.sol: 1-4), decided before it ever
+  // calls the policy, so it holds whichever policy is installed. Everything below is
+  // `StandardPolicy`'s, and holds only for `StandardPolicy` itself.
+  if (lower(snapshot.policy.address) !== lower(knownPolicy)) {
+    // `pass()`-shaped on purpose, and this is the whole point: `loop.mjs` sends only
+    // `will-pass`, so returning an `unknown` verdict here would change the label and change
+    // nothing an operator can observe - the payment the composition exists to allow would
+    // still never be attempted. Declining to guess means letting the chain answer.
+    return {
+      ...pass(),
+      explain:
+        "the installed policy is not the StandardPolicy this pre-flight encodes, so the payee allow-list and period budget are not known to be its rules and were not checked; only the chain can decide",
+    };
+  }
+
+  // Policy layer, for the two the index can answer - StandardPolicy's rules, reached only
+  // once the installed policy has been confirmed to be it.
   const payee = snapshot.payees?.[lower(intent.payee)];
   if (!payee || payee.allowed !== true) {
     return blocked(

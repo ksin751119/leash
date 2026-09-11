@@ -121,7 +121,10 @@ export function routePath(url) {
 // The pure half: given the state, a snapshot and the intents, work out each verdict and
 // which intents to send. Kept separate from the IO so duplicate-payment prevention is
 // testable without a chain.
-export function advance(state, snapshot, intents, nowSec) {
+// `knownPolicy` is threaded in rather than read from the module-level `STANDARD_POLICY`
+// below, so this half stays a total function of its arguments - the same reason
+// `publicState` takes the state instead of closing over it.
+export function advance(state, snapshot, intents, nowSec, knownPolicy) {
   const next = { ...state, tick: state.tick + 1, at: new Date(nowSec * 1000).toISOString() };
   next.source = snapshot?.ok
     ? { subgraphBlock: snapshot.block.subgraph, chainBlock: snapshot.block.chain, lagBlocks: snapshot.block.lag }
@@ -177,9 +180,11 @@ export function advance(state, snapshot, intents, nowSec) {
     } else {
       let d;
       try {
-        d = decide(snapshot, intent, nowSec);
+        d = decide(snapshot, intent, nowSec, knownPolicy);
       } catch (err) {
-        // decide()'s BigInt(intent.amount) throws on a malformed amount (I2). validateIntents
+        // decide()'s BigInt(intent.amount) throws on a malformed amount (I2), and so does a
+        // missing or malformed knownPolicy - deliberately, because a pre-flight that does not
+        // know which policy's rules it encodes must not predict at all. validateIntents
         // refuses to start on this for intents.json, but catching it here too means one bad
         // record does not stop every OTHER intent in the same tick from being evaluated - a
         // single try/catch around the whole tick body would abort the rest of the loop.
@@ -258,7 +263,7 @@ let ticking = false;
 // Populated by the startup validation below, after trimming. tick() reads these instead of
 // process.env directly, so a healed value (a trailing CR stripped by validateEnvVar) is what
 // actually gets used everywhere, not just at the startup check.
-let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE;
+let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY;
 
 export function publicState(s) {
   return {
@@ -310,7 +315,7 @@ async function tick() {
     }
     const snapshot = await fetchSnapshot({ ...cfg, chainBlock });
     const nowSec = Math.floor(Date.now() / 1000);
-    const advanced = advance(state, snapshot, intents, nowSec);
+    const advanced = advance(state, snapshot, intents, nowSec, STANDARD_POLICY);
     state = advanced.state;
 
     for (const intent of advanced.toSend) {
@@ -377,6 +382,15 @@ if (isMain) {
     ["WALLET_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["AGENT_ADDR", ADDR_RE, "a 20-byte hex address (0x + 40 hex chars)"],
     ["LEASH_NODE", NODE_RE, "a 32-byte hex hash (0x + 64 hex chars)"],
+    // Which policy decide()'s payee and period-budget checks belong to. Required, and not
+    // defaulted: with a PolicySet installed those two rules are no longer the whole story,
+    // and a pre-flight that guesses wrong refuses payments the chain would have made.
+    [
+      "STANDARD_POLICY",
+      ADDR_RE,
+      "a 20-byte hex address (0x + 40 hex chars)",
+      "decide() encodes StandardPolicy's payee allow-list and period budget. It needs to know which address those rules belong to, so that any other policy - a PolicySet, say - skips them and lets the chain decide instead.",
+    ],
   ];
   const envValues = {};
   for (const [name, pattern, label, hint, showValue] of envChecks) {
@@ -394,6 +408,7 @@ if (isMain) {
   WALLET_ADDR = envValues.WALLET_ADDR;
   AGENT_ADDR = envValues.AGENT_ADDR;
   LEASH_NODE = envValues.LEASH_NODE;
+  STANDARD_POLICY = envValues.STANDARD_POLICY;
 
   // AGENT_INTENTS points the loop at a different payment list. It exists because this loop
   // has no read-only mode — a tick is read, decide, SEND — so inspecting the HTTP endpoints

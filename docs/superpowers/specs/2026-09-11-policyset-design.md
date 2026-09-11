@@ -165,13 +165,37 @@ prove it.
 
 ## What does not change
 
-Nothing already deployed. `LeashAccount`, `LeashRegistry`, `LeashResolver`,
-`PolicyApprovals`, `StandardPolicy`, the subgraph and the demo page are all untouched —
+**No deployed contract changes.** `LeashAccount`, `LeashRegistry`, `LeashResolver`,
+`PolicyApprovals`, `StandardPolicy`, `WorldAttester` and `LeashLens` are all untouched —
 `PolicySet` is reached through the same `IPolicy` interface the account already calls, the
 same ENS pointer it already resolves, and the same approval list it already checks.
 
 The subgraph needs no change either: `PolicyPointerSet` is already indexed, so swapping the
 pointer shows up in the demo page's POLICY panel on its own.
+
+> ### Correction, 2026-09-11 — this section originally said "Nothing already deployed
+> ### changes", and that was false
+>
+> The final review found the sentence wrong in the one place it mattered. **`agent/decide.mjs`
+> encodes `StandardPolicy`'s rules in JavaScript** — the payee allow-list and the period
+> budget — even though it opens by forbidding itself exactly that ("what this function must
+> never do is re-derive policy logic"). Nothing in the interface makes that visible: the
+> agent never reads `describe()` and never asks which policy is installed. Swapping the
+> pointer to a `PolicySet` therefore left the agent refusing a payment the chain allows,
+> which also inverts the module's own stated safety direction — `decide.mjs:4` claims it is
+> "trustworthy when it refuses and not when it permits".
+>
+> The lesson is not about this one file. **"Nothing already deployed changes" is a statement
+> about contracts, and it was used as though it were a statement about the system.** The
+> offchain half had absorbed a copy of the onchain rules, so a change that was genuinely
+> contract-local was not system-local. A spec that swaps an implementation behind an
+> interface has to name every consumer that has learned more about that implementation than
+> the interface promises.
+>
+> `decide` now takes the address of the policy whose rules it encodes and applies its
+> policy-layer predictions only to that address; for any other policy it defers to the chain.
+> The demo consequences of the swap, including why the ENS pointer moves to `PolicySet`
+> only *after* the face-scan beat, are recorded in the plan's SDD ledger.
 
 ---
 

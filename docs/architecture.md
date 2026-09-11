@@ -242,11 +242,19 @@ the wallet is unconstrained is both the boundary and the **escape hatch**: the o
 can always retrieve their own funds. A test asserts it — a wallet-signed direct
 transfer succeeds and emits no `SpendExecuted`.
 
-**The deployed system is wired to `MockAttester`, which returns `true` for any
-input.** So of the two conditions behind "widening requires a real human", only
-`msg.sender == address(this)` is actually guarding today. Selfie Check was verified
-end-to-end offchain on 2026-09-07, so `WorldAttester` is buildable; it is not
-deployed. Nothing about World ID is enforced onchain yet.
+**The two attestation gates are wired to different attesters, and only one of them is
+real.** `WorldAttester` is deployed at `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` and
+`LeashAccount.ATTESTER` points at it, so **widening a payee — the face-scan beat — is
+gated by a real Selfie Check today**: both conditions, `msg.sender == address(this)` and a
+live attestation, are guarding.
+
+`PolicyApprovals.attester` is still `MockAttester` (`0x268990a91B0727E80d38d5ED4Ab10d8889754124`),
+which returns `true` for any input. So **approving a new policy is not gated by a human
+today** — the second lock is installed but not loaded. That field is `immutable` by design
+(see the contract's own notes on why the mutability was removed rather than relocated), so
+loading it means deploying a fresh `PolicyApprovals` and re-approving every policy through
+it. Stated here rather than fixed, because the asymmetry is the honest state of the deploy:
+the gate a judge will watch on camera is real, and the one behind it is not yet.
 
 **A World ID proof cannot prove it came from Selfie Check.** A successful proof
 returns `credential_type: "device"` — identical to the deprecated `deviceLegacy`.
@@ -278,7 +286,9 @@ objection no longer holds — but it is an address, and that is what "approved" 
 | `src/StandardPolicy.sol` | The default rules, `pure`, reproducible offchain |
 | `src/Reason.sol` | The frozen reason codes |
 | `src/LeashLens.sol` | "Is the leash still on?" — reads the 23-byte delegation |
-| `src/IAttester.sol`, `src/MockAttester.sol` | The human-attestation gate, and the mock currently wired in |
+| `src/IAttester.sol`, `src/MockAttester.sol`, `src/WorldAttester.sol` | The human-attestation gate; `WorldAttester` gates the account's widening, `MockAttester` still gates the approval list |
+| `src/PolicySet.sol` | Composition: AND inside a clause, OR between clauses, members reached by `staticcall` |
+| `src/MicroPaymentPolicy.sol` | The exception half of `(small payment) OR (the full rules)` — never safe alone |
 | `subgraph/` | Indexes the control plane and every spend attempt, blocked ones included |
 | `world/` | The Selfie Check backend, verified end-to-end offchain |
 

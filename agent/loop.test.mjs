@@ -5,6 +5,10 @@ import { advance, initialState, sendAndRecord, validateIntents, validateEnvVar, 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const PAYEE = "0x000000000000000000000000000000000000beef";
 const NOW = 1788955200;
+// The StandardPolicy whose rules decide() encodes, and the address okSnap() reports as
+// installed. advance() takes it as an argument rather than reading module state, so these
+// tests can say which policy is installed without starting the loop.
+const KNOWN = "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b";
 
 const intents = [{ id: "a", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" }];
 
@@ -13,41 +17,41 @@ const okSnap = () => ({
   block: { subgraph: 11667861, chain: 11667863, lag: 2 },
   agent: { address: "0xaa", revoked: false },
   subname: { label: "vendors", live: true },
-  policy: { address: "0xbb", approved: true },
+  policy: { address: KNOWN, approved: true },
   budget: { token: TOKEN, limit: "1000000000", spent: "0", periodEnd: 0 },
   payees: { [PAYEE]: { allowed: true, lastToken: TOKEN } },
 });
 
 test("an eligible intent is queued to send", () => {
-  const { toSend } = advance(initialState(), okSnap(), intents, NOW);
+  const { toSend } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(toSend.map((i) => i.id), ["a"]);
 });
 
 test("an in-flight intent is not queued again - this is what stops duplicate payments", () => {
-  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   state.intents.a.inFlight = true;
-  const next = advance(state, okSnap(), intents, NOW);
+  const next = advance(state, okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(next.toSend, []);
   assert.equal(next.state.intents.a.verdict, "in-flight");
 });
 
 test("an executed intent is terminal and never sent again", () => {
-  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   state.intents.a.lastAction = { kind: "sent", outcome: "executed", tx: "0x1" };
-  const next = advance(state, okSnap(), intents, NOW);
+  const next = advance(state, okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(next.toSend, []);
   assert.equal(next.state.intents.a.verdict, "done");
 });
 
 test("a blocked intent stays eligible, so the agent retries after a widening", () => {
-  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 6, tx: "0x1" };
-  const next = advance(state, okSnap(), intents, NOW);
+  const next = advance(state, okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
 });
 
 test("a failed read sends nothing and says so", () => {
-  const { state, toSend } = advance(initialState(), { ok: false, error: "boom" }, intents, NOW);
+  const { state, toSend } = advance(initialState(), { ok: false, error: "boom" }, intents, NOW, KNOWN);
   assert.deepEqual(toSend, []);
   assert.equal(state.intents.a.verdict, "unknown-read-failed");
 });
@@ -55,7 +59,7 @@ test("a failed read sends nothing and says so", () => {
 test("a predicted block is not sent", () => {
   const s = okSnap();
   s.payees[PAYEE].allowed = false;
-  const { toSend, state } = advance(initialState(), s, intents, NOW);
+  const { toSend, state } = advance(initialState(), s, intents, NOW, KNOWN);
   assert.deepEqual(toSend, []);
   assert.equal(state.intents.a.reason, 6);
 });
@@ -63,7 +67,7 @@ test("a predicted block is not sent", () => {
 test("the tick counter and the source block land in the state", () => {
   // subgraph, chain and lag are all distinct here so a swap between subgraphBlock and
   // chainBlock in advance() cannot hide behind equal fixture values.
-  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   assert.equal(state.tick, 1);
   assert.equal(state.source.subgraphBlock, 11667861);
   assert.equal(state.source.chainBlock, 11667863);
@@ -75,9 +79,9 @@ test("the tick counter and the source block land in the state", () => {
 // being queued again, is the second duplicate-payment path: without it, the next tick would
 // send the same payment a second time on top of one that might still land.
 test("a send that got a hash but no confirmed outcome is not re-sent, and the hash stays visible", () => {
-  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   state.intents.a.lastAction = { kind: "sent", tx: "0xdeadbeef", outcome: null, error: "timeout" };
-  const next = advance(state, okSnap(), intents, NOW);
+  const next = advance(state, okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(next.toSend, []);
   assert.equal(next.state.intents.a.verdict, "unconfirmed");
   assert.match(next.state.intents.a.explain, /0xdeadbeef/);
@@ -88,9 +92,9 @@ test("a send that got a hash but no confirmed outcome is not re-sent, and the ha
 // intent must stay eligible - otherwise the fix for the timeout case would over-correct into
 // never retrying a genuine pre-send failure (bad nonce, insufficient gas, RPC down).
 test("a pre-send failure with no hash stays eligible, since nothing was sent", () => {
-  let { state } = advance(initialState(), okSnap(), intents, NOW);
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   state.intents.a.lastAction = { kind: "error", tx: null, outcome: null, error: "insufficient funds for gas" };
-  const next = advance(state, okSnap(), intents, NOW);
+  const next = advance(state, okSnap(), intents, NOW, KNOWN);
   assert.deepEqual(next.toSend.map((i) => i.id), ["a"]);
 });
 
@@ -116,7 +120,7 @@ test("a duplicate intent id is never queued twice, even if one slipped past vali
     { id: "retainer", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
     { id: "retainer", token: TOKEN, payee: PAYEE, amount: "9000000", note: "" },
   ];
-  const { toSend } = advance(initialState(), okSnap(), dupIntents, NOW);
+  const { toSend } = advance(initialState(), okSnap(), dupIntents, NOW, KNOWN);
   assert.deepEqual(toSend.map((i) => i.id), ["retainer"]);
 });
 
@@ -130,7 +134,7 @@ test("a malformed amount does not crash advance, and the error reaches that inte
     { id: "good", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" },
     { id: "bad", token: TOKEN, payee: PAYEE, amount: "5.5", note: "" },
   ];
-  const { state, toSend } = advance(initialState(), okSnap(), badIntents, NOW);
+  const { state, toSend } = advance(initialState(), okSnap(), badIntents, NOW, KNOWN);
   assert.deepEqual(toSend.map((i) => i.id), ["good"], "the good intent must still be evaluated and sent");
   assert.equal(state.intents.bad.verdict, "invalid");
   assert.match(state.intents.bad.explain, /malformed/);
@@ -240,7 +244,7 @@ test('an intent id of "__proto__" is rejected at load', () => {
 // let it silently vanish into Object.prototype and reappear as an invisible repeat payment.
 test('a "__proto__" id does not pollute the intents store or vanish from state', () => {
   const protoIntents = [{ id: "__proto__", token: TOKEN, payee: PAYEE, amount: "5000000", note: "" }];
-  const { state } = advance(initialState(), okSnap(), protoIntents, NOW);
+  const { state } = advance(initialState(), okSnap(), protoIntents, NOW, KNOWN);
   assert.ok(Object.prototype.hasOwnProperty.call(state.intents, "__proto__"), "the record must be its own visible property");
   assert.deepEqual(Object.keys(state.intents), ["__proto__"], "the record must be enumerable, not lost");
   assert.equal({}.verdict, undefined, "Object.prototype itself must not have gained a verdict property");
@@ -264,7 +268,7 @@ test("routePath collapses a leading double slash, so base + \"/path\" joins stil
 });
 
 test("a record carries the intent's payee, token and amount", () => {
-  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   const rec = state.intents.a;
   assert.equal(rec.payee, PAYEE);
   assert.equal(rec.token, TOKEN);
@@ -272,20 +276,20 @@ test("a record carries the intent's payee, token and amount", () => {
 });
 
 test("those three survive a second tick without being recomputed away", () => {
-  const first = advance(initialState(), okSnap(), intents, NOW).state;
-  const second = advance(first, okSnap(), intents, NOW + 5).state;
+  const first = advance(initialState(), okSnap(), intents, NOW, KNOWN).state;
+  const second = advance(first, okSnap(), intents, NOW + 5, KNOWN).state;
   assert.equal(second.intents.a.payee, PAYEE);
   assert.equal(second.intents.a.amount, "5000000");
 });
 
 test("publicState forwards the payee allow-list", () => {
-  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   const pub = publicState(state);
   assert.equal(pub.payees[PAYEE].allowed, true);
 });
 
 test("publicState publishes the three new intent fields", () => {
-  const { state } = advance(initialState(), okSnap(), intents, NOW);
+  const { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
   const i = publicState(state).intents[0];
   assert.equal(i.payee, PAYEE);
   assert.equal(i.token, TOKEN);
@@ -293,8 +297,8 @@ test("publicState publishes the three new intent fields", () => {
 });
 
 test("payees is an empty object when the read failed, never stale", () => {
-  const good = advance(initialState(), okSnap(), intents, NOW).state;
-  const bad = advance(good, { ok: false, error: "boom" }, intents, NOW + 5).state;
+  const good = advance(initialState(), okSnap(), intents, NOW, KNOWN).state;
+  const bad = advance(good, { ok: false, error: "boom" }, intents, NOW + 5, KNOWN).state;
   assert.deepEqual(publicState(bad).payees, {});
   assert.equal(publicState(bad).readError, "boom");
 });
@@ -302,6 +306,39 @@ test("payees is an empty object when the read failed, never stale", () => {
 test("an intent with no payee publishes null rather than undefined", () => {
   const bare = [{ id: "z", token: TOKEN, payee: PAYEE, amount: "1", note: "" }];
   delete bare[0].payee;
-  const { state } = advance(initialState(), okSnap(), bare, NOW);
+  const { state } = advance(initialState(), okSnap(), bare, NOW, KNOWN);
   assert.equal(publicState(state).intents[0].payee, null);
+});
+
+// The test that actually pins the finding. The verdict-string assertions in decide.test.mjs
+// would all still pass if the fallback returned `unknown` instead of `will-pass` - and
+// `unknown` is exactly as unsent as a block, because the queue below takes only `will-pass`.
+// So assert the intent reaches toSend: that is the observable the operator's money rides on.
+test("under a policy this pre-flight does not know, a payment to a stranger is still sent", () => {
+  const s = okSnap();
+  s.policy.address = "0x1234567890abcdef1234567890abcdef12345678"; // the PolicySet
+  s.payees = {}; // nobody has allow-listed this payee, and under the OR nobody needs to
+  const { toSend, state } = advance(initialState(), s, intents, NOW, KNOWN);
+  assert.deepEqual(toSend.map((i) => i.id), ["a"], "the intent the composition exists to allow must be sent");
+  assert.equal(state.intents.a.verdict, "will-pass");
+});
+
+// The counterpart, so the test above cannot pass by advance() having stopped checking
+// anything: with the known policy installed, the same unknown payee is still refused.
+test("under the known policy the same payment is still predicted blocked and not sent", () => {
+  const s = okSnap();
+  s.payees = {};
+  const { toSend, state } = advance(initialState(), s, intents, NOW, KNOWN);
+  assert.deepEqual(toSend, []);
+  assert.equal(state.intents.a.reason, 6);
+});
+
+// A missing STANDARD_POLICY must not silently fall back to predicting with rules that may
+// not apply. decide() throws, advance()'s per-intent catch turns that into `invalid`, and
+// `invalid` is not `will-pass`, so nothing is sent: the misconfiguration fails closed.
+test("a missing knownPolicy sends nothing rather than guessing which rules apply", () => {
+  const { toSend, state } = advance(initialState(), okSnap(), intents, NOW, undefined);
+  assert.deepEqual(toSend, []);
+  assert.equal(state.intents.a.verdict, "invalid");
+  assert.match(state.intents.a.explain, /knownPolicy/);
 });
