@@ -97,6 +97,8 @@ export function handleSpendExecuted(event: SpendExecuted): void {
     p.node = node;
     p.payee = event.params.payee;
     p.allowed = false;
+    // Never allow-listed, and this row is the evidence of it rather than the absence of it.
+    p.everAllowed = false;
     p.paidCount = 0;
     p.paidTotal = ZERO;
     p.firstAllowedAt = event.block.timestamp;
@@ -232,6 +234,11 @@ export function handlePayeeAllowed(event: PayeeAllowed): void {
     p.firstAllowedAt = event.block.timestamp;
   }
   p.allowed = true;
+  // Set here and nowhere else, and never cleared - `handlePayeeRemoved` deliberately
+  // leaves it alone. `allowed` says what is true now; this says whether a human ever
+  // approved this payee at all, which is the only way a reader can tell a revocation
+  // apart from a payee that was paid under a rule needing no allow-list entry.
+  p.everAllowed = true;
   p.save();
 }
 

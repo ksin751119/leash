@@ -28,7 +28,7 @@ query AgentState($agentId: ID!, $budgetId: ID!, $node: ID!, $wallet: Bytes!, $no
   subname(id: $node) { label live }
   policyPointer(id: $node) { policy approved }
   agentBudget(id: $budgetId) { token limit spent periodEnd remaining }
-  payees(where: { wallet: $wallet, node: $nodeBytes }) { payee allowed lastToken }
+  payees(where: { wallet: $wallet, node: $nodeBytes }) { payee allowed everAllowed lastToken }
 }`;
 
 export async function fetchSnapshot(cfg, fetchImpl = fetch) {
@@ -88,7 +88,15 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
 
   const payees = {};
   for (const p of d.payees ?? []) {
-    payees[lower(p.payee)] = { allowed: p.allowed === true, lastToken: p.lastToken ? lower(p.lastToken) : null };
+    payees[lower(p.payee)] = {
+      allowed: p.allowed === true,
+      // `allowed === false` has two causes and the frontend must not conflate them: a
+      // payee taken off the list, and one that was never on it. Only the second can be
+      // paid, and only under a policy that does not check the allow-list at all - which
+      // is the entire point PolicySet exists to demonstrate.
+      everAllowed: p.everAllowed === true,
+      lastToken: p.lastToken ? lower(p.lastToken) : null,
+    };
   }
 
   const chain = typeof cfg.chainBlock === "number" ? cfg.chainBlock : blockNumber;

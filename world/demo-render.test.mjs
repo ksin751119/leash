@@ -136,3 +136,36 @@ test("a zero or absent limit reports no percentage and no spend", () => {
   assert.equal(renderRules({ ...state(), budget: { token: TOKEN, limit: "0", spent: "5000000", periodEnd: 0 } }).pct, 0);
   assert.equal(renderRules({ ...state(), budget: null }).hasSpent, false);
 });
+
+// The fourth payee state. Until 2026-09-11 there were three, and a payee that had been
+// paid without ever being allow-listed rendered as "revoked" - which asserts that a human
+// approved it and later changed their mind. Nobody ever approved it. That row is the
+// evidence for the whole OR composition, and it was displaying its own opposite.
+test("renderRules keeps 'never on the list' distinguishable from 'revoked'", () => {
+  const out = renderRules({
+    policy: { address: "0xabc", approved: true },
+    budget: { limit: "50000000", spent: "0", token: "0xt" },
+    payees: {
+      "0x0000000000000000000000000000000000000beef": { allowed: true, everAllowed: true, lastToken: "0xt" },
+      // paid under MicroPaymentPolicy; PayeeAllowed never fired for it
+      "0x000000000000000000000000000000000000f00d": { allowed: false, everAllowed: false, lastToken: "0xt" },
+      // a human allowed this one, then someone revoked it
+      "0x00000000000000000000000000000000000cafe0": { allowed: false, everAllowed: true, lastToken: "0xt" },
+      // never allowed, never paid
+      "0x0000000000000000000000000000000000000dead": { allowed: false, everAllowed: false, lastToken: null },
+    },
+  });
+  const by = Object.fromEntries(out.payees.map((p) => [p.addr.slice(-5), p]));
+
+  assert.equal(by["0beef"].allowed, true);
+
+  assert.equal(by["0f00d"].allowed, false);
+  assert.equal(by["0f00d"].everAllowed, false, "nobody ever allow-listed it");
+  assert.equal(by["0f00d"].paid, true, "but it was paid - that pair is the fourth state");
+
+  assert.equal(by["cafe0"].everAllowed, true, "a real revocation must stay distinguishable");
+  assert.equal(by["cafe0"].allowed, false);
+
+  assert.equal(by["0dead"].everAllowed, false);
+  assert.equal(by["0dead"].paid, false, "never allowed and never paid is not the same row");
+});

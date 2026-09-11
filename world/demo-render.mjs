@@ -94,6 +94,13 @@ export function renderRules(s) {
       addr,
       short: shortHex(addr),
       allowed: v?.allowed === true,
+      // Four states, not three. Until PolicySet, `allowed === false` on a row that exists
+      // could only mean "revoked", because a spend to a payee that was never allow-listed
+      // was impossible - StandardPolicy ANDs payeeAllowed into every verdict. Under
+      // `(MicroPaymentPolicy) OR (StandardPolicy)` it is possible, it is the point, and
+      // labelling it "revoked" tells the audience the opposite of what happened.
+      everAllowed: v?.everAllowed === true,
+      paid: Boolean(v?.lastToken),
     })),
   };
 }

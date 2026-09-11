@@ -599,10 +599,15 @@
   // when the widening lands the row changes badge in place rather than the list growing a
   // line and pushing everything below it down. The flip happens where the eye already is.
   function paintPayees(rows) {
-    const all = rows.map((p) => ({ addr: p.addr, short: p.short, allowed: p.allowed, pending: false }));
+    const all = rows.map((p) => ({
+      addr: p.addr, short: p.short, allowed: p.allowed,
+      everAllowed: p.everAllowed, paid: p.paid, pending: false,
+    }));
     const have = new Set(all.map((p) => p.addr));
     for (const p of pending) {
-      if (!have.has(p.addr)) all.push({ addr: p.addr, short: p.short, allowed: false, pending: true });
+      if (!have.has(p.addr)) {
+        all.push({ addr: p.addr, short: p.short, allowed: false, everAllowed: false, paid: false, pending: true });
+      }
     }
 
     const seen = new Set();
@@ -618,8 +623,23 @@
       el.className = `payee-row${p.pending ? " pending" : ""}`;
       el.querySelector(".addr").textContent = p.short;
       const pill = el.querySelector(".pill");
-      pill.textContent = p.allowed ? "allowed" : p.pending ? "not on the list" : "revoked";
-      pill.className = `pill ${p.allowed ? "yes" : p.pending ? "wait" : "no"}`;
+      // FOUR states. The fourth one is the whole argument for composing policies, and it
+      // read as its own opposite until 2026-09-11: a payee that was never allow-listed but
+      // was paid anyway showed as "revoked", which says a human approved it and then
+      // changed their mind. Nobody ever approved it. The rule simply stopped requiring
+      // approval below a threshold, and that is the thing the audience is here to see.
+      //
+      // `everAllowed` is the discriminator, and it is a subgraph field rather than
+      // something inferred here - PayeeAllowed is the only event that sets it.
+      const state = p.allowed
+        ? { text: "allowed", cls: "yes" }
+        : p.everAllowed
+          ? { text: "revoked", cls: "no" }
+          : p.paid
+            ? { text: "paid, never listed", cls: "wait" }
+            : { text: "not on the list", cls: "wait" };
+      pill.textContent = state.text;
+      pill.className = `pill ${state.cls}`;
     }
     for (const [addr, el] of payeeEls) {
       if (!seen.has(addr)) { el.remove(); payeeEls.delete(addr); }

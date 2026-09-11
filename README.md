@@ -50,8 +50,10 @@ agent ──▶ EOA.spend(token, payee, amount)
 ## Live on Sepolia
 
 Everything below is deployed and was exercised end to end with real tokens on
-2026-09-09. Addresses, transaction hashes and a copy-pasteable verification recipe are
-in [`docs/deployments.md`](docs/deployments.md).
+2026-09-09, and again on 2026-09-11 — the second run was the first one a human face
+actually drove, with the composed rule installed in the ENS pointer. Addresses,
+transaction hashes and a copy-pasteable verification recipe are in
+[`docs/deployments.md`](docs/deployments.md).
 
 | Contract | Address |
 |---|---|
@@ -109,12 +111,20 @@ short version, with the wallet's real rule:
 | a vendor nobody knows | 5.00 | a stranger | **6** `PAYEE_NOT_ALLOWED` — this is the face scan |
 | an API top-up | 0.50 | a stranger | **0** — clause 1 passes, clause 2 never runs |
 
-**Two payments to strangers, one refused and one allowed, and the only difference is the
-size.**
+On 2026-09-11 the third row stopped being an `eth_call` and became a balance:
+**`0x…f00d` holds 1.50 USDC, and `isPayeeAllowed(node, USDC, 0x…f00d)` returns `false`.** A
+payee the allow-list never approved was paid, because the composed rule says a payment small
+enough does not need approval.
 
-> **What the wallet is actually running right now.** The set is deployed, but the ENS
-> pointer still resolves to `StandardPolicy`, so the table above is an `eth_call` against the
-> deployed contract — not a claim about what the wallet is doing today.
+The middle row is the one that does not stay put. Its stranger is `0x…cafe0`, and the face
+scan in that same run bought exactly that row away:
+`isPayeeAllowed(node, USDC, 0x…cafe0)` now returns `true`.
+
+> **What the wallet is actually running right now.** The set. The pointer moved during the
+> 2026-09-11 run: one `setPolicy` (tx `0x53b16bbb…`) swapped `vendors.leash.eth` from
+> `StandardPolicy` to `PolicySet`, and the 0.50 top-up that had just been blocked under
+> `StandardPolicy` executed on the next tick (tx `0x0335f905…`). The payment did not change;
+> the rule did.
 >
 > **And one honest caveat about the second lock.** By design, approving a policy takes a
 > human attestation, which is what makes a stolen ADMIN key unable to install rules nobody
@@ -201,12 +211,21 @@ possible moment.
 > accept any input; `describe()` on each contract says which it is wired to, and a UI reading
 > it cannot pretend otherwise.
 >
-> **The digest path has never been exercised against World's live API.** The World action
-> behind this deployment allows exactly one verification, and it was still unspent at
-> deployment time — reserved for the demo, because `max_verifications` cannot be raised. So
-> "widening needs a live human" currently rests on code correctness plus a hardcoded
-> measurement against IDKit's own bundle, not an end-to-end run. The first live proof of the
-> full chain will be the demo itself.
+> **The digest path has now been run end to end, on 2026-09-11.** A payment to `newvendor`
+> was blocked, a human scanned their face, the widening transaction landed
+> (`0x53d31784…`), and the payment then executed (`0x00a9080f…`). That is the first time
+> "widening needs a live human" rested on a run rather than on code correctness plus a
+> measurement against IDKit's bundle.
+>
+> **The reason this document gave for hoarding that scan does not hold, and the correction
+> belongs here rather than in a quiet deletion.** It said the action allows exactly one
+> verification and so had to be saved for the demo. Measured instead:
+> `POST /api/v1/precheck/{app_id}` mints a **new active action on demand** — a randomly
+> generated action string came back `status: "active"` with its own `external_nullifier`, no
+> Developer Portal visit involved — and re-scanning an already-used action still returned
+> `success: true`, with `"Proof verified successfully (nullifier reuse)"`. So
+> `max_verifications: 1` did not break the second run. What it *does* limit was not measured
+> and is not claimed here.
 >
 > **What `WorldAttester.verify` proves, stated exactly:** the RP signer signed this precise
 > digest before its deadline — not "a human approved this." The link to an actual human is
@@ -248,7 +267,7 @@ the holder rather than belonging to them.
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.6
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.7
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it
@@ -294,20 +313,40 @@ rather than noted. Dropping the wallet from the ids again fails six of the eight
 Selfie Check gates privilege **expansion** only: raising a limit, whitelisting a payee,
 issuing a new agent. Reduction is never gated — see the asymmetry above.
 
-Verified end-to-end on **2026-09-07** with the production World App and a real selfie —
-no Sandbox App was needed, because Sandbox exists to simulate the Orb and Selfie Check
-does not use one. That verification exercised the **offchain** half: the backend in
-`world/` receives the proof and verifies it against World's v4 endpoint. The onchain
-`IAttester` behind `LeashAccount`'s widening paths is now `WorldAttester`, not the mock —
-see the callout above — but the digest path from a live proof through to an onchain
-`verify()` call has not itself been run end to end: the action reserved for that allows
-exactly one verification, and it is being saved for the demo rather than spent here.
+**What the widening path asks World for, exactly.** A World ID **4.0 credential request**,
+`SelfieCheckLegacy`, from `@worldcoin/idkit-core`. The production World App opens the front
+camera, and the result comes back with `identifier: "selfie"`; World's verify endpoint agrees,
+returning `results: [{"identifier":"selfie","success":true}]`. (A 4.0 `SelfieCheckLegacy`
+result still reports `protocol_version: "3.0"` — that is World's shape, not a slip here.) No
+Sandbox App is involved: Sandbox exists to simulate the Orb, and Selfie Check does not use
+one.
 
-One limit worth stating rather than glossing: **a proof cannot prove it came from Selfie
-Check.** A successful verification returns `credential_type: "device"`, identical to the
-deprecated `deviceLegacy`. "A real human's face was checked" lives only in the app's
-`enable_face_check` setting, not in the proof. Leash's human-in-the-loop guarantee is
-therefore a configuration-level guarantee, not a cryptographic one.
+**This README used to claim the opposite of all that, and the claim was wrong.** It said a
+proof cannot prove it came from Selfie Check, because a successful verification returns
+`credential_type: "device"` — and concluded that the human-in-the-loop guarantee was
+configuration-level rather than cryptographic. Measured on 2026-09-11: the proof said `device`
+because a device credential is what this project had been asking for.
+`@worldcoin/idkit-standalone`, the widget it was using and the latest published version of it,
+has no vocabulary for a face check at all — its only knob is `verification_level`, which
+accepts four values, none of them Selfie Check, and passing the preset name the docs
+introduce throws *after* the dialog has mounted, with no `onError` and no visible error. With
+the app's `enable_face_check: true` and a brand-new action, that path opened **no camera** and
+returned `identifier: "device"`. World's API had reported the truth at every step; the request
+was the thing that was wrong.
+
+**So the gate is now enforced in code rather than assumed.** `world/attest.mjs` refuses to
+sign an attestation when the proof's `identifier` is not `"selfie"` — a device credential is
+not a face — and refuses again when the result's `signal_hash` is not the one computed from
+the digest being widened, because the 4.0 result carries its own `signal_hash` and a caller
+could otherwise present a proof genuinely bound to some other signal and claim this digest.
+World cannot catch that one; the proof really does match its own `signal_hash`. The value
+forwarded to World is always the one computed here, never the one supplied. Both refusals are
+pinned by mutation-tested cases in `world/attest.test.mjs`.
+
+The onchain claim stays narrow: `WorldAttester.verify` proves that the RP signer signed this
+exact digest before its deadline, and nothing more. The link from that signature back to a
+face is the offchain sequence above — World App runs Selfie Check, World's endpoint verifies
+the proof, and the backend signs only after that call returns HTTP 200.
 
 The feedback document the prize asks for is
 [`docs/world-feedback.md`](docs/world-feedback.md). It is a dated running log written as

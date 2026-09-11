@@ -81,6 +81,8 @@ type Payee @entity(immutable: false) {
 
   "Current state, and the events are the only authority for it. PayeeAllowed sets true, PayeeRemoved sets false — the agent never has to pair and cancel events itself."
   allowed: Boolean!
+  "Whether PayeeAllowed has EVER fired for this payee. Set true only there, never cleared. This is what separates \"taken off the list\" from \"was never on it\" — a distinction that did not exist while StandardPolicy was the only policy, because a payment to a payee that was never allow-listed could not happen. PolicySet makes it happen: MicroPaymentPolicy pays a stranger under the cap, which creates a Payee row with allowed=false that no one ever revoked. Without this field a frontend reads that row as \"revoked\" and tells the audience the opposite of the truth."
+  everAllowed: Boolean!
   "Across all tokens, for the reason above."
   paidCount: Int!
   paidTotal: BigInt!
