@@ -248,7 +248,7 @@ the holder rather than belonging to them.
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.5
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.6
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it

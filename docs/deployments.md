@@ -387,7 +387,7 @@ does not burn itself out on one run.
 ## The subgraph is live
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.5
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.6
 ```
 
 Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742
@@ -407,6 +407,30 @@ one entity — paste this into the endpoint above:
 > v0.0.5   limit   50.0   remaining  45.0     ← agrees
 > ruleOf   (true, 500000000, 50000000, 86400, 0, 0, 0)
 > ```
+
+> **v0.0.6 (2026-09-11) stops inventing allow-list entries.** When a `SpendExecuted`
+> arrives for a payee with no `Payee` row yet, the handler creates one — and it used to
+> create it with `allowed = true`, reasoning that "a spend that executed proves the payee
+> was allowed at that moment".
+>
+> That was true while `StandardPolicy` was the only policy, because it ANDs `payeeAllowed`
+> into every verdict. **`PolicySet` makes it false**: `MicroPaymentPolicy` never reads
+> `payeeAllowed`, so a sub-cap payment executes for a payee nobody allow-listed.
+>
+> Caught in a live rehearsal, not by a test. The demo page reported `0x…f00d` as
+> **allowed** while the chain said otherwise — and that payee's entire purpose is to be
+> paid *without* being on the list. The panel was erasing the thing it existed to show:
+>
+> ```
+> v0.0.5   payee 0x…f00d   allowed true      ← invented; the chain has no such entry
+> v0.0.6   payee 0x…f00d   allowed false     ← agrees
+> isPayeeAllowed(node, USDC, 0x…f00d)  false
+> ```
+>
+> This is the same defect class as the `agent/decide.mjs` Critical found the same day:
+> an **offchain component that had absorbed `StandardPolicy`'s rules as an invariant**.
+> The PolicySet spec said "the subgraph needs no change either"; that was the second
+> sentence in its "What does not change" section to turn out false.
 
 ```graphql
 {

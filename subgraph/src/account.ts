@@ -73,14 +73,30 @@ export function handleSpendExecuted(event: SpendExecuted): void {
   const pid = payeeId(event.address, node, event.params.payee);
   let p = Payee.load(pid);
   if (p == null) {
-    // PayeeAllowed should have fired first, but event ordering is not something to
-    // assume — create the record if it is missing. A spend that executed proves the
-    // payee was allowed at that moment, so `allowed = true` is sound *on creation*.
+    // Create the record if it is missing, but `allowed = FALSE`.
+    //
+    // 🔴 This said `allowed = true` until 2026-09-11, on the reasoning that "a spend that
+    // executed proves the payee was allowed at that moment". That was true while
+    // `StandardPolicy` was the only policy, because it ANDs `payeeAllowed` into every
+    // verdict. It is FALSE under `PolicySet`: `MicroPaymentPolicy` deliberately never reads
+    // `payeeAllowed`, so a small payment executes for a payee nobody ever allow-listed, and
+    // this line then invented an allow-list entry the chain does not have.
+    //
+    // It was caught in a live rehearsal, where the page reported `0x…f00d` as "allowed"
+    // while `isPayeeAllowed(node, token, 0x…f00d)` returned false on chain — and that is
+    // the one payee whose whole purpose is to be paid WITHOUT being on the list. The panel
+    // was erasing the demonstration it existed to show.
+    //
+    // `PayeeAllowed` and `PayeeRemoved` are the only authority for this field, as the
+    // schema says. There is no ordering hazard in reading it that strictly: graph-node
+    // replays in ascending (block, logIndex) order, so a `PayeeAllowed` that happened
+    // has already been processed by the time any later spend arrives. If no `PayeeAllowed`
+    // has been seen, the payee genuinely is not on the list.
     p = new Payee(pid);
     p.wallet = event.address;
     p.node = node;
     p.payee = event.params.payee;
-    p.allowed = true;
+    p.allowed = false;
     p.paidCount = 0;
     p.paidTotal = ZERO;
     p.firstAllowedAt = event.block.timestamp;

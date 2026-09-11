@@ -84,7 +84,7 @@ type Payee @entity(immutable: false) {
   "Across all tokens, for the reason above."
   paidCount: Int!
   paidTotal: BigInt!
-  "When PayeeAllowed first fired - or, if the row was created by a spend arriving first, that spend's timestamp. The name is aspirational in that second case."
+  "When PayeeAllowed first fired - or, if the row was created by a spend to a payee that was never allow-listed (which PolicySet makes possible), that spend's timestamp. The name is aspirational in that second case."
   firstAllowedAt: BigInt!
   lastPaidAt: BigInt
 }
