@@ -309,12 +309,26 @@ does not burn itself out on one run.
 ## The subgraph is live
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.4
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.5
 ```
 
 Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742
 (the wallet), with `hasIndexingErrors: false`. The four questions an agent asks each map to
 one entity — paste this into the endpoint above:
+
+> **v0.0.5 (2026-09-11) indexes `LimitLowered`; v0.0.4 did not.** Every other reduction was
+> already indexed — a payee removed, an agent revoked, a policy revoked, a subname revoked —
+> so the index agreed with the chain about every way of taking authority away except the one
+> that moves a number. Found by tightening the period limit from 1000 to 50 USDC
+> ([`0x4f7e9936…`](https://sepolia.etherscan.io/tx/0x4f7e99369024c3c13243aa8220b167c504cfadadedb18db396829093f81720e3))
+> and watching the index go on answering 1000. Studio keeps both versions live, so the same
+> query shows the difference directly:
+>
+> ```
+> v0.0.4   limit 1000.0   remaining 995.0     ← disagrees with the chain
+> v0.0.5   limit   50.0   remaining  45.0     ← agrees
+> ruleOf   (true, 500000000, 50000000, 86400, 0, 0, 0)
+> ```
 
 ```graphql
 {
