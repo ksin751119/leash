@@ -24,9 +24,13 @@ import { Reason } from "./Reason.sol";
 ///      composer that can silently leak a pooled budget is worse than one that cannot hold
 ///      one.
 contract PolicySet is IPolicy {
-    /// @dev Per-member gas ceiling. The account caps this whole call at
-    ///      `LeashAccount.POLICY_GAS` (200,000), so a member that runs away must not be able
-    ///      to take the set down with it.
+    /// @dev Per-member gas ceiling. This does not protect the set from a runaway member —
+    ///      with the account's own 200,000-gas budget for the whole call, enough runaway
+    ///      members exhaust it regardless, and because `check` returns immediately on 12 the
+    ///      observable result is the same either way. What it actually does is set an
+    ///      eligibility ceiling: any member costing more than 60,000 gas — including a nested
+    ///      `PolicySet` — becomes `POLICY_FAILED` here even though that same policy works
+    ///      correctly as the account's direct policy.
     uint256 public constant MEMBER_GAS = 60_000;
 
     /// @dev Clauses flattened into one array, with `_clauseEnd[i]` the exclusive end index of
