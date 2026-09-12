@@ -47,18 +47,42 @@ demo is not "watch our agent behave well" — it is **watch our agent try someth
 
 ## Before you record
 
-### The state the page must start in
+### Run the check, don't read a list
 
-| | |
-|---|---|
-| ENS pointer | `StandardPolicy` (`0x88F2…bc33b`) — **not** PolicySet |
-| `bluefin.leash.eth`'s address | on the allow-list? **no**, and never was |
-| `api.leash.eth`'s address | on the allow-list? **no**, and never was |
-| `acme.leash.eth`'s address | **yes** — the retainer has to succeed |
-| Agents | **both** started, each with an empty intent list |
-| `AGENT2` bound? | yes — `bindingOf(0x2160…9F8a)` returns the same node as `AGENT` |
-| Budget | 50.00 USDC/day, and **under 2.00 already spent** — see below |
-| Owner's face | registered — `ownerNullifier()` is non-zero |
+```bash
+./preflight.sh
+```
+
+It is read-only — no transaction, no process started — and it verifies every one of the
+things below against the live chain. Each check exists because something went wrong once.
+Fix the FAILs, run it again, and record when it says READY.
+
+```
+1. the face          WORLD_ACTION is leash-owner; ownerNullifier matches it
+2. the rule          the pointer is StandardPolicy; both policies are approved
+3. the payees        acme allowed, bluefin and api not
+4. the budget        under 2.00 spent, or the script's numbers stop matching the screen
+5. money and gas     the wallet's USDC, and ETH on AGENT / AGENT2 / ADMIN
+6. the binding       both agents on vendors.leash.eth — beat 3 is nothing without it
+7. the index         the subgraph answers 200 and is within a few blocks
+8. the processes     page on 8787, both agents on 8788 / 8789
+```
+
+**A check that can report green on its own failure is worse than no check.** The first
+version read `spentInCurrentPeriod` without its token argument, `cast` errored, the empty
+string became `0` through a shell default, and it printed *"0.00 of 50.00 — the script's
+numbers will match"* over a budget that was 42.00. Every read now returns `ERR` on failure
+and every caller treats `ERR` as a mismatch.
+
+### The order on the day
+
+1. `./preflight.sh` — expect warnings about the processes, nothing else
+2. `./reset-demo.sh 0x…c0de 0x…face` — only if step 1 flagged the pointer or a payee
+3. `./run-demo.sh --dry` — starts the page and both agents, pays nothing
+4. `./preflight.sh` again — now everything should be green
+5. Open both windows: `?agent=payments` and `?agent=subscriptions`
+6. Record
+7. **`./run-demo.sh --stop`** — or the subgraph quota is gone by morning
 
 ### 🔴 The budget has to start low, and there is only one way to lower it
 
