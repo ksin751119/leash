@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT || 8788);
 const TICK_MS = Number(process.env.AGENT_TICK_MS || 5000);
 const SUBGRAPH_URL =
   process.env.SUBGRAPH_URL ||
-  "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.8";
+  "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.9";
 
 const AMOUNT_RE = /^[0-9]+$/;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;

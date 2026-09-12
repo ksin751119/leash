@@ -80,6 +80,11 @@ export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
   //
   // Read with the meaning the schema gives the field. That is not re-deriving policy logic,
   // and it is the same sentence decide.mjs carries.
+  // Which payees the payments currently on screen are about.
+  const inPlay = new Set(
+    (s.intents ?? []).map((i) => String(i.payee ?? "").toLowerCase()).filter(Boolean),
+  );
+
   const periodEnd = Number(s.budget?.periodEnd ?? 0);
   const rolledOver = periodEnd > 0 && periodEnd <= nowSec;
   const spent = s.budget == null ? null : rolledOver ? "0" : s.budget.spent;
@@ -123,17 +128,24 @@ export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
     limit: formatUsdc(limit),
     pct,
     hasSpent,
-    payees: Object.entries(s.payees ?? {}).map(([addr, v]) => ({
-      addr,
-      short: shortHex(addr),
-      allowed: v?.allowed === true,
+    // The panel is titled "payees this wallet allows", so it shows what is true NOW: every
+    // payee currently on the list, plus any payee the payments on screen are about. A row
+    // left over from an earlier run — approved and dropped, or paid months ago — is history,
+    // and history in a panel that claims to describe the present is just noise a viewer has
+    // to work out is irrelevant.
+    payees: Object.entries(s.payees ?? {})
+      .filter(([addr, v]) => v?.allowed === true || inPlay.has(addr))
+      .map(([addr, v]) => ({
+        addr,
+        short: shortHex(addr),
+        allowed: v?.allowed === true,
       // Four states, not three. Until PolicySet, `allowed === false` on a row that exists
       // could only mean "revoked", because a spend to a payee that was never allow-listed
       // was impossible - StandardPolicy ANDs payeeAllowed into every verdict. Under
       // `(MicroPaymentPolicy) OR (StandardPolicy)` it is possible, it is the point, and
       // labelling it "revoked" tells the audience the opposite of what happened.
-      everAllowed: v?.everAllowed === true,
-      paid: Boolean(v?.lastToken),
-    })),
+        everAllowed: v?.everAllowed === true,
+        paid: Boolean(v?.lastToken),
+      })),
   };
 }

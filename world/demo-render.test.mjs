@@ -145,6 +145,14 @@ test("renderRules keeps 'never on the list' distinguishable from 'revoked'", () 
   const out = renderRules({
     policy: { address: "0xabc", approved: true },
     budget: { limit: "50000000", spent: "0", token: "0xt" },
+    // All four are in play, so the panel's "now" filter keeps every one and this test can
+    // still be about the four states rather than about which rows survive.
+    intents: [
+      { payee: "0x0000000000000000000000000000000000000beef" },
+      { payee: "0x000000000000000000000000000000000000f00d" },
+      { payee: "0x00000000000000000000000000000000000cafe0" },
+      { payee: "0x0000000000000000000000000000000000000dead" },
+    ],
     payees: {
       "0x0000000000000000000000000000000000000beef": { allowed: true, everAllowed: true, lastToken: "0xt" },
       // paid under MicroPaymentPolicy; PayeeAllowed never fired for it
@@ -218,4 +226,39 @@ test("renderRules marks which approved policy is live and which is merely approv
 test("with no approved policies the list is empty rather than undefined", () => {
   const out = renderRules({ policy: null, payees: {}, budget: null });
   assert.deepEqual(out.policies, []);
+});
+
+// "Payees this wallet allows" is a claim about the present. A row left from an earlier run
+// — approved and dropped, or paid weeks ago — is history, and history in a panel that
+// claims to describe now is noise a viewer has to work out is irrelevant. It also spoils a
+// demo: `paid, never listed` on screen before anything has been paid gives away the ending.
+test("the payee panel shows what is allowed now, plus whoever the payments are about", () => {
+  const out = renderRules({
+    policy: { address: "0xa", approved: true },
+    budget: { limit: "1", spent: "0", token: "0xt" },
+    intents: [{ payee: "0x00000000000000000000000000000000000000b1" }],
+    payees: {
+      "0x00000000000000000000000000000000000000be": { allowed: true, everAllowed: true },
+      // approved then dropped, and nothing on screen is about them
+      "0x00000000000000000000000000000000000000ca": { allowed: false, everAllowed: true },
+      // paid in some earlier run, and nothing on screen is about them
+      "0x00000000000000000000000000000000000000f0": { allowed: false, everAllowed: false, lastToken: "0xt" },
+      // not allowed, but a payment on screen is about them — must be shown
+      "0x00000000000000000000000000000000000000b1": { allowed: false, everAllowed: false },
+    },
+  });
+  assert.deepEqual(out.payees.map((p) => p.addr.slice(-2)), ["be", "b1"]);
+});
+
+test("a payee in play is still shown once it has been paid without ever being listed", () => {
+  const addr = "0x00000000000000000000000000000000000000f0";
+  const out = renderRules({
+    policy: { address: "0xa", approved: true },
+    budget: { limit: "1", spent: "0", token: "0xt" },
+    intents: [{ payee: addr }],
+    payees: { [addr]: { allowed: false, everAllowed: false, lastToken: "0xt" } },
+  });
+  assert.equal(out.payees.length, 1, "this row is the whole argument for the composition");
+  assert.equal(out.payees[0].paid, true);
+  assert.equal(out.payees[0].everAllowed, false);
 });
