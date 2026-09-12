@@ -282,6 +282,7 @@ body {
 .banner .detail { color: var(--ink-2); }
 
 #intents { display: grid; gap: 10px; }
+#intents:empty { display: none; }
 #intents.dim { opacity: .4; }
 
 .intent {
@@ -327,7 +328,8 @@ body {
 .intent.tone-unknown .verdict { color: var(--ink-3); }
 
 /* --- the refusal log. No onchain equivalent exists, which is the point. */
-#refusalsWrap { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-2); }
+#refusalsWrap { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-2); }
+#intents:empty + #refusalsWrap { margin-top: 0; padding-top: 0; border-top: 0; }
 .ref {
   display: flex; align-items: baseline; gap: 10px;
   padding: 7px 0; font-size: 13px;
@@ -414,8 +416,6 @@ body {
 .payee-row .pill { margin-left: auto; font-family: var(--sans); }
 .payee-row.pending { color: var(--ink-3); }
 
-/* ---------------------------------------------------------------- the wire -- */
-#wires { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
 @media (max-width: 1180px) {
   .band, .cols { grid-template-columns: 1fr; }
@@ -580,7 +580,7 @@ body {
           <div id="qrHint">scan with World App — it will ask for your face</div>
         </div>
 
-        <div class="cmd-head">
+        <div class="cmd-head" id="cmdHead" hidden>
           <span id="cmdLabel">nothing yet — the scan writes here</span>
           <button id="copy" hidden>copy</button>
         </div>
@@ -623,17 +623,6 @@ body {
     </div>
   </div>
 
-  <!-- Drawn from a refusal to the allow-list that explains it, and only when the
-       refusal really is about a missing payee. drawWire hides it outright if it
-       does not fit. -->
-  <svg id="wires" aria-hidden="true">
-    <path id="wirePath" fill="none" stroke="var(--refuse)" stroke-width="1.5"
-          stroke-dasharray="5 4" opacity="0" />
-    <circle id="wireDot" r="3.5" fill="var(--refuse)" opacity="0" />
-    <rect id="wireLabelBg" rx="2" fill="var(--ground)" opacity="0" />
-    <text id="wireLabel" font-size="11" font-family="var(--mono)"
-          fill="var(--refuse)" text-anchor="middle" opacity="0">absent</text>
-  </svg>
 </div>
 
 <script src="/idkit.global.js"></script>
@@ -994,7 +983,6 @@ body {
     paintRefusals(renderRefusals(state));
     paintButton();
     paintWait();
-    requestAnimationFrame(drawWire);
   }
 
   // Every agent's payments, in one list, each carrying the name of the agent that proposed
@@ -1295,64 +1283,7 @@ body {
 
   /* ------------------------------------------------------------------ the connector */
 
-  // Geometry only: it draws a line between two elements that are already on screen. Which
-  // intent and which row it joins was decided by the agent, above — and it is the same
-  // `widenTarget()` the button acts on, so the line cannot point at one payee while the scan
-  // widens another.
-  function drawWire() {
-    const parts = [$("wirePath"), $("wireDot"), $("wireLabelBg"), $("wireLabel")];
-    const [path, dot, labelBg, label] = parts;
-    const target = widenTarget();
-    const from = target ? intentEls.get(target.id) : null;
-    const to = target ? payeeEls.get(target.addr) : null;
-    if (!from || !to || $("intents").classList.contains("dim")) {
-      for (const el of parts) el.setAttribute("opacity", "0");
-      return;
-    }
 
-    const host = $("wires").getBoundingClientRect();
-    const a = from.getBoundingClientRect();
-    const b = to.getBoundingClientRect();
-    const x1 = a.right - host.left + 2, y1 = a.top - host.top + a.height / 2;
-    const x2 = b.left - host.left - 8, y2 = b.top - host.top + b.height / 2;
-    const bend = Math.max(20, (x2 - x1) * 0.6);
-
-    path.setAttribute("d", `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`);
-    dot.setAttribute("cx", x1);
-    dot.setAttribute("cy", y1);
-
-    path.setAttribute("opacity", "1");
-    dot.setAttribute("opacity", "1");
-
-    // The label and its opaque plate live entirely inside the gutter between the two anchors
-    // — x1..x2, about 61px — and are hidden rather than allowed to spill. Spilling is not a
-    // cosmetic problem: the plate is painted in the page background colour, so a plate wider
-    // than the gap would silently erase the amount on the intent card it overlapped.
-    const gutter = x2 - x1;
-    const lx = (x1 + x2) / 2, ly = (y1 + y2) / 2 - 10;
-    label.setAttribute("x", lx);
-    label.setAttribute("y", ly);
-    let plate = null;
-    try {
-      const box = label.getBBox();
-      plate = { x: box.x - 6, y: box.y - 3, w: box.width + 12, h: box.height + 6 };
-    } catch {
-      plate = null;
-    }
-    if (!plate || plate.w > gutter) {
-      labelBg.setAttribute("opacity", "0");
-      label.setAttribute("opacity", "0");
-      return;
-    }
-    labelBg.setAttribute("x", plate.x);
-    labelBg.setAttribute("y", plate.y);
-    labelBg.setAttribute("width", plate.w);
-    labelBg.setAttribute("height", plate.h);
-    labelBg.setAttribute("opacity", "1");
-    label.setAttribute("opacity", "1");
-  }
-
-  window.addEventListener("resize", drawWire);
 
   /* ------------------------------------------------------------------ the wait */
 
@@ -1362,7 +1293,11 @@ body {
   // countdown to its next read.
   function paintWait() {
     const status = lastStatus;
-    const show = Boolean(status) && pending.length > 0;
+    // `signed`, not `pending`. This strip answers "the widening landed, so why has the
+    // payment not gone through yet" — before a scan there is nothing to wait for, and a
+    // progress bar counting down next to an untouched button is the page inventing
+    // suspense. It cost a round of "why is this showing at the start".
+    const show = Boolean(status) && signed;
     $("wait").hidden = !show;
     if (!show) return;
 
@@ -1421,6 +1356,10 @@ body {
   const VALID_TEXT = $("validText").textContent;
 
   function resetCommandBox() {
+    // Hidden outright rather than filled with "nothing yet — the scan writes here". A
+    // placeholder that announces it is a placeholder is chrome: it occupies the panel,
+    // says nothing, and makes an idle page look like a page mid-operation.
+    $("cmdHead").hidden = true;
     $("cmdLabel").textContent = CMD_PLACEHOLDER;
     $("cmd").textContent = "";
     $("copy").hidden = true;
@@ -1494,6 +1433,7 @@ body {
       const plan = await res.json();
       if (!res.ok) throw new Error(plan.error ?? `widen-plan failed: HTTP ${res.status}`);
 
+      $("cmdHead").hidden = false;
       $("cmdLabel").textContent = "THIS SCAN IS BOUND TO THIS DIGEST";
       $("cmd").textContent = plan.digest;
 
@@ -1644,6 +1584,7 @@ body {
     busy = false;
     signed = true;
     $("qrWrap").hidden = true;
+    $("cmdHead").hidden = false;
     $("cmdLabel").textContent = "SENT FROM THE WALLET — THE AGENT WILL NOTICE ON ITS NEXT TICK";
     $("cmd").textContent = txHash;
     $("copy").hidden = false;
@@ -1716,6 +1657,7 @@ body {
     $("qrWrap").hidden = true;
 
     if (signed_.relay?.sent && signed_.relay.status === "success") {
+      $("cmdHead").hidden = false;
       $("cmdLabel").textContent = "YOUR FACE APPROVED IT — THE AGENT WILL NOTICE ON ITS NEXT TICK";
       $("cmd").textContent = signed_.relay.tx;
       $("copy").hidden = false;
@@ -1741,6 +1683,7 @@ body {
     busy = false;
     signed = true;
     deadlineMs = Number(deadline) * 1000;
+    $("cmdHead").hidden = false;
     $("cmdLabel").textContent = "RUN THIS — IT IS THE ONLY THING THAT CHANGES THE CHAIN";
     $("cmd").textContent = command;
     $("copy").hidden = false;
