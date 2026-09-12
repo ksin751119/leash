@@ -10,15 +10,11 @@
 > One rule behind every line: **nothing is claimed that the screen does not show.** Where the
 > narration says something was refused, it was refused, and the transaction is on Sepolia.
 >
-> **Length, measured rather than estimated.** As written it is over the cap; the three
-> paragraphs marked **⟨cut⟩** are there to come out, in the order they appear, and the count
-> with all three gone is printed at the bottom of this file. Even that leaves no margin at
-> 165 words a minute, so **read it aloud with a timer before you record** — your pace is the
-> only number that settles it, and a script that fits only on paper does not fit.
->
-> Cutting between shots is allowed — only speed-ups are not — so the twenty seconds of face
-> scan and the five seconds of model latency come out in the edit rather than out of the
-> script.
+> **Length is measured, not estimated: run `python3 docs/read-aloud.py`.** It prints this
+> file as a reading script and counts it; the table at the bottom is that script's output.
+> As written it is over the cap, and so is the version with all three **⟨cut⟩** paragraphs
+> dropped — so **read it aloud with a timer before you record.** Your pace is the only
+> number that settles it, and a script that fits only on paper does not fit.
 
 ---
 
@@ -44,7 +40,7 @@ that fails.
 **Neither agent did anything wrong.** Each stayed inside its limit. There were two limits
 and one bank account.
 
-> [point at 03 THE RULE]
+> [point at the band — "The name resolves to the rule", then the budget beside it]
 
 So we stopped giving limits to agents. The limit belongs to a **name**, and the wallet
 finds the rule by walking **ENS** on every payment: registry, subname, then the policy
@@ -90,9 +86,9 @@ And it finds out the same way you did — it reads **a subgraph on The Graph** e
 seconds. A blocked payment doesn't revert, it emits an event, so **the index is the only
 place a refusal is visible.**
 
-> [point at "what this wallet has turned away"]
+> [point at "Refused by the chain"]
 
-And it's why we can show you this: **every payment this wallet has refused**, who asked,
+And it's why we can show you this: **every payment the chain has turned away**, who asked,
 and why. No contract can be asked that question.
 
 > [press the button; scan]
@@ -127,7 +123,7 @@ Listen to how it explains itself: *we'd need the budget increased, or expenses i
 categories reduced.* **Nobody told it another agent existed.** It read the chain and worked
 out it has a colleague.
 
-> [point at the split under the budget bar]
+> [point at the split under the budget bar, top right]
 
 Two names, one track. The ledger on chain is keyed by the name, the token and the day —
 **there is no agent in that key.** The budget was never an agent's. The chain is what adds
@@ -139,7 +135,7 @@ And notice what my face bought a minute ago. **It added a payee. It did not add 
 
 ## Four — the rule itself is a choice somebody made
 
-> [scroll to 05; read the second rule aloud]
+> [right column, "The admin key"; read the second rule aloud]
 
 A second rule, already approved by a human: *small payments to anyone, or the full original
 rules.* Two policy contracts composed with an OR.
@@ -239,35 +235,18 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 
 ---
 
-## The count, so nobody has to trust an estimate
+## The count
+
+`python3 docs/read-aloud.py` prints this file as a reading script — what you say, with what
+you do and what you type marked — and counts it. **That script is the only source for these
+numbers**, because counting them a second way by hand produced a different answer twice and
+the difference was the difference between fitting and not.
 
 | | words | at 165 wpm |
 |---|---|---|
-| as written | **777** | 4.7 min |
-| with all three **⟨cut⟩** paragraphs dropped | **682** | **4.1 min** |
+| as written | **773** | 4.7 min |
+| with all three **⟨cut⟩** paragraphs dropped | **678** | **4.1 min** |
 
-Both are over the 4.0 cap. **This is not a script you can read at leisure** — it needs either
-a faster delivery (180 wpm puts the cut version at 3.8) or one more paragraph out, and which
-one depends on what your rehearsal shows is already obvious from the screen.
-
-Regenerate these numbers after any edit:
-
-```bash
-python3 - <<'PY'
-import re
-t = open("docs/the-story.md").read().split("## Not spoken")[0]
-para, cur = [], []
-for l in t.splitlines():
-    if l.startswith((">", "#", "---")):
-        if cur: para.append(" ".join(cur)); cur = []
-        continue
-    if not l.strip():
-        if cur: para.append(" ".join(cur)); cur = []
-    else: cur.append(l.strip())
-if cur: para.append(" ".join(cur))
-n = lambda p: len(re.sub(r"[*`\[\]⟨⟩]", " ", p).split())
-tot = sum(n(p) for p in para)
-cut = sum(n(p) for p in para if p.startswith("⟨cut⟩"))
-print(f"as written {tot} ({tot/165:.1f} min) | with cuts {tot-cut} ({(tot-cut)/165:.1f} min)")
-PY
-```
+Both are over the 4.0 cap. **This is not a script you can read at leisure** — it needs
+either a faster delivery (180 wpm puts the cut version at 3.8) or one more paragraph out,
+and which one depends on what your rehearsal shows is already obvious from the screen.
