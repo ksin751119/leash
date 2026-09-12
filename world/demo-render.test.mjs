@@ -194,3 +194,28 @@ test("a budget with no periodEnd is left alone rather than guessed at", () => {
   };
   assert.equal(renderRules(s, 9_999_999_999).pct, 94);
 });
+
+// The third beat is a pointer swap, so the page has to show what the pointer could move TO.
+// `live` is computed by comparison rather than read from a flag, because the pointer and
+// the approval list are separate facts — a policy approved but not in use is exactly the
+// state that demo starts from.
+test("renderRules marks which approved policy is live and which is merely approved", () => {
+  const out = renderRules({
+    policy: { address: "0xEC45E967f4E907b92BB1a9A8b4Fcf9f041792490", approved: true },
+    payees: {},
+    budget: { limit: "1", spent: "0", token: "0xt" },
+    approvedPolicies: [
+      { address: "0x88f2bff031bb4cf2beaa28d47ada52ebeebbc33b", description: "StandardPolicy/1: …", approved: true },
+      { address: "0xec45e967f4e907b92bb1a9a8b4fcf9f041792490", description: "Under 1.00 USDC to any payee, or …", approved: true },
+    ],
+  });
+  const [std, set] = out.policies;
+  assert.equal(std.live, false, "approved, but the pointer is elsewhere");
+  assert.equal(set.live, true, "case must not decide this - the pointer arrived checksummed");
+  assert.equal(set.description, "Under 1.00 USDC to any payee, or …");
+});
+
+test("with no approved policies the list is empty rather than undefined", () => {
+  const out = renderRules({ policy: null, payees: {}, budget: null });
+  assert.deepEqual(out.policies, []);
+});

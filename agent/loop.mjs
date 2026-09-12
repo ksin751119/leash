@@ -192,6 +192,7 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       id: intent.id,
       note: intent.note ?? "",
       payee: intent.payee ?? null,
+      ens: intent.ens ?? null,
       token: intent.token ?? null,
       amount: intent.amount ?? null,
       // `sentFingerprint` is deliberately NOT rebuilt here. It arrives through `...prev` and
@@ -363,7 +364,8 @@ let ticking = false;
 // Populated by the startup validation below, after trimming. tick() reads these instead of
 // process.env directly, so a healed value (a trailing CR stripped by validateEnvVar) is what
 // actually gets used everywhere, not just at the startup check.
-let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY, MOCK_USDC;
+let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY, MOCK_USDC,
+  LEASH_RESOLVER;
 
 // Rate-limit backoff. Module state rather than a parameter: `advance` is the pure half and
 // has no business knowing the clock, and `tick` is the only caller that does.
@@ -442,10 +444,17 @@ export function publicState(s) {
     // back to `{}` rather than the previous tick's map matters: a stale allow-list on a
     // failed read would show the page a permission that may no longer exist.
     payees: s.snapshot?.payees ?? {},
+    // Same reasoning as `payees`: absent exactly when the read failed, rather than falling
+    // back to the previous tick. A stale list here would show a rule as available after it
+    // had been revoked.
+    approvedPolicies: s.snapshot?.approvedPolicies ?? [],
     intents: Object.values(s.intents).map((i) => ({
       id: i.id,
       note: i.note,
       payee: i.payee ?? null,
+      // The name the address was resolved from. Shown beside it so the page reads
+      // `bluefin.leash.eth → 0x0000…cafe0` rather than an address from nowhere.
+      ens: i.ens ?? null,
       token: i.token ?? null,
       amount: i.amount ?? null,
       verdict: i.verdict ?? null,
@@ -574,6 +583,12 @@ if (isMain) {
     // defaulted: with a PolicySet installed those two rules are no longer the whole story,
     // and a pre-flight that guesses wrong refuses payments the chain would have made.
     [
+      "LEASH_RESOLVER",
+      ADDR_RE,
+      "a 20-byte hex address (0x + 40 hex chars)",
+      "the ENSIP-10 resolver a vendor name is resolved through. vendors.json holds names and no addresses, so without this the agent cannot work out who to pay.",
+    ],
+    [
       "MOCK_USDC",
       ADDR_RE,
       "a 20-byte hex address (0x + 40 hex chars)",
@@ -604,6 +619,7 @@ if (isMain) {
   LEASH_NODE = envValues.LEASH_NODE;
   STANDARD_POLICY = envValues.STANDARD_POLICY;
   MOCK_USDC = envValues.MOCK_USDC;
+  LEASH_RESOLVER = envValues.LEASH_RESOLVER;
 
   // AGENT_INTENTS points the loop at a different payment list. It exists because this loop
   // has no read-only mode — a tick is read, decide, SEND — so inspecting the HTTP endpoints
@@ -661,6 +677,11 @@ if (isMain) {
             instruction: text,
             token: MOCK_USDC,
             vendorsPath: new URL("./vendors.json", import.meta.url),
+            // Payee addresses come from ENS, not from the directory. Break the resolver and
+            // this throws before a transaction exists — which is the same sentence the
+            // README makes about the policy, now true of the payee too.
+            rpcUrl: SEPOLIA_RPC,
+            resolver: LEASH_RESOLVER,
           });
           const errs = validateIntents(planned);
           if (errs.length) throw new Error(errs.join("; "));

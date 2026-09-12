@@ -51,6 +51,10 @@ export function renderIntent(intent, payees) {
     note: intent.note ?? "",
     payee: intent.payee ?? null,
     payeeShort: shortHex(intent.payee),
+    // `bluefin.leash.eth → 0x0000…cafe0` says where the address came from. The address
+    // alone does not, and "we use ENS" on a page that shows only addresses is a claim
+    // rather than a demonstration.
+    ens: intent.ens ?? null,
     // Absent from the map means never allow-listed — the subgraph writes no Payee entity
     // until one exists — which is also how decide() reads it.
     payeeAllowed: payees?.[key]?.allowed === true,
@@ -105,6 +109,16 @@ export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
     ensName: s.subname?.label ? `${s.subname.label}.leash.eth` : null,
     ensLive: s.subname?.live === true,
     policyDesc: s.policy?.description ?? null,
+    // Marked `live` by comparison rather than by a flag from the index: the pointer and the
+    // approval list are separate facts, and a policy can be approved without being live -
+    // which is exactly the state the OR demo starts from.
+    policies: (s.approvedPolicies ?? []).map((a) => ({
+      addr: a.address,
+      short: shortHex(a.address),
+      description: a.description,
+      approved: a.approved,
+      live: String(a.address).toLowerCase() === String(s.policy?.address ?? "").toLowerCase(),
+    })),
     spent: formatUsdc(spent),
     limit: formatUsdc(limit),
     pct,

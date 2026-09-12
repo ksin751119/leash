@@ -265,6 +265,16 @@
   .cmd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   #cmdLabel { font-size: 14px; color: var(--mut); letter-spacing: .06em; }
   #cmd:empty { display: none; }
+  .policies { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .pol {
+    border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; background: var(--bg);
+  }
+  .pol.live { border-color: var(--accent); background: var(--panel); }
+  .pol-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .pol-addr { font-family: var(--mono); font-size: 14px; color: var(--mut); }
+  .pol.live .pol-addr { color: var(--fg); }
+  .pol-desc { font-size: 14px; color: var(--mut); margin-top: 4px; line-height: 1.4; }
+  .pol.live .pol-desc { color: var(--fg); }
   .chat { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .msg-row { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; line-height: 1.5; }
   .msg-who {
@@ -293,6 +303,10 @@
     border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer;
   }
   .chip:hover { border-color: var(--accent); }
+  .intent .ens {
+    font-family: var(--mono); font-size: 15px; color: var(--fg); margin-right: 8px;
+  }
+  .intent .payee { font-family: var(--mono); font-size: 14px; color: var(--mut); }
   .ens { margin-top: 8px; }
   .ens-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .ens-name {
@@ -437,6 +451,14 @@
         <div class="budget-line">spent <b id="budgetSpent">—</b> of <b id="budgetLimit">—</b> USDC</div>
       </div>
 
+      <!-- What the wallet COULD be pointed at, not only what it is pointed at. A panel
+           showing one address makes the rule look like a property of the wallet; showing
+           the list makes it a choice, and swapping it one transaction. -->
+      <div class="panel">
+        <div class="kv"><span class="k">RULES A HUMAN HAS APPROVED</span></div>
+        <div id="policies" class="policies"></div>
+      </div>
+
       <div class="panel fill">
         <div class="kv"><span class="k">PAYEES THIS WALLET ALLOWS</span></div>
         <div id="payees"></div>
@@ -577,6 +599,35 @@
 
   // Rebuilt wholesale rather than diffed: the list is short, bounded server-side, and only
   // ever grows by one. Diffing it would be machinery guarding nothing.
+  // Rebuilt wholesale: two rows that change once, when someone swaps the pointer. The
+  // swap is the moment the third beat turns on, so it must be impossible to miss - which
+  // is why `live` moves the border rather than adding a word somewhere.
+  function paintPolicies(rows) {
+    const el = $("policies");
+    const sig = rows.map((r) => `${r.addr}${r.live}`).join("|");
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    el.replaceChildren();
+    for (const r of rows) {
+      const box = document.createElement("div");
+      box.className = `pol${r.live ? " live" : ""}`;
+      const head = document.createElement("div");
+      head.className = "pol-head";
+      const addr = document.createElement("span");
+      addr.className = "pol-addr";
+      addr.textContent = r.short;
+      const pill = document.createElement("span");
+      pill.className = `pill ${r.live ? "yes" : "wait"}`;
+      pill.textContent = r.live ? "live" : "approved, not in use";
+      head.append(addr, pill);
+      const desc = document.createElement("div");
+      desc.className = "pol-desc";
+      desc.textContent = r.description ?? "no description was recorded";
+      box.append(head, desc);
+      el.append(box);
+    }
+  }
+
   function paintChat(msgs) {
     const chat = $("chat");
     if (chat.childElementCount === msgs.length) return;
@@ -678,7 +729,7 @@
     el.className = "intent";
     el.innerHTML = `
       <div class="line"><span class="id"></span><span class="note grow"></span><span class="verdict"></span></div>
-      <div class="line"><span class="payee"></span><span class="grow"></span><span class="amount"></span></div>
+      <div class="line"><span class="ens"></span><span class="payee"></span><span class="grow"></span><span class="amount"></span></div>
       <div class="line"><span class="why grow"></span></div>
       <div class="line"><span class="reason grow"></span><span class="tx"></span></div>`;
     return el;
@@ -697,7 +748,11 @@
       el.className = `intent tone-${v.tone}`;
       el.querySelector(".id").textContent = v.id;
       el.querySelector(".note").textContent = v.note;
-      el.querySelector(".payee").textContent = `to ${v.payeeShort}`;
+      // The name first and the address after it, because the name is what a person said
+      // and the address is what the chain answered. Reading it in that order is the
+      // resolution happening.
+      el.querySelector(".ens").textContent = v.ens ? `to ${v.ens}` : "";
+      el.querySelector(".payee").textContent = v.ens ? `→ ${v.payeeShort}` : `to ${v.payeeShort}`;
       el.querySelector(".amount").innerHTML = "";
       el.querySelector(".amount").append(v.amount, Object.assign(document.createElement("i"), { textContent: " USDC" }));
       // The word, always. The colour is the second signal, never the only one.
@@ -721,6 +776,8 @@
     // the only human-readable thing in the control plane. When it is absent, say so rather
     // than leaving a gap that reads as "there is nothing to say".
     $("policyDesc").textContent = rules.policyDesc ?? "no description was recorded at approval";
+
+    paintPolicies(rules.policies ?? []);
 
     $("policyAddr").textContent = rules.policyShort;
     $("policyApproved").textContent = rules.approved ? "approved" : "not approved";

@@ -7,13 +7,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   toBaseUnits, buildPrompt, buildOutcomePrompt, parsePlan, resolvePlan, planPayments,
+  resolveEns, namehash,
 } from "./plan.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const VENDORS = [
-  { id: "acme-retainer", name: "Acme Studio", note: "on retainer", address: "0x000000000000000000000000000000000000bEEF" },
-  { id: "bluefin", name: "Bluefin Design", note: "new", address: "0x00000000000000000000000000000000000CafE0" },
+  { id: "acme-retainer", name: "Acme Studio", note: "on retainer", ens: "acme.leash.eth" },
+  { id: "bluefin", name: "Bluefin Design", note: "new", ens: "bluefin.leash.eth" },
 ];
+const BEEF = "0x000000000000000000000000000000000000beef";
+const CAFE = "0x00000000000000000000000000000000000cafe0";
+const RESOLVED = new Map([["acme.leash.eth", BEEF], ["bluefin.leash.eth", CAFE]]);
 
 // --- amounts ---
 
@@ -97,7 +101,7 @@ test("an object that is neither shape is refused", () => {
 // payee impossible rather than unlikely.
 test("a vendor id the directory does not contain is refused", () => {
   assert.throws(
-    () => resolvePlan({ plan: [{ vendor: "attacker", amount: "5" }], vendors: VENDORS, token: TOKEN }),
+    () => resolvePlan({ plan: [{ vendor: "attacker", amount: "5" }], vendors: VENDORS, token: TOKEN, resolved: RESOLVED }),
     /not in the directory/,
   );
 });
@@ -107,8 +111,9 @@ test("an address supplied by the model is ignored entirely", () => {
     plan: [{ vendor: "bluefin", amount: "5", payee: "0x" + "99".repeat(20), address: "0x" + "99".repeat(20) }],
     vendors: VENDORS,
     token: TOKEN,
+    resolved: RESOLVED,
   });
-  assert.equal(out[0].payee, "0x00000000000000000000000000000000000CafE0", "the directory's address, not the model's");
+  assert.equal(out[0].payee, CAFE, "the address ENS gave, not the model's");
 });
 
 test("the token comes from the caller, never from the model", () => {
@@ -116,6 +121,7 @@ test("the token comes from the caller, never from the model", () => {
     plan: [{ vendor: "bluefin", amount: "1", token: "0x" + "99".repeat(20) }],
     vendors: VENDORS,
     token: TOKEN,
+    resolved: RESOLVED,
   });
   assert.equal(out[0].token, TOKEN);
 });
@@ -125,8 +131,9 @@ test("a resolved plan is exactly the shape intents.json has", () => {
     plan: [{ vendor: "acme-retainer", amount: "5.00", why: "monthly retainer" }],
     vendors: VENDORS,
     token: TOKEN,
+    resolved: RESOLVED,
   });
-  assert.deepEqual(Object.keys(out[0]).sort(), ["amount", "id", "note", "payee", "token"]);
+  assert.deepEqual(Object.keys(out[0]).sort(), ["amount", "ens", "id", "note", "payee", "token"]);
   assert.equal(out[0].amount, "5000000");
   assert.equal(out[0].note, "monthly retainer");
 });
@@ -136,6 +143,7 @@ test("a note is bounded, because it is rendered on a page", () => {
     plan: [{ vendor: "bluefin", amount: "1", why: "x".repeat(500) }],
     vendors: VENDORS,
     token: TOKEN,
+    resolved: RESOLVED,
   });
   assert.equal(out[0].note.length, 80);
 });
@@ -144,12 +152,15 @@ test("a note is bounded, because it is rendered on a page", () => {
 
 const stubRun = (text) => async () => ({ text, durationMs: 1 });
 const stubPlan = (payments, say = "on it") => stubRun(JSON.stringify({ say, payments }));
+// Resolution is stubbed so these stay offline; `resolveEns` has its own tests below.
+const stubResolve = async () => new Map([
+  ["acme.leash.eth", BEEF], ["bluefin.leash.eth", CAFE], ["api.leash.eth", "0x000000000000000000000000000000000000f00d"],
+]);
+const plan = (opts) => planPayments({ token: TOKEN, vendorsPath: new URL("./vendors.json", import.meta.url), resolveImpl: stubResolve, ...opts });
 
 test("an instruction becomes intents", async () => {
-  const { intents } = await planPayments({
+  const { intents } = await plan({
     instruction: "pay the retainer",
-    token: TOKEN,
-    vendorsPath: new URL("./vendors.json", import.meta.url),
     runImpl: stubPlan([{ vendor: "acme-retainer", amount: "5", why: "monthly retainer" }]),
   });
   assert.equal(intents.length, 1);
@@ -158,10 +169,8 @@ test("an instruction becomes intents", async () => {
 });
 
 test("an instruction that asks for no payment yields no intents", async () => {
-  const { intents } = await planPayments({
+  const { intents } = await plan({
     instruction: "what is our budget?",
-    token: TOKEN,
-    vendorsPath: new URL("./vendors.json", import.meta.url),
     runImpl: stubPlan([], "There is nothing to pay here."),
   });
   assert.deepEqual(intents, []);
@@ -170,10 +179,8 @@ test("an instruction that asks for no payment yields no intents", async () => {
 // The demo's second beat, stated as a test: the model proposing a payment the chain will
 // refuse is not a failure of this module. It is the thing being demonstrated.
 test("a payment to a payee nobody allow-listed is planned, not filtered out here", async () => {
-  const { intents } = await planPayments({
+  const { intents } = await plan({
     instruction: "we hired Bluefin, pay them 5 dollars",
-    token: TOKEN,
-    vendorsPath: new URL("./vendors.json", import.meta.url),
     runImpl: stubPlan([{ vendor: "bluefin", amount: "5", why: "first invoice" }]),
   });
   assert.equal(intents.length, 1, "this module does not second-guess the chain");
@@ -183,10 +190,8 @@ test("a payment to a payee nobody allow-listed is planned, not filtered out here
 // --- what it says ---
 
 test("the sentence the model addresses to the person is carried through", async () => {
-  const { say } = await planPayments({
+  const { say } = await plan({
     instruction: "pay the retainer",
-    token: TOKEN,
-    vendorsPath: new URL("./vendors.json", import.meta.url),
     runImpl: stubPlan([{ vendor: "acme-retainer", amount: "5" }], "Paying the studio retainer, 5.00 USDC."),
   });
   assert.equal(say, "Paying the studio retainer, 5.00 USDC.");
@@ -217,4 +222,74 @@ test("the outcome prompt states what happened and does not prescribe the remedy"
   // pinning the template's silence anyway: the day explain stops saying it, we want the
   // agent to go quiet about it too rather than keep asserting it from a hardcoded string.
   assert.equal(/face scan/i.test(p), false, "no remedy may be hardcoded into the template");
+});
+
+// --- ENS is where a payee address comes from ---
+//
+// vendors.json has no `address` field. Every one of these tests exists because that is the
+// difference between ENS being load-bearing and ENS being a label on a screen.
+
+test("a name that does not resolve stops the payment before a transaction exists", () => {
+  assert.throws(
+    () => resolvePlan({
+      plan: [{ vendor: "bluefin", amount: "5" }],
+      vendors: VENDORS, token: TOKEN,
+      resolved: new Map(), // the record is gone
+    }),
+    /does not resolve to an address/,
+  );
+});
+
+test("the ENS name is carried onto the intent, so the page can show the resolution", () => {
+  const out = resolvePlan({
+    plan: [{ vendor: "bluefin", amount: "5" }], vendors: VENDORS, token: TOKEN, resolved: RESOLVED,
+  });
+  assert.equal(out[0].ens, "bluefin.leash.eth");
+  assert.equal(out[0].payee, CAFE);
+});
+
+test("namehash agrees with the value this project has used on chain since 09-08", () => {
+  assert.equal(
+    namehash("vendors.leash.eth"),
+    "0x9b4cc5763f1c6dd5f80b1dd4d6d4c968b9971c25243467394f04e9aa1145e121",
+  );
+  assert.equal(namehash(""), "0x" + "00".repeat(32));
+});
+
+// A name whose record was never set resolves to the zero address. Paying that is burning
+// money, so it must be an error and not an answer.
+test("resolveEns refuses the zero address rather than returning it", async () => {
+  const zero = "0x" + "00".repeat(32) + "0".repeat(64) + "0".repeat(64);
+  await assert.rejects(
+    () => resolveEns({
+      names: ["nobody.leash.eth"], rpcUrl: "http://x", resolver: "0x" + "11".repeat(20),
+      fetchImpl: async () => ({ ok: true, json: async () => ({ result: "0x" + "00".repeat(96) }) }),
+    }),
+    /zero address/,
+  );
+});
+
+test("resolveEns asks the resolver once per distinct name", async () => {
+  let calls = 0;
+  const beefWord = "0".repeat(24) + "beef".padStart(40, "0");
+  const r = await resolveEns({
+    names: ["acme.leash.eth", "acme.leash.eth", "bluefin.leash.eth"],
+    rpcUrl: "http://x", resolver: "0x" + "11".repeat(20),
+    fetchImpl: async () => {
+      calls++;
+      return { ok: true, json: async () => ({ result: "0x" + "00".repeat(32) + "00".repeat(32) + beefWord }) };
+    },
+  });
+  assert.equal(calls, 2, "two distinct names, two calls");
+  assert.equal(r.size, 2);
+});
+
+test("an rpc error naming the name is surfaced, not swallowed", async () => {
+  await assert.rejects(
+    () => resolveEns({
+      names: ["acme.leash.eth"], rpcUrl: "http://x", resolver: "0x" + "11".repeat(20),
+      fetchImpl: async () => ({ ok: true, json: async () => ({ error: { message: "execution reverted" } }) }),
+    }),
+    /acme\.leash\.eth did not resolve/,
+  );
 });

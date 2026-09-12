@@ -3,18 +3,18 @@
     "id": "acme-retainer",
     "name": "Acme Studio \u2014 monthly retainer",
     "note": "Our design studio, on retainer since March. The agreed rate is 5.00 USDC per month.",
-    "address": "0x000000000000000000000000000000000000bEEF"
+    "ens": "acme.leash.eth"
   },
   {
     "id": "bluefin",
     "name": "Bluefin Design \u2014 new contractor",
     "note": "Signed a statement of work last week. Never paid before. Their first invoice is 5.00 USDC.",
-    "address": "0x00000000000000000000000000000000000CafE0"
+    "ens": "bluefin.leash.eth"
   },
   {
     "id": "inference-api",
     "name": "Inference API \u2014 usage credits",
     "note": "Pay-as-you-go model credits. Small, frequent top-ups; usually 0.50 USDC at a time.",
-    "address": "0x000000000000000000000000000000000000f00D"
+    "ens": "api.leash.eth"
   }
 ]

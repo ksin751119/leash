@@ -141,6 +141,15 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
               ?.description ?? null,
         }
       : null,
+    // Every policy a human has ever approved, so the page can show what the wallet COULD be
+    // pointed at and not only what it is pointed at. Swapping the pointer is one
+    // transaction; a panel that shows a single address makes it look like a property of the
+    // wallet rather than a choice someone made.
+    approvedPolicies: (d.approvedPolicies ?? []).map((a) => ({
+      address: lower(a.id),
+      description: a.description ?? null,
+      approved: a.approved === true,
+    })),
     budget: d.agentBudget
       ? {
           token: lower(d.agentBudget.token),
