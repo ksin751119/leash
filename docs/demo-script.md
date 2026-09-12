@@ -293,6 +293,52 @@ all. 48 refuses in both worlds.
 
 ---
 
+## How long it actually takes
+
+The word count measures talking. It does not measure **waiting**, and the waiting is what
+decides whether this fits in four minutes.
+
+Measured on 2026-09-12 against the live deployment, not estimated:
+
+| what you do | what you wait for | measured |
+|---|---|---|
+| press **Ask** (a payment that will go through) | model plans, agent reads the index, sends, and the receipt comes back — the card appears already **DONE** | **21.8 s** |
+| ↳ of which, the model alone | | 3.7 – 7.1 s (n=4) |
+| then | the budget bar moves (the index catches up) | **+6.1 s** |
+| press **Ask** (a payment that will be refused) | model only — nothing is sent, so there is no receipt to wait for | **8.5 – 11.2 s** |
+| press **point the name here** | one Sepolia block | ~12 – 15 s |
+| **the face scan** | open World App, scan, camera, liveness, relay | **not measured — you have to run it** |
+
+**Add it up and the raw take is six to six and a half minutes** against a four-minute cap.
+That is not a problem, because cuts between shots are allowed and speed-ups are not: the
+dead time comes out in the edit. But it has to come out deliberately, which means knowing
+where it is before you record.
+
+### Talk over the waits, don't wait in silence
+
+The script is written so each wait has narration sized to cover it. Where it does not, the
+gap is where you cut.
+
+| wait | what you say over it | fits? |
+|---|---|---|
+| beat 1, 21.8 s | "Claude is deciding what to pay… it can't make up an address and send money there." (~50 words, ~18 s) | close — a couple of seconds to trim |
+| beat 2, ~10 s | "Now we have a new contractor… It picks the right vendor." (~22 words, ~8 s) | yes |
+| the face scan, ? | "But this contractor is real… An API key or an agent key cannot do this." (~60 words, ~22 s) | **unknown until you time the scan** |
+| widening → next tick | "And we don't need to tell the agent anything… Now the payment goes through." (~20 words, ~7 s) | short — expect to cut |
+| beat 4 swap, ~15 s | "The admin key can point the ENS name… rules a human already agreed to." (~45 words, ~16 s) | yes |
+| beat 4 payment, ~22 s | "And this time, it works… The difference is the amount." (~35 words, ~13 s) | short by ~9 s — cut |
+
+### The one number only you can measure
+
+**Time the face scan on a full rehearsal**, phone in hand, from pressing the button to the
+payment landing. It is the longest single wait and the only one that cannot be talked over
+comfortably, because you are holding a phone and looking at it rather than at the screen.
+
+If it runs past ~25 seconds, the honest fix is an edit cut while the phone is up — the World
+App interaction is worth showing, but not every second of it.
+
+---
+
 ## If something goes wrong
 
 | What you see | What it is | What to do |
