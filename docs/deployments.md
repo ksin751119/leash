@@ -703,3 +703,137 @@ Two more limits worth restating rather than letting the good news above imply pa
   > and the proof comes back `identifier: "selfie"`. The credential does say which one was
   > exercised; we had never asked for the one we wanted. See `docs/world-feedback.md` §7.5
   > and §7.9.
+
+## Two agents, one budget (2026-09-12)
+
+A second agent was bound to the **same** name, `vendors.leash.eth`. No contract changed,
+and none needed to: the property was already in the data model, it had simply never been
+exercised.
+
+| # | Action | Sent by | Transaction | Result |
+|---|---|---|---|---|
+| 1 | gas for `AGENT2` | ADMIN | [`0x1441fb4a…`](https://sepolia.etherscan.io/tx/0x1441fb4ade8086005c3cc96c29ca93cea6798daa881129d6e7aff584ae43a64c) | 0.012 ETH |
+| 2 | `bindAgent(AGENT2, vendors, "vendors")` | WALLET | [`0xa7d6fbbd…`](https://sepolia.etherscan.io/tx/0xa7d6fbbddd1542b038905f3d730c994c7122c9d8ec11efcae7f78347d74f026a) | 72,051 gas. `AgentBound` only |
+| 3 | `spend(USDC, acme, 1.00)` | **AGENT2** | [`0xbe743cd4…`](https://sepolia.etherscan.io/tx/0xbe743cd45fe05d9d97a1970eb07e7c1fe8b8f3f86c4311c29fe3fc70e3a1bfd1) | 109,929 gas. `SpendExecuted` |
+
+`AGENT2` is `0x2160562A1C07f854cA37F502fa34BE0887259F8a`.
+
+**Step 2 cost 72,051 gas against the first bind's 94,036.** The difference is `Leashed`,
+which fires once per wallet and had already fired — `leashedEmitted` behaving as designed.
+
+**Step 3 is the measurement.** Read either side of it:
+
+```
+spentInCurrentPeriod(vendors, USDC)   before   20.50 USDC   ← put there by AGENT
+spentInCurrentPeriod(vendors, USDC)   after    21.50 USDC   ← moved by AGENT2
+```
+
+AGENT2 had never sent a transaction before. It began its first payment 20.50 USDC into a
+50 USDC budget, because **the budget is not its own**. Nothing links the two agents but the
+node they are both bound to: no shared database, no coordinator, no message between them.
+
+### Why this needed no new code
+
+```solidity
+mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
+```
+
+Three keys — name, token, period. **No agent.** And the getter's ABI says the same thing
+out loud:
+
+```solidity
+function spentInCurrentPeriod(bytes32 node, address token) external view returns (uint256);
+```
+
+There is no per-agent overload because there is no per-agent number.
+
+The guard in `bindAgent` is often misread as preventing this:
+
+```solidity
+if (b.node != bytes32(0)) revert AlreadyBound();
+```
+
+It refuses **an agent that is already bound**. It says nothing about the node. So the
+constraint runs one way only, and that is the useful direction:
+
+- many agents → one node — **allowed**, and now measured
+- one agent → two nodes — **refused**
+
+The second is refused deliberately. An agent that could sit under two budgets would move
+to the other one when the first ran out, which turns a limit into a suggestion.
+
+### Attribution survives the sharing
+
+`SpendExecuted` and `SpendBlocked` both carry `address indexed agent`. The limit belongs to
+the department; every transaction is still filed under the agent that sent it. That is the
+corporate-card arrangement exactly — one credit line, and the statement still names the
+cardholder on every line item.
+
+### Rehearsal, 2026-09-12 09:40–09:55 UTC — every beat but the face scan
+
+Run end to end against the deployed contracts, with two agent processes and the page.
+
+| Beat | What was asked, and of whom | Result |
+|---|---|---|
+| 1 | **payments**: "Pay this month's studio retainer." | 5.00 USDC → `acme.leash.eth`, [`0x946af0d4…`](https://sepolia.etherscan.io/tx/0x946af0d4b0cb99d483ca3751a2bf50b23e59f6985af77e816a06542f8dc7c75c). Budget 26.50 → 31.50 |
+| 3 | **subscriptions**: "Renew our annual licence with Acme Studio — 48.00 USDC." | refused, `8 OVER_PERIOD_LIMIT`. *"18.50 left of 50.00 USDC, and this payment is 48.00"* |
+| 4a | ADMIN points the name at `PolicySet` | [`0xfb8c44d4…`](https://sepolia.etherscan.io/tx/0xfb8c44d4afe5ffbc5e212c1c0fd60a00d139f004e7f1b8ae6ee44e7cce7fca51) |
+| 4b | **payments**: "Top up our inference API credits by 50 cents." | 0.50 USDC → `api.leash.eth` — a payee **never on the allow-list** — [`0xf4f17919…`](https://sepolia.etherscan.io/tx/0xf4f17919e7b1d01af94e427ddc02b8cd5796a2759e102da5050a27410c297f62). The payee panel reads **`paid, never listed`** |
+| — | pointer restored to `StandardPolicy` | [`0xafd1196f…`](https://sepolia.etherscan.io/tx/0xafd1196f0d813f6c5b923970b28b3432eee5a0816d7ba911099495519288b7a2) |
+
+**Beat 2 (the face scan) was not rehearsed** — it needs a phone in front of a camera, and
+there is no way to fake it that would be worth anything. Its two halves were exercised
+separately on 2026-09-11 (a real scan reaching `allowPayeeByFace`) and are unchanged since.
+
+#### What the second agent said, unprompted
+
+> "The Acme Studio renewal of 48.00 USDC was refused because it exceeds our period budget —
+> we have only 18.50 USDC remaining of our 50.00 USDC limit. To make this payment, we'd need
+> the period budget increased **or expenses in other categories reduced** to free up the
+> necessary funds."
+
+Nobody told it about the other agent. It read the budget off the chain, found the money
+gone, and inferred a colleague. That last clause is the demo's whole argument arriving from
+the model rather than from the narration.
+
+#### One thing this rehearsal changed
+
+The refusal first read `this would exceed the period budget (23500000 left of 50000000)`.
+Base units are what the chain speaks and what every comparison in `decide.mjs` uses, but
+nobody watching could size them at a glance — and that sentence is the one place a shared
+budget becomes legible. Only the explanation is formatted; every decision above it stays in
+base units. `decide.test.mjs` now pins the string.
+
+### The second agent's refusal is on chain, not only predicted (2026-09-12 09:48 UTC)
+
+The rehearsal above recorded beat 3 as a **prediction** — `decide()` read the budget off the
+index, found no room, and never sent. That is what happens under `StandardPolicy`.
+
+Minutes later, while the pointer was swapped to `PolicySet` for beat 4, the same intent was
+still live in the subscriptions agent. `decide()` declines to guess when the installed policy
+is not the one whose rules it encodes, so it returned `will-pass` — *let the chain answer* —
+and the agent sent it. Twice.
+
+| Transaction | Sent by | Result |
+|---|---|---|
+| [`0x695e618c…`](https://sepolia.etherscan.io/tx/0x695e618c1b3da3b2d78b71d2e8479a99c66766c030f4ef52daa539db21a27eb1) | `AGENT2` | status = 1, `SpendBlocked(reason = 8)`, 48.00 USDC, **no `Transfer`** |
+| [`0x096467a3…`](https://sepolia.etherscan.io/tx/0x096467a3f40c559dd8b10465e3797f5eb9360e427c86b24c92c7418b7bdef022) | `AGENT2` | the same, one tick later |
+
+Three things are settled by those two transactions, and none of them were staged:
+
+1. **The shared budget is enforced by the contract, not by the agent's pre-flight.** The
+   refusal in the rehearsal was the agent declining to try; these are the chain declining to
+   pay. Same reason code, and this time nothing offchain was involved in the decision.
+2. **`PolicySet` honours the period budget.** 48.00 is over `MicroPaymentPolicy`'s 1.00 cap,
+   so that clause fails and the general clause decides — and the reported code is the *last*
+   clause's, which is the rule `PolicySet` was written to follow. An OR composition that
+   reported the first clause's code would have said "over the micro cap" when the fact worth
+   knowing is "the company's budget is spent".
+3. **`blocked-despite-green` is a real state, not a defensive comment.** `agent/loop.mjs`
+   names it because a pre-flight that reads an index can be wrong in the permissive
+   direction; here it was, twice, and the money still did not move.
+
+The second transaction is the latch working: the agent sent once, got a refusal, and stopped
+asking — the re-send happened because the *policy pointer changed between ticks*, which is
+exactly one of the three conditions `advance()` treats as "something that could change the
+answer".

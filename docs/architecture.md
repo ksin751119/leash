@@ -68,9 +68,72 @@ reach the rules. And the rules live under a name the wallet does not own.
 | **WALLET** | The money; delegated to `LeashAccount` | Pay — every agent payment goes through the policy | Touch ENS. Its role bitmap is `0`, not because of a check but because it was never granted one |
 | **AGENT** | Nothing | Call `spend` | Hold funds, hold permissions, or change any rule |
 
+There can be **more than one AGENT**, and in the demo there are two. They are separate keys
+in separate processes with no channel between them, and they draw on one budget — see below.
+
 A stolen ADMIN key can move a name's pointer, but only to a policy that a human
 already approved. The blast radius is bounded by "every approved policy", never by
 "arbitrary code".
+
+---
+
+## A name is the unit of authority, not an agent
+
+The ledger the account keeps has three keys, and an agent is not one of them:
+
+```solidity
+mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
+```
+
+`_bucket(r)` is `(uint256(r.epoch) << 224) | (block.timestamp / r.period)` — the high bits
+isolate a key-space that only `setRule` may advance, the low bits roll the period over on
+their own with no transaction from anyone.
+
+So **every agent bound to the same node spends from the same number**, and the binding guard
+permits exactly that:
+
+```solidity
+if (b.node != bytes32(0)) revert AlreadyBound();   // refuses a bound AGENT, not a used NODE
+```
+
+- **many agents → one node: allowed.** This is how a budget is shared, and it needs no
+  coordination anywhere offchain — no shared database, no lock, no message. Atomicity comes
+  from the chain.
+- **one agent → two nodes: refused, deliberately.** An agent that could sit under two
+  budgets would move to the second when the first ran out, which makes a limit a suggestion.
+
+### The account keeps the ledger; the policy decides
+
+This is the part to be precise about, because it bounds the guarantee:
+
+```solidity
+uint8 reason = _askPolicy(policy, SpendContext({
+    agent: msg.sender, payee: payee, token: token, amount: amount,
+    tokenAllowed: r.allowed, payeeAllowed: $.payees[node][token][payee],
+    txLimit: r.txLimit, periodLimit: r.periodLimit, spentSoFar: spentSoFar,
+    nowTs: uint64(block.timestamp), windowStart: r.windowStart, windowEnd: r.windowEnd
+}));
+```
+
+The account hands the policy both the limit and the running total and honours whatever
+reason code comes back. **A policy that ignores `periodLimit` has no period limit.** That is
+why `MicroPaymentPolicy` checks it even though its own cap is 1.00 USDC — without that, an
+agent empties a 50 USDC budget in ninety-cent slices and never meets a human. The
+composition's spec states it as non-optional.
+
+So the shared budget holds on two things: **the ledger is on chain and has no agent in its
+key**, and **every approved policy respects it.** The second is what a human is agreeing to
+when they approve a rule, which is why `describe()`'s sentence is shown at approval time and
+again on the demo page.
+
+### Attribution survives the sharing
+
+`SpendExecuted` and `SpendBlocked` both carry `address indexed agent`. The limit belongs to
+the name; each transaction is still filed under the key that sent it. The chain stores no
+per-agent total, so the demo page reconstructs one from the spend log in
+`agent/subgraph.mjs:buildCohort` — walking `spentAfter` back from the budget's current total
+until it reaches zero, which locates the period boundary by arithmetic rather than by
+assuming a period length.
 
 ---
 
@@ -373,5 +436,8 @@ objection no longer holds — but it is an address, and that is what "approved" 
    resolve, then break it.
 3. `src/LeashAccount.sol` — `spend` and `resolvePolicy`; then `src/PolicySet.sol` for the
    composition and why its members are reached by `staticcall`.
+   While you are in `spend`, note what is **not** in the key of `$.spent` — that absence is
+   the shared budget, and it is the one claim in this project you can check by reading a
+   single line.
 4. [`world-feedback.md`](world-feedback.md) — a dated running log of the World
    integration, written as it happened and not flattering.

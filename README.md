@@ -1,10 +1,59 @@
 # Leash
 
-> An onchain policy engine for AI agent wallets. Spending rules live under an ENS name
-> where the agent cannot reach them. Loosening a rule requires a live human face;
-> tightening one is always free.
+> **A permission engine for AI agent wallets.** What an agent may spend and who it may pay
+> lives in a contract on chain — and the wallet enforces it on every transaction, instead of
+> the agent enforcing it on itself.
+>
+> Loosening a rule costs a live human face. Tightening one is always free.
 
 **ETHGlobal ETHOnline 2026** · Sepolia · solo entry · [ENS](#ens) · [The Graph](#the-graph) · [World](#world)
+
+---
+
+## In one screen
+
+A person asks an AI to send money. The AI agrees. **The chain says no.**
+
+```
+you:    "We just hired Bluefin Design for the rebrand. Pay their first invoice."
+model:  bluefin  5.00 USDC     (3.9s)
+chain:  SpendBlocked — 6 PAYEE_NOT_ALLOWED
+```
+
+None of that is staged. A real language model chose the vendor and the amount, and the
+refusal is an onchain event you can look up. **The interesting demo is the one where the
+agent proposes something the rules refuse** — because an agent that has to be well-behaved
+for your money to be safe is not safe.
+
+![a refused payment, and the allow-list that explains it](docs/img/refusal.png)
+
+## If you have two minutes, look at these
+
+| | |
+|---|---|
+| **The thing to watch** | [Two agents, one budget](#two-agents-one-budget) — the property that needs no trust to verify |
+| **Is ENS load-bearing?** | [ENS](#ens) — three hops on every payment; break one and nothing passes |
+| **Is the index load-bearing?** | [The Graph](#the-graph) — refusals are events, not reverts, so the index is the only place they exist |
+| **Is World doing real work?** | [World](#world) — a face outranks every key in the system, including the wallet's own |
+| **Does it actually run?** | [`docs/deployments.md`](docs/deployments.md) — every address, every transaction hash, a copy-pasteable `eth_call` recipe |
+| **What would I see in the video?** | [`docs/demo-script.md`](docs/demo-script.md) — the run of show, with what can go wrong |
+
+## Run it
+
+```bash
+./run-demo.sh --dry     # page on :8787, one agent process per key, nothing is paid
+```
+
+Then open `http://localhost:8787/?agent=payments` and tell the agent what to do in English.
+Open `?agent=subscriptions` in a second window to watch the other one. `--dry` starts both
+agents with an empty payment list; without it, **the first tick spends real test money** —
+there is no read-only mode, because sending is the job.
+
+It reads one `.env` and hands each process only the key it is allowed to hold:
+[`agent/README.md`](agent/README.md) lists every variable and says why the wallet's key is
+never one of them. The page server's half is in [`world/README.md`](world/README.md).
+
+Foundry side: `forge test`. Node side: `cd agent && node --test`, `cd world && node --test`.
 
 ---
 
@@ -14,6 +63,10 @@ An AI agent that can spend money needs a spending limit. Every existing answer p
 that limit somewhere the agent can reach: a config file it reads, an API key it holds,
 a session key with a cap the agent itself enforces. Compromise the agent and the limit
 goes with it.
+
+And limits given to agents **do not add up.** Teams do not deploy one agent; they deploy
+several. Each one stays inside the limit it was given, and the account is still empty by
+noon. That is not a security failure — it is arithmetic, and no per-agent setting can fix it.
 
 Session keys and allowance lists express *who* and *how much*, but not *whether this
 particular payment makes sense*. A settings table cannot answer that.
@@ -94,6 +147,62 @@ switch its attester from the mock to `WorldAttester`, and once on 2026-09-11 to 
 face-authorised widening path. Every superseded impl and the full history are in
 [`docs/deployments.md`](docs/deployments.md) — nothing is deleted there, because a
 redeployment is a fact about the system and not an embarrassment.
+
+## Two agents, one budget
+
+The demo runs **two agent processes holding two different keys.** Neither is told the other
+exists — no shared database, no coordinator, not one message between them.
+
+They share a budget anyway, because they share a **name**:
+
+```solidity
+mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
+```
+
+Three keys — name, token, period. **There is no agent in that key.** The getter says the
+same thing out loud:
+
+```solidity
+function spentInCurrentPeriod(bytes32 node, address token) external view returns (uint256);
+```
+
+There is no per-agent overload because there is no per-agent number. And `bindAgent`'s
+guard runs one way only:
+
+```solidity
+if (b.node != bytes32(0)) revert AlreadyBound();   // refuses a bound AGENT, not a used NODE
+```
+
+- many agents → one name — **allowed**, and this is how a budget is shared
+- one agent → two names — **refused**, deliberately: an agent that could sit under two
+  budgets would move to the other one when the first ran out, which turns a limit into a
+  suggestion
+
+![two agents, one budget, and the refusal that proves it](docs/img/shared-budget.png)
+
+In the shot above, the `subscriptions` agent has spent **1.00 USDC all day** and is refused
+with `8 OVER_PERIOD_LIMIT`. The vendor is on the allow-list; the amount is under the
+per-transaction cap. It is out of money because a colleague spent it.
+
+**And it worked that out by itself.** Nothing in its prompt mentions another agent:
+
+> "The renewal of 48.00 USDC was refused because it exceeds our period budget — we have only
+> 18.50 USDC remaining of our 50.00 USDC limit. To make this payment, we'd need the period
+> budget increased **or expenses in other categories reduced** to free up the necessary
+> funds."
+
+**This needed no contract change.** The property was already in the data model; binding a
+second agent is what made it visible. Transactions and the before/after reading of
+`spentInCurrentPeriod` are in [`docs/deployments.md`](docs/deployments.md).
+
+### Attribution survives the sharing
+
+`SpendExecuted` and `SpendBlocked` both carry `address indexed agent`. The limit belongs to
+the name; every transaction is still filed under the key that sent it. The chain keeps no
+per-agent total, so the split under the budget bar is **reconstructed from the spend log** —
+`agent/subgraph.mjs:buildCohort` walks `spentAfter` back from the current total until it
+reaches zero, which finds the period boundary by arithmetic rather than by assuming a period
+length.
 
 ## The rule is composable, and that is not a claim you have to take on trust
 
@@ -334,6 +443,18 @@ One permission is deliberately narrowed against ENS convention: a subname holder
 set its own resolver. In this model **a name is a leash, not a possession** — it governs
 the holder rather than belonging to them.
 
+**A name is also the unit of authority, and that is what makes a budget shareable.** The
+onchain ledger is keyed by the namehash, so two agents bound to `vendors.leash.eth` draw
+down one number with no coordination between them — see [Two agents, one
+budget](#two-agents-one-budget). The name is doing three separate jobs here, and breaking
+any of them stops the system:
+
+1. it resolves to the rule, three hops, on every payment
+2. it resolves to every payee — `agent/vendors.json` holds names and no addresses, so a
+   hallucinated payee has nowhere to appear
+3. **it owns the budget**, which is why a second agent is a colleague rather than a second
+   wallet
+
 ### The Graph
 
 **Live on Subgraph Studio, indexing real Sepolia events:**
@@ -344,6 +465,30 @@ https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.9
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it
 returns against the run above are in [`docs/deployments.md`](docs/deployments.md).
+
+**Four things on the demo page exist only because an index read the log**, and the page says
+so beside each of them rather than leaving you to work it out:
+
+| on screen | why no contract can answer it |
+|---|---|
+| **what this wallet has turned away** | a refusal is a no-op plus an event, not a revert. No getter anywhere can be asked what was refused today |
+| **payees this wallet allows** | `isPayeeAllowed(node, token, payee)` needs an address you already have. There is no list |
+| **rules a human has approved** | `PolicyApprovals` has `descriptionOf[policy]`, but no array. Beat four is a choice between two rules, and only the log knows there are two |
+| **who spent the shared budget** | `spent` has no agent in its key, so this number does not exist on chain in any form |
+
+![the refusal log, read back out of the index](docs/img/refusals.png)
+
+`everAllowed` belongs to the same family: a payee who was approved and dropped, and one who
+was never listed, both read `false` on chain. The distinction is pure history, and it is the
+whole punchline of the last beat.
+
+The arithmetic lives in the mappings — `remaining`, `spendCount`, `blockedCount`,
+`everAllowed` are written by handlers — because an untrusted agent that sums events itself
+is an agent that can get the sum wrong in its own favour. `buildCohort` is the one thing
+computed client-side, and it is careful about a trap the schema sets: `SpendBlocked` records
+its `spentSoFar` in the same field an executed spend uses for `spentAfter`, so a refusal
+looks exactly like a valid link in the chain of totals. Following one would hand an agent an
+amount nobody spent. Eight tests pin the walk, including that one.
 
 The subgraph in [`subgraph/`](subgraph) indexes the control plane and every spend
 attempt, executed and blocked alike. Its eight entities are shaped by the four questions
@@ -479,6 +624,8 @@ On Ubuntu 22 or 24, `cd subgraph && npm test` is enough.
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | **Start here.** What is enforced, by what, and what is not claimed |
 | [`docs/deployments.md`](docs/deployments.md) | Addresses, transactions, and a verification recipe you can paste |
+| [`docs/demo-script.md`](docs/demo-script.md) | The run of show for the video — what to press, in what order, and what goes wrong |
+| [`docs/the-story.md`](docs/the-story.md) | The narration, and why the demo is framed the way it is |
 | [`docs/PLAN.md`](docs/PLAN.md) | The full working document, including every overturned decision |
 | [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** |
 | [`docs/world-feedback.md`](docs/world-feedback.md) | Developer feedback for the World track |
