@@ -58,11 +58,30 @@ for pair in "acme true" "bluefin false" "api false"; do
 done
 
 head_ "4. the budget"
+# The room a full run needs: 5.00 retainer + 5.00 Bluefin (after the scan) + 0.50 top-up.
+# Beat 3 is refused and costs nothing. Reporting only pass/fail here is not enough — what
+# an operator needs to know at 2am is WHICH beats still fit, because the one carrying the
+# only unmeasured wait (the face scan) is beat 2, and it needs 5.50 rather than 10.50.
 spent=$(num "$WALLET_ADDR" "spentInCurrentPeriod(bytes32,address)(uint256)" "$NODE" "$MOCK_USDC")
-if [ "$spent" = ERR ]; then fail "could not read spentInCurrentPeriod — check MOCK_USDC and LEASH_NODE in .env"
-elif [ "$spent" -lt 2000000 ]; then pass "$(usdc $spent) of 50.00 spent — the script's numbers will match"
-elif [ "$spent" -lt 30000000 ]; then warn "$(usdc $spent) of 50.00 already spent. Beats still refuse correctly, but 'five dollars out of fifty' will not match the screen. It zeroes itself at 00:00 UTC / 08:00 Taipei"
-else fail "$(usdc $spent) of 50.00 spent — not enough room for beats 1 and 2. Wait for 00:00 UTC; no reduction can clear the ledger"; fi
+rollover=$(python3 -c "
+import datetime
+now = datetime.datetime.now(datetime.timezone.utc)
+nxt = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+print(str(nxt - now).split('.')[0])")
+if [ "$spent" = ERR ]; then
+  fail "could not read spentInCurrentPeriod — check MOCK_USDC and LEASH_NODE in .env"
+else
+  room=$((50000000 - spent))
+  if [ "$spent" -lt 2000000 ]; then
+    pass "$(usdc $spent) of 50.00 spent — every beat fits and the script's numbers match the screen"
+  elif [ "$room" -ge 10500000 ]; then
+    warn "$(usdc $spent) of 50.00 spent. All four beats run, but 'five dollars out of fifty' will not match the screen. Zeroes itself in $rollover"
+  elif [ "$room" -ge 5500000 ]; then
+    warn "$(usdc $spent) of 50.00 spent — $(usdc $room) left. Beat 1 will not fit, but beats 2, 3 and 4 will, which is enough to TIME THE FACE SCAN. Zeroes itself in $rollover"
+  else
+    fail "$(usdc $spent) of 50.00 spent — only $(usdc $room) left, not enough for beat 2. No reduction can clear the ledger; it zeroes itself in $rollover"
+  fi
+fi
 
 head_ "5. money and gas"
 bal=$(num "$MOCK_USDC" "balanceOf(address)(uint256)" "$WALLET_ADDR")

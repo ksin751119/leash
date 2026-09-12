@@ -61,12 +61,17 @@ Fix the FAILs, run it again, and record when it says READY.
 1. the face          WORLD_ACTION is leash-owner; ownerNullifier matches it
 2. the rule          the pointer is StandardPolicy; both policies are approved
 3. the payees        acme allowed, bluefin and api not
-4. the budget        under 2.00 spent, or the script's numbers stop matching the screen
+4. the budget        how much room is left, and which beats still fit in it
 5. money and gas     the wallet's USDC, and ETH on AGENT / AGENT2 / ADMIN
 6. the binding       both agents on vendors.leash.eth — beat 3 is nothing without it
 7. the index         the subgraph answers 200 and is within a few blocks
 8. the processes     page on 8787, both agents on 8788 / 8789
 ```
+
+The budget check reports **which beats still fit** rather than a bare pass/fail, because a
+partly-spent day is the normal case and the beat carrying the only unmeasured wait — the
+face scan — needs 5.50 of room while a full run needs 10.50. Knowing you can still rehearse
+the scan is worth more at 2am than being told to wait.
 
 **A check that can report green on its own failure is worse than no check.** The first
 version read `spentInCurrentPeriod` without its token argument, `cast` errored, the empty
