@@ -1040,9 +1040,67 @@ the rest of the credential surface should feel.
 
 ---
 
+## 8. Binding a nullifier to a wallet: the one thing nobody tells you
+
+*Added 2026-09-12, after a real scan run by a human.*
+
+A nullifier is `hash(person, action)`. Once an application **registers** one — ours stores
+it as the World ID that governs a wallet, and refuses any widening that does not match —
+the action stops being a free choice and becomes part of the key.
+
+Nothing said so. Every surface we had read was about a *single* verification, where the
+action is yours to pick:
+
+- the docs describe an action as an identifier for "what the user is verifying for"
+- `precheck` mints an action on demand, so **any unused string works and returns
+  `status: active`** — which reads as "actions are cheap, use a fresh one"
+- our own notes, written from that reading, said `WORLD_ACTION` should be an action this
+  person has not verified before
+
+All of that is correct for one-shot verification and **exactly backwards once a nullifier
+is stored**. A fresh action produces a different nullifier, so the stored one never matches
+and the widening is refused — after the scan has already been spent.
+
+### What it cost
+
+An hour before a recording, our `.env` held `WORLD_ACTION=expand-policy-demo2` while the
+registered nullifier had come from `leash-owner`. The first scan of the session would have
+failed, on camera, with the user's face already given. We caught it while writing something
+else, not because any tool complained.
+
+There is no signal available to catch it with. The verification **succeeds** — World has no
+idea the returned nullifier is being compared against a stored one, so nothing is wrong from
+its side. The failure surfaces only in application code, or on chain as a revert.
+
+### Two things that would have prevented it
+
+1. **Say it in the nullifier documentation.** One sentence: *"If you store a nullifier to
+   recognise a returning user, every future verification must use the same action — a
+   different action produces a different nullifier for the same person."* The formula is
+   documented; this consequence of it is not, and it is the single most likely way to
+   integrate nullifiers wrongly.
+2. **Say that re-verifying a used action is allowed.** We found this by trying it, and it
+   is load-bearing: reusing one action is not a workaround, it is the *only* correct
+   behaviour for a stored nullifier. The response says so plainly once it happens —
+   `"Proof verified successfully (nullifier reuse)"` — but a developer reading
+   `max_verifications: 1` on their action has every reason to believe the opposite and to
+   architect around a limit that does not apply to them.
+
+**Measured, both directions:**
+
+```
+leash-owner        scan on 09-11  ->  0x180f9ee1…b49e881
+leash-owner        scan on 09-12  ->  0x180f9ee1…b49e881   (accepted; "nullifier reuse")
+expand-policy-…-1  two scans      ->  0x1218592f…  twice
+expand-policy-…-2  one scan       ->  a third, different value
+```
+
+The behaviour is right, consistent, and exactly what the formula predicts. It is the
+documentation that stops one step early.
+
 ## Summary
 
-*Rewritten 2026-09-07. Amended 2026-09-11. Three earlier versions of this summary were
+*Rewritten 2026-09-07. Amended 2026-09-11 and again 2026-09-12 (§8). Three earlier versions of this summary were
 wrong in ways worth keeping visible: the first said we were blocked by "an unbounded,
 un-SLA'd wait on a hard access gate"; the second said the gate had never been closed; the
 third said a Selfie Check proof cannot tell a verifier that a face was checked. The first
@@ -1119,11 +1177,16 @@ have left the original claim in §7.5 marked rather than edited away, because th
 the useful part: the name the docs correctly give for `idkit-core` belongs to a vocabulary
 the widget we were standing in does not speak (§7.9).
 
-**The two changes we would ask for:**
+**The three changes we would ask for:**
 
 1. **Show a developer, in the Developer Portal, which credentials their app can use.** The
    data is already public and unauthenticated — it simply is not rendered. (§6.1)
-2. **Add `face` to `@worldcoin/idkit-standalone`'s `verification_level` switch.** One
+2. **Say, in the nullifier documentation, that a stored nullifier pins the action.** One
+   sentence. Every surface we read implies actions are interchangeable, which is true right
+   up until you store a nullifier and then silently false. It cost us a near-miss an hour
+   before recording, and there is no signal to catch it with: the verification succeeds.
+   (§8)
+3. **Add `face` to `@worldcoin/idkit-standalone`'s `verification_level` switch.** One
    line. The protocol already carries that value — we watched `idkit-core` send it — so the
    widget is short a table entry rather than a capability, and a non-React project starting
    from the standalone path currently has no way to reach Selfie Check and nothing telling
