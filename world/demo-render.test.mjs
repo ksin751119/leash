@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { shortHex, formatUsdc, renderStatus, renderIntent, renderRules } from "./demo-render.mjs";
+import { shortHex, formatUsdc, renderStatus, renderIntent, renderRules, renderRefusals, relativeTime } from "./demo-render.mjs";
 
 const PAYEE = "0x00000000000000000000000000000000000cafe0";
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
@@ -261,4 +261,99 @@ test("a payee in play is still shown once it has been paid without ever being li
   assert.equal(out.payees.length, 1, "this row is the whole argument for the composition");
   assert.equal(out.payees[0].paid, true);
   assert.equal(out.payees[0].everAllowed, false);
+});
+
+/* ------------------------------------------------------- the shared budget's split */
+
+const COHORT_STATE = {
+  budget: { limit: "50000000", spent: "21500000", periodEnd: 4102444800 },
+  cohort: [
+    { address: "0xf9248c78183e44b27afaf6e0cdf5e3e2a3771de0", spentThisPeriod: "20500000", revoked: false, spendCount: 23, blockedCount: 2 },
+    { address: "0x2160562a1c07f854ca37f502fa34be0887259f8a", spentThisPeriod: "1000000", revoked: false, spendCount: 1, blockedCount: 0 },
+  ],
+};
+
+test("splits one budget across the agents that spent it", () => {
+  const r = renderRules(COHORT_STATE, 1000);
+  assert.equal(r.spent, "21.50");
+  assert.deepEqual(
+    r.cohort.map((c) => [c.short, c.spent, c.pct]),
+    [
+      ["0xf924…71de0", "20.50", 41],
+      ["0x2160…59f8a", "1.00", 2],
+    ],
+  );
+});
+
+// The bar and the breakdown read the same field. After the period rolls over the chain has
+// zeroed the budget while the index still reports the last period's total — renderRules
+// already corrects the bar, and a breakdown that did not would contradict it on screen.
+test("zeroes the split on the same rollover that zeroes the bar", () => {
+  const rolled = { ...COHORT_STATE, budget: { ...COHORT_STATE.budget, periodEnd: 500 } };
+  const r = renderRules(rolled, 1000);
+  assert.equal(r.spent, "0.00");
+  assert.ok(r.cohort.every((c) => c.spent === "0.00" && c.pct === 0 && c.hasSpent === false));
+});
+
+// The claim the panel makes is "this is one budget". If the parts did not add up to the
+// whole, the panel would be making it falsely.
+test("the parts add up to the whole", () => {
+  const r = renderRules(COHORT_STATE, 1000);
+  const sum = r.cohort.reduce((a, c) => a + Number(c.spent), 0);
+  assert.equal(sum.toFixed(2), r.spent);
+});
+
+test("an agent that has spent nothing still appears", () => {
+  const r = renderRules(
+    { ...COHORT_STATE, budget: { ...COHORT_STATE.budget, spent: "0" }, cohort: COHORT_STATE.cohort.map((c) => ({ ...c, spentThisPeriod: "0" })) },
+    1000,
+  );
+  assert.equal(r.cohort.length, 2);
+  assert.ok(r.cohort.every((c) => c.hasSpent === false));
+});
+
+test("a state with no cohort renders an empty split rather than throwing", () => {
+  const r = renderRules({ budget: COHORT_STATE.budget }, 1000);
+  assert.deepEqual(r.cohort, []);
+});
+
+/* ----------------------------------------------------------- what was turned away */
+
+const REFUSAL_STATE = {
+  refusals: [
+    { agent: "0x2160562a1c07f854ca37f502fa34be0887259f8a", payee: "0x000000000000000000000000000000000000b1ef", amount: "48000000", reason: 8, reasonName: "OVER_PERIOD_LIMIT", at: 1000, tx: "0xaabbccddeeff00112233445566778899aabbccddeeff001122334455667788ff" },
+    { agent: "0xf9248c78183e44b27afaf6e0cdf5e3e2a3771de0", payee: "0x000000000000000000000000000000000000b1ef", amount: "5000000", reason: 6, reasonName: "PAYEE_NOT_ALLOWED", at: 100, tx: null },
+  ],
+};
+
+test("a refusal prints its amount, its reason and who was refused", () => {
+  const rows = renderRefusals(REFUSAL_STATE, 1030);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].amount, "48.00");
+  assert.equal(rows[0].reasonLabel, "8 · OVER_PERIOD_LIMIT");
+  assert.equal(rows[0].payeeShort, "0x0000…0b1ef");
+  assert.equal(rows[0].ago, "just now");
+  assert.equal(rows[0].txShort, "0xaabb…788ff");
+});
+
+// The reason code is the whole content of a refusal. A row that lost it would be a page
+// saying "something was refused" — which is the shape of a system that hides its refusals,
+// dressed up as one that does not.
+test("a refusal with no reason still says it was refused rather than printing nothing", () => {
+  const rows = renderRefusals({ refusals: [{ agent: "0x1", payee: "0x2", amount: "1000000", reason: null, at: 0 }] }, 10);
+  assert.equal(rows[0].reasonLabel, "refused");
+  assert.equal(rows[0].ago, "");
+  assert.equal(rows[0].txShort, null);
+});
+
+test("no refusals renders nothing rather than throwing", () => {
+  assert.deepEqual(renderRefusals({}, 10), []);
+});
+
+test("relative time is coarse on purpose", () => {
+  assert.equal(relativeTime(1000, 1030), "just now");
+  assert.equal(relativeTime(1000, 1600), "10m ago");
+  assert.equal(relativeTime(1000, 1000 + 7200), "2h ago");
+  assert.equal(relativeTime(1000, 1000 + 86400 * 3), "3d ago");
+  assert.equal(relativeTime(0, 1000), "", "no timestamp must print nothing, not '1970'");
 });

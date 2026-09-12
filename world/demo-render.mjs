@@ -67,6 +67,41 @@ export function renderIntent(intent, payees) {
   };
 }
 
+// What the wallet turned away, ready to print.
+//
+// This list has no onchain equivalent. A policy violation is a no-op plus an event rather
+// than a revert, so there is no getter anywhere that can be asked "what was refused today" —
+// which is why the panel it feeds is the most load-bearing thing the index does on this page.
+//
+// `nowSec` is passed in rather than read, so the relative times are testable.
+export function renderRefusals(s, nowSec = Math.floor(Date.now() / 1000)) {
+  return (s.refusals ?? []).map((r) => ({
+    agent: String(r.agent ?? "").toLowerCase(),
+    payee: String(r.payee ?? "").toLowerCase(),
+    payeeShort: shortHex(String(r.payee ?? "").toLowerCase()),
+    amount: formatUsdc(r.amount),
+    // The number and the name together, the same pairing the intent cards use, so a viewer
+    // reads the same vocabulary in both places.
+    reasonLabel: r.reason == null ? "refused" : `${r.reason} · ${r.reasonName ?? "?"}`,
+    ago: relativeTime(r.at, nowSec),
+    tx: r.tx ?? null,
+    txShort: r.tx ? shortHex(r.tx) : null,
+  }));
+}
+
+// Coarse on purpose. The panel is making the point that refusals are recorded at all, not
+// serving as a log viewer, and a clock ticking down the seconds beside eight rows is motion
+// that carries no information.
+export function relativeTime(atSec, nowSec) {
+  const at = Number(atSec ?? 0);
+  if (!at) return "";
+  const d = Math.max(0, nowSec - at);
+  if (d < 90) return "just now";
+  if (d < 3600) return `${Math.round(d / 60)}m ago`;
+  if (d < 86400) return `${Math.round(d / 3600)}h ago`;
+  return `${Math.round(d / 86400)}d ago`;
+}
+
 export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
   const limit = s.budget?.limit ?? null;
 
@@ -128,6 +163,36 @@ export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
     limit: formatUsdc(limit),
     pct,
     hasSpent,
+    // Who spent it. The budget is one number keyed by (node, token, period) with no agent
+    // in the key, so this breakdown is reconstructed from the spend log by
+    // subgraph.mjs:buildCohort. It is here rather than in its own render function so that
+    // `rolledOver` is applied in exactly one place: a bar that has just zeroed itself
+    // beside a breakdown still showing yesterday's split would be a page disagreeing with
+    // itself about the same fact.
+    cohort: (s.cohort ?? []).map((c) => {
+      const raw = rolledOver ? "0" : (c.spentThisPeriod ?? "0");
+      let share = 0;
+      let spentAny = false;
+      try {
+        spentAny = BigInt(raw) > 0n;
+        if (limit != null && BigInt(limit) > 0n) {
+          share = Number((BigInt(raw) * 1000n) / BigInt(limit)) / 10;
+        }
+      } catch {
+        share = 0;
+        spentAny = false;
+      }
+      return {
+        addr: c.address,
+        short: shortHex(c.address),
+        spent: formatUsdc(raw),
+        pct: share,
+        hasSpent: spentAny,
+        revoked: c.revoked === true,
+        spendCount: Number(c.spendCount ?? 0),
+        blockedCount: Number(c.blockedCount ?? 0),
+      };
+    }),
     // The panel is titled "payees this wallet allows", so it shows what is true NOW: every
     // payee currently on the list, plus any payee the payments on screen are about. A row
     // left over from an earlier run — approved and dropped, or paid months ago — is history,

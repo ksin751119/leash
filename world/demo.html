@@ -236,6 +236,12 @@
   }
   .intent .grow { flex: 1; min-width: 0; }
 
+  /* Which agent proposed the payment. Set before the id and in the accent, because on the
+     shared-budget beat the only difference between two rows is whose key sent them. */
+  .intent .who {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent); align-self: center;
+  }
   .intent .id { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
   .intent .note { color: var(--fg-soft); font-size: 14px; }
   .intent .verdict {
@@ -328,8 +334,56 @@
   .budget-line b { color: var(--fg); }
   /* One hairline track, one solid fill. Percentage is stated in words beside it,
      so the bar is a glance and the number is the fact. */
-  .bar { height: 1px; background: var(--line); margin: 10px 0; overflow: hidden; }
+  .bar { height: 1px; background: var(--line); margin: 10px 0; overflow: hidden; display: flex; }
   .bar i { display: block; height: 1px; background: var(--fg); }
+  /* The second agent's share of the same track. One bar, two colours - the sharing has to
+     be visible in the shape of the thing, not only in the numbers under it. */
+  .bar i.b { background: var(--accent); }
+
+  /* Who spent the shared budget. Not a legend for the bar so much as the sentence the bar
+     is making: these are different keys, and this is one number. */
+  .split { margin-top: 8px; }
+  .split-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; padding: 3px 0; }
+  .split-row .sw { width: 10px; height: 1px; background: var(--fg); flex: none; transform: translateY(-4px); }
+  .split-row.b .sw { background: var(--accent); }
+  .split-row .nm { min-width: 104px; }
+  .split-row .ad { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
+  .split-row .am { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg); }
+  .split-row.idle .nm, .split-row.idle .am { color: var(--fg-soft); }
+  .split-note { font-size: 12px; color: var(--fg-soft); margin-top: 6px; }
+
+  /* Where a fact comes from, said beside the fact. Four things on this page exist only
+     because an index read the log — no contract can be asked for any of them — and a
+     judge cannot tell which those are by looking. */
+  .kv-src { align-items: baseline; }
+  .kv-src .src {
+    font-size: 11px; color: var(--fg-mute); text-align: right; margin-left: auto;
+    max-width: 58%;
+  }
+
+  #refusalsWrap { margin-top: var(--sp-md); border-top: 1px solid var(--line); padding-top: var(--sp-sm); }
+  .ref { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .ref:last-child { border-bottom: 0; }
+  .ref .who {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--fg-mute); min-width: 88px;
+  }
+  .ref .amt { font-variant-numeric: tabular-nums; min-width: 62px; }
+  .ref .to { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
+  .ref .rsn { color: var(--accent); font-family: var(--mono); font-size: 11px; margin-left: auto; }
+  .ref .ago { color: var(--fg-soft); font-size: 11px; min-width: 52px; text-align: right; }
+
+  /* The agent picker. Two processes, two keys, one wallet - so they are listed as peers
+     and the page says which one the box below is talking to. */
+  .agents { display: flex; gap: 0; margin-bottom: var(--sp-sm); border-bottom: 1px solid var(--line); }
+  .tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+         padding: 8px 14px 8px 0; margin-right: 20px; cursor: pointer; text-align: left;
+         font: inherit; color: var(--fg-soft); }
+  .tab:last-child { margin-right: 0; }
+  .tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  .tab .tn { display: block; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .tab .ta { display: block; font-family: var(--mono); font-size: 11px; color: var(--fg-mute); margin-top: 2px; }
+  .tab.down .tn::after { content: " · offline"; color: var(--accent); text-transform: none; letter-spacing: 0; }
 
   .policies { margin-top: var(--sp-sm); }
   .pol { padding: 16px 0; border-top: 1px solid var(--line); }
@@ -453,7 +507,12 @@
     <div class="stack">
       <!-- ========================================================= 01 the agent -->
       <section class="zone">
-        <h2><span class="num">01</span> THE AGENT <span>— what you ask it to do</span></h2>
+        <h2><span class="num">01</span> THE AGENTS <span>— two of them, one wallet</span></h2>
+
+        <!-- Two separate processes holding two separate keys. Neither knows the other
+             exists; they are peers here because the chain treats them as peers. Whichever
+             is selected is the one the box below talks to. -->
+        <div id="agents" class="agents"></div>
 
         <form id="askForm" class="ask">
           <input id="ask" autocomplete="off" spellcheck="false"
@@ -491,6 +550,18 @@
         </div>
 
         <div id="intents"></div>
+
+        <!-- Everything this wallet has ever turned away. There is no onchain equivalent:
+             a refusal is a status-1 receipt carrying an event and no state change, so no
+             getter anywhere can be asked what was refused today. This panel is the index
+             doing something nothing else can, which is why it says so out loud. -->
+        <div id="refusalsWrap" hidden>
+          <div class="kv kv-src">
+            <span class="k">what this wallet has turned away</span>
+            <span class="src">from the index — the chain keeps no such list</span>
+          </div>
+          <div id="refusals"></div>
+        </div>
       </section>
     </div>
 
@@ -522,12 +593,16 @@
           <span class="k">budget this period</span>
           <span id="budgetPct" class="budget-line"><b>—</b></span>
         </div>
-        <div class="bar"><i id="budgetFill" style="width:0%"></i></div>
+        <div id="budgetBar" class="bar"></div>
         <div class="budget-line">spent <b id="budgetSpent">—</b> of <b id="budgetLimit">—</b> USDC</div>
+        <div id="split" class="split"></div>
 
         <hr />
 
-        <div class="kv"><span class="k">payees this wallet allows</span></div>
+        <div class="kv kv-src">
+          <span class="k">payees this wallet allows</span>
+          <span class="src">from the index — no contract can list them</span>
+        </div>
         <div id="payees"></div>
       </section>
 
@@ -582,6 +657,10 @@
           already approved, and cannot widen a single payee.
         </p>
 
+        <div class="kv kv-src">
+          <span class="k">rules a human has approved</span>
+          <span class="src">from the index — approvals are events, not an array</span>
+        </div>
         <div id="policies" class="policies"></div>
         <div id="adminMsg" class="askMsg"></div>
       </section>
@@ -607,15 +686,19 @@
   // formatUsdc is not in this list because renderIntent and renderRules have already run the
   // amounts through it — importing it as well would invite a second, divergent way to print
   // money on the same screen.
-  import { shortHex, renderStatus, renderIntent, renderRules } from "./demo-render.mjs";
+  import { shortHex, renderStatus, renderIntent, renderRules, renderRefusals } from "./demo-render.mjs";
 
   const $ = (id) => document.getElementById(id);
 
   // The agent publishes on its own port. Same machine, different process: the page is served
   // by world/server.mjs on 8787 and reads the loop's state on 8788, which is why this one url
   // is absolute and every other fetch on this page is relative.
-  const STATE_URL = "http://localhost:8788/api/agent/state";
-  const INSTRUCT_URL = "http://localhost:8788/api/agent/instruct";
+  // One process per agent, each holding its own key. They are listed here by port and
+  // named by themselves: the label on a tab is the `name` the loop publishes, not a string
+  // written down on this side, so a page showing two agents is showing two live processes.
+  const AGENT_PORTS = [8788, 8789];
+  const stateUrl = (i) => `http://localhost:${AGENT_PORTS[i]}/api/agent/state`;
+  const instructUrl = (i) => `http://localhost:${AGENT_PORTS[i]}/api/agent/instruct`;
   const POLL_MS = 1000;
 
   const BLIND_TEXT = "the agent is blind — it will propose nothing";
@@ -642,6 +725,23 @@
   let signed = false;        // an attestation came back; the command on screen is runnable
   let deadlineMs = 0;
   let inFlight = false;      // a poll is out; a second must not be started behind it
+  let states = AGENT_PORTS.map(() => null); // the last answer from each agent, down or not
+  // The last name and address each agent gave for itself, kept across a process dying.
+  // A dead agent still has a name, and a tab that falls back to "agent 2 · —" the moment
+  // the process stops reads on camera as the page losing track of who is in the room.
+  const known = AGENT_PORTS.map(() => null);
+  // Which agent the instruction box is talking to. `?agent=1` (or `?agent=subscriptions`)
+  // picks it at load, so the demo can be filmed as two browser windows side by side —
+  // one per agent, both watching the same wallet — rather than one window somebody has to
+  // keep clicking. Out-of-range or unknown values fall back to the first agent.
+  const agentParam = new URLSearchParams(location.search).get("agent");
+  let activeIdx = (() => {
+    if (agentParam == null) return 0;
+    const n = Number(agentParam);
+    if (Number.isInteger(n) && n >= 0 && n < AGENT_PORTS.length) return n;
+    return 0; // a name is resolved on the first poll, once the agents have said theirs
+  })();
+  let agentParamPending = agentParam != null && !Number.isInteger(Number(agentParam));
 
   /* ------------------------------------------------------------------ polling */
 
@@ -649,23 +749,128 @@
   // camera: without the guard a stalled agent piles up requests that all land at once, and
   // whichever finishes last wins — which on screen is the tick number jumping backwards.
   // With it, responses can only arrive in the order they were asked for.
+  // Every agent is asked every tick, not just the selected one. The tab strip has to be
+  // able to say "the other one is offline" and to show its share of the budget while you
+  // are looking at this one — a picker that only knows about the tab you are on would make
+  // the second agent look like a view of the first.
+  //
+  // One agent failing must not take the others down with it, so each fetch resolves to a
+  // `__down` marker rather than rejecting the batch.
   async function poll() {
     if (inFlight) return;
     inFlight = true;
     try {
-      const res = await fetch(STATE_URL, { cache: "no-store", signal: AbortSignal.timeout(POLL_MS) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      render(await res.json());
-      $("link").classList.remove("off");
-    } catch (err) {
-      // The agent being unreachable is this page's own problem and is said in this page's own
-      // words. It is not a verdict and it is not `readError` — those come from the agent.
-      $("link").classList.add("off");
-      const why = err?.name === "TimeoutError" ? `no answer in ${POLL_MS}ms` : err.message;
-      if (!busy && !signed) setMsg(`cannot reach the agent — ${why}`, true);
+      states = await Promise.all(
+        AGENT_PORTS.map(async (_, i) => {
+          try {
+            const res = await fetch(stateUrl(i), { cache: "no-store", signal: AbortSignal.timeout(POLL_MS) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+          } catch (err) {
+            return { __down: err?.name === "TimeoutError" ? `no answer in ${POLL_MS}ms` : err.message };
+          }
+        }),
+      );
+      // A `?agent=<name>` can only be honoured once the processes have said what they are
+      // called. Done here, before the first paint, so the page never flashes the wrong
+      // agent's conversation.
+      if (agentParamPending) {
+        const want = String(agentParam).toLowerCase();
+        const found = states.findIndex((st) => st && !st.__down && String(st.name ?? "").toLowerCase() === want);
+        if (found >= 0) activeIdx = found;
+        if (states.some((st) => st && !st.__down)) agentParamPending = false;
+      }
+      states.forEach((st, i) => {
+        if (st && !st.__down && st.agentAddr) known[i] = { name: st.name, agentAddr: st.agentAddr };
+      });
+      paintAgents(states);
+      const active = states[activeIdx];
+      if (active?.__down) {
+        // The agent being unreachable is this page's own problem and is said in this page's own
+        // words. It is not a verdict and it is not `readError` — those come from the agent.
+        $("link").classList.add("off");
+        if (!busy && !signed) setMsg(`cannot reach the agent — ${active.__down}`, true);
+        // Everything on screen was true when the process was last alive and may not be now.
+        // A dashboard that keeps displaying its last good reading with no mark on it is the
+        // exact failure this project is an argument against, so say it where the numbers are
+        // rather than only under a button in another column.
+        const banner = $("blind");
+        banner.hidden = false;
+        banner.classList.add("warn");
+        $("blindHead").textContent = "this agent's process is not answering";
+        $("blindDetail").textContent =
+          `${active.__down} — everything below is the last thing it said, not the present. The chain is unaffected.`;
+        $("intents").classList.add("dim");
+      } else {
+        $("link").classList.remove("off");
+        render(active);
+      }
     } finally {
       inFlight = false;
     }
+  }
+
+  // Names come from the processes; amounts come from the chain. That split is deliberate:
+  // a process can call itself anything, and none of them gets to say how much of the
+  // shared budget it spent.
+  function agentNames() {
+    const map = new Map();
+    for (const st of states) {
+      if (!st || st.__down || !st.agentAddr) continue;
+      map.set(String(st.agentAddr).toLowerCase(), st.name ?? "agent");
+    }
+    return map;
+  }
+
+  function paintAgents(list) {
+    const el = $("agents");
+    // The cohort is identical in every state — it is read from the index, not from the
+    // process — so the first one that answered is as good as any.
+    const cohort = list.find((st) => st && !st.__down)?.cohort ?? [];
+    const byAddr = new Map(cohort.map((c) => [String(c.address).toLowerCase(), c]));
+    const sig = list
+      .map((st, i) => {
+        const id = st && !st.__down ? st : known[i];
+        const a = String(id?.agentAddr ?? "").toLowerCase();
+        return `${i}:${st?.__down ? "down" : "up"}:${id?.name}:${a}:${byAddr.get(a)?.spentThisPeriod ?? ""}:${i === activeIdx}`;
+      })
+      .join("|");
+    if (el.dataset.sig === sig) return;
+    el.dataset.sig = sig;
+    el.replaceChildren();
+
+    list.forEach((st, i) => {
+      const id = st && !st.__down ? st : known[i];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = `tab${i === activeIdx ? " on" : ""}${st?.__down ? " down" : ""}`;
+      const nm = document.createElement("span");
+      nm.className = "tn";
+      nm.textContent = id?.name ?? `agent ${i + 1}`;
+      const ad = document.createElement("span");
+      ad.className = "ta";
+      ad.textContent = id?.agentAddr ? shortHex(String(id.agentAddr).toLowerCase()) : "—";
+      b.append(nm, ad);
+      b.addEventListener("click", () => selectAgent(i));
+      el.append(b);
+    });
+  }
+
+  function selectAgent(i) {
+    if (i === activeIdx) return;
+    // A widening in flight belongs to the agent that was on screen when it started, and
+    // `pending` is rebuilt from that agent's refusals. Switching while one is half-done
+    // would leave a signed command on screen aimed at a payee the new agent never asked
+    // about. Refuse rather than silently retarget it.
+    if (busy || signed) {
+      setMsg("finish or cancel the widening before switching agents", true);
+      return;
+    }
+    activeIdx = i;
+    $("agents").dataset.sig = "";
+    paintAgents(states);
+    const st = states[activeIdx];
+    if (st && !st.__down) render(st);
   }
 
   /* ------------------------------------------------------------------ rendering */
@@ -810,46 +1015,80 @@
     $("blindDetail").textContent = status.error ?? "";
     $("intents").classList.toggle("dim", status.blind);
 
-    const payees = state.payees ?? {};
-    const views = (state.intents ?? []).map((i) => renderIntent(i, payees));
+    // Zone 02 is the chain's answer, not one agent's. Both agents spend from one wallet
+    // under one name, so their payments belong in one list: a refusal caused by a
+    // colleague's spending is unreadable in a panel that shows only the agent you happen
+    // to have selected, and "the budget is shared" would be a caption rather than
+    // something on screen.
+    const views = mergedViews();
     paintIntents(views);
 
-    pending = widenable(state, views);
+    pending = widenable(views);
 
     paintRules(renderRules(state));
+    paintRefusals(renderRefusals(state));
     paintButton();
     paintWait();
     requestAnimationFrame(drawWire);
+  }
+
+  // Every agent's payments, in one list, each carrying the name of the agent that proposed
+  // it. Each agent's own `payees` map is used for its own rows: the two agents read the
+  // same index and will agree, but pairing a verdict with someone else's view of the
+  // allow-list would be this page inventing a combination neither agent published.
+  function mergedViews() {
+    const out = [];
+    states.forEach((st, i) => {
+      if (!st || st.__down) return;
+      const who = st.name ?? `agent ${i + 1}`;
+      const payees = st.payees ?? {};
+      for (const raw of st.intents ?? []) {
+        const v = renderIntent(raw, payees);
+        // Both agents read the same vendor directory, so both can propose an intent called
+        // `acme-retainer`. The DOM key has to carry the agent or one row would overwrite
+        // the other — which on camera is a payment silently disappearing.
+        out.push({ ...v, key: `${who}:${v.id}`, who, raw });
+      }
+    });
+    return out;
   }
 
   // One selection, and everything downstream reads it: the ghost payee row, the connector, the
   // wait strip, and the button's target. They cannot disagree about which intent or which payee
   // because there is only one list.
   //
-  // Every clause is a fact the agent published, and the narrow one is deliberate. A card
+  // Every clause is a fact an agent published, and the narrow one is deliberate. A card
   // reading `2 · AGENT_REVOKED` is also "blocked", and drawing the connector from it to the
-  // payee list would have the page assert a cause the agent never gave — that the refusal was
+  // payee list would have the page assert a cause no agent gave — that the refusal was
   // a missing payee. That is precisely the class of invention this whole page is built to
   // avoid, so the connector is drawn only for the refusal that is actually about a payee, and
   // only when the allow-list agrees that payee is absent.
-  function widenable(state, views) {
+  //
+  // Whichever agent proposed it. `allowPayeeByFace` widens (node, token, payee) and has no
+  // agent in it, so a scan started from one agent's refusal is exactly as valid for the
+  // other's — refusing to offer the button for the agent you are not looking at would be
+  // the page being more restrictive than the contract.
+  function widenable(views) {
     const out = [];
-    (state?.intents ?? []).forEach((raw, i) => {
-      const v = views[i];
-      if (!v) return;
-      if (raw.verdict !== "will-be-blocked") return;
-      if (!isPayeeNotAllowed(raw)) return;
+    for (const v of views) {
+      const raw = v.raw;
+      if (raw.verdict !== "will-be-blocked") continue;
+      if (!isPayeeNotAllowed(raw)) continue;
       // token as well as payee: the widening plan needs both, so an intent missing either is
       // not something this button could act on even though the refusal is the right one.
-      if (!raw.payee || !raw.token) return;
-      if (v.payeeAllowed) return;
+      if (!raw.payee || !raw.token) continue;
+      if (v.payeeAllowed) continue;
       // Shortened from the lowercased address, not from `payeeShort`, because renderRules
       // shortens the allow-list's lowercase keys: a checksummed address would otherwise change
       // case at the very moment the ghost row becomes a real one, which reads as a different
       // address appearing rather than this one being allowed.
       const addr = String(raw.payee).toLowerCase();
-      out.push({ id: v.id, addr, short: shortHex(addr), intent: raw });
-    });
+      // `id` is the DOM key and carries the agent so two agents proposing the same vendor
+      // id get two rows. `label` is what a person reads, and must not: "payments:bluefin is
+      // blocked" leaked the composite key onto the screen during the 2026-09-12 rehearsal.
+      // Which agent asked is already on the card the connector points at.
+      out.push({ id: v.key, label: v.id, addr, short: shortHex(addr), intent: raw });
+    }
     return out;
   }
 
@@ -859,7 +1098,7 @@
     const el = document.createElement("article");
     el.className = "intent";
     el.innerHTML = `
-      <div class="line"><span class="id"></span><span class="note grow"></span><span class="verdict"></span></div>
+      <div class="line"><span class="who"></span><span class="id"></span><span class="note grow"></span><span class="verdict"></span></div>
       <div class="line"><span class="ens"></span><span class="payee"></span><span class="grow"></span><span class="amount"></span></div>
       <div class="line"><span class="why grow"></span></div>
       <div class="line"><span class="reason grow"></span><span class="tx"></span></div>`;
@@ -869,14 +1108,17 @@
   function paintIntents(views) {
     const seen = new Set();
     for (const v of views) {
-      seen.add(v.id);
-      let el = intentEls.get(v.id);
+      seen.add(v.key);
+      let el = intentEls.get(v.key);
       if (!el) {
         el = buildIntent();
-        intentEls.set(v.id, el);
+        intentEls.set(v.key, el);
         $("intents").appendChild(el);
       }
       el.className = `intent tone-${v.tone}`;
+      // Which agent proposed it. Without this the two rows of the shared-budget beat read
+      // as one agent contradicting itself.
+      el.querySelector(".who").textContent = v.who;
       el.querySelector(".id").textContent = v.id;
       el.querySelector(".note").textContent = v.note;
       // The name first and the address after it, because the name is what a person said
@@ -899,6 +1141,114 @@
     }
   }
 
+  // One track, one segment per agent that spent from it. The alternative — a bar per agent —
+  // would be four correct numbers arranged to tell a lie, because there are not two budgets.
+  //
+  // The segments are laid out in the cohort's own order (bind order), so an agent's colour
+  // does not move when another one spends.
+  function paintBudget(rules) {
+    const bar = $("budgetBar");
+    const split = $("split");
+    const names = agentNames();
+
+    // A real spend must never paint as an empty bar. 0.5% of this track is about four
+    // pixels; below that the floor keeps a sliver visible, and the number beside it still
+    // reports the true figure rather than the floor.
+    const floor = (row) => (row.hasSpent ? Math.max(0.8, Math.min(100, row.pct)) : 0);
+
+    const rows = rules.cohort ?? [];
+    const sig = `${rules.pct}|${rules.hasSpent}|${rows.map((r) => `${r.addr}:${r.spent}:${names.get(r.addr) ?? ""}`).join(",")}`;
+    if (bar.dataset.sig === sig) return;
+    bar.dataset.sig = sig;
+
+    bar.replaceChildren();
+    if (rows.length === 0) {
+      // No cohort in this state — an older agent, or a read that failed. Fall back to the
+      // single undifferentiated bar rather than showing nothing: the total is still true.
+      const only = document.createElement("i");
+      only.style.width = `${rules.hasSpent ? Math.max(0.8, Math.min(100, rules.pct)) : 0}%`;
+      bar.append(only);
+    } else {
+      rows.forEach((r, i) => {
+        const seg = document.createElement("i");
+        if (i % 2 === 1) seg.className = "b";
+        seg.style.width = `${floor(r)}%`;
+        bar.append(seg);
+      });
+    }
+
+    split.replaceChildren();
+    if (rows.length < 2) return; // one agent needs no breakdown; the bar already says it
+
+    rows.forEach((r, i) => {
+      const row = document.createElement("div");
+      row.className = `split-row${i % 2 === 1 ? " b" : ""}${r.hasSpent ? "" : " idle"}`;
+      const sw = document.createElement("span");
+      sw.className = "sw";
+      const nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = names.get(r.addr) ?? "an agent";
+      const ad = document.createElement("span");
+      ad.className = "ad";
+      ad.textContent = r.short;
+      const am = document.createElement("span");
+      am.className = "am";
+      am.textContent = `${r.spent} USDC`;
+      row.append(sw, nm, ad, am);
+      split.append(row);
+    });
+
+    const note = document.createElement("div");
+    note.className = "split-note";
+    note.textContent =
+      "different keys, different processes — one counter. The chain stores no per-agent total; this is the spend log added back up.";
+    split.append(note);
+  }
+
+  const refEls = new Map();
+
+  // Keyed by transaction hash, which is unique per refusal and never changes, so a row that
+  // is already on screen is never rebuilt and the list does not flicker every tick.
+  function paintRefusals(rows) {
+    $("refusalsWrap").hidden = rows.length === 0;
+    if (rows.length === 0) return;
+
+    const names = agentNames();
+    const seen = new Set();
+    for (const r of rows) {
+      const key = r.tx ?? `${r.agent}:${r.payee}:${r.amount}:${r.ago}`;
+      seen.add(key);
+      let el = refEls.get(key);
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "ref";
+        el.innerHTML =
+          `<span class="who"></span><span class="amt"></span><span class="to"></span>` +
+          `<span class="rsn"></span><span class="ago"></span>`;
+        refEls.set(key, el);
+        $("refusals").appendChild(el);
+      }
+      // The name comes from the process; if that process is not running we still know the
+      // refusal happened, so fall back to the address rather than dropping the row.
+      el.querySelector(".who").textContent = names.get(r.agent) ?? shortHex(r.agent);
+      el.querySelector(".amt").textContent = `${r.amount} USDC`;
+      el.querySelector(".to").textContent = `to ${r.payeeShort}`;
+      el.querySelector(".rsn").textContent = r.reasonLabel;
+      el.querySelector(".ago").textContent = r.ago;
+    }
+    for (const [key, el] of refEls) {
+      if (!seen.has(key)) { el.remove(); refEls.delete(key); }
+    }
+    // Newest first, matching the order the index returned them in: the list is rebuilt by
+    // key rather than by position, so without this a row appended later would sit at the
+    // bottom even though it is the most recent thing that happened.
+    const order = rows.map((r) => r.tx ?? `${r.agent}:${r.payee}:${r.amount}:${r.ago}`);
+    for (const key of order) {
+      const el = refEls.get(key);
+      if (el) $("refusals").appendChild(el);
+    }
+  }
+
   function paintRules(rules) {
     $("whoAgent").textContent = rules.ensName ?? "—";
 
@@ -918,13 +1268,9 @@
 
     $("budgetPct").innerHTML = "";
     $("budgetPct").append(Object.assign(document.createElement("b"), { textContent: `${rules.pct}%` }), " used");
-    // A real spend must never paint as an empty bar. 0.5% of this track is about four
-    // pixels; below that the floor keeps a sliver visible, and the number beside it still
-    // reports the true figure rather than the floor.
-    const w = rules.hasSpent ? Math.max(0.8, Math.min(100, rules.pct)) : 0;
-    $("budgetFill").style.width = `${w}%`;
     $("budgetSpent").textContent = rules.spent;
     $("budgetLimit").textContent = rules.limit;
+    paintBudget(rules);
 
     paintPayees(rules.payees);
   }
@@ -1142,7 +1488,7 @@
     if (!idkitReady) return setMsg("IDKit did not load — the scan cannot start", true);
     if (!last) return setMsg("waiting for the agent…", false);
     if (!target) return setMsg("nothing is blocked on a missing payee", false);
-    setMsg(`${target.id} is blocked because ${target.short} is not on the list`, false);
+    setMsg(`${target.label} is blocked because ${target.short} is not on the list`, false);
   }
 
   $("widen").addEventListener("click", () => (busy ? cancelWiden() : startWiden()));
@@ -1364,7 +1710,7 @@
     tickMsg();
 
     try {
-      const r = await fetch(INSTRUCT_URL, {
+      const r = await fetch(instructUrl(activeIdx), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instruction: text }),
