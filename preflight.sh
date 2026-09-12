@@ -103,7 +103,21 @@ for pair in "AGENT $AGENT_ADDR" "AGENT2 $AGENT2_ADDR"; do
   [ "$got" = "$NODE" ] && pass "$1 bound to vendors.leash.eth" || fail "$1 binding is $got"
 done
 
-head_ "7. the index"
+head_ "7. the vendor directory"
+# The amounts here are what the model reads and therefore what gets paid, and the narration
+# says three of them out loud. A directory that has drifted from the script is a mismatch a
+# viewer catches and nobody rehearsing notices.
+#
+# They are small on purpose: a full run costs 3.50 against a 50.00 daily budget, which is
+# fourteen takes a day. At 5.00 and 5.00 it was four, and a bad morning would have run out
+# of budget before it ran out of time.
+for want in "1.00 USDC per month" "first invoice is 2.00 USDC" "0.50 USDC at a time"; do
+  grep -q "$want" agent/vendors.json \
+    && pass "vendors.json: $want" \
+    || fail "vendors.json does not say '$want' — the narration says it out loud"
+done
+
+head_ "8. the index"
 code=$(curl -s -o /tmp/pf.json -w '%{http_code}' -m 15 -X POST "$SUBGRAPH_URL" \
   -H 'Content-Type: application/json' -d '{"query":"{_meta{block{number}}}"}')
 if [ "$code" = "200" ] && [ "$(jq -r '.data._meta.block.number // "x"' /tmp/pf.json)" != "x" ]; then
@@ -116,7 +130,7 @@ else
   fail "subgraph returned HTTP $code. If 429: it is throttled. Deploy a fresh version label"
 fi
 
-head_ "8. the processes"
+head_ "9. the processes"
 for pair in "8787 page" "8788 payments" "8789 subscriptions"; do
   set -- $pair
   if [ "$1" = "8787" ]; then

@@ -98,7 +98,7 @@ No approval.
 
 No human click.
 
-Five dollars out of fifty.
+One dollar out of fifty.
 
 ⟨cut⟩ This is what we want:
 let the agent work when it's inside the rules.
@@ -193,7 +193,7 @@ The on-chain permission has changed.
 
 And the payment goes through.
 
-Ten dollars out of fifty.
+Three dollars out of fifty.
 
 ---
 
@@ -211,7 +211,7 @@ The payment itself is under the transaction limit.
 
 But it's still refused.
 
-Because the other agent already spent ten dollars.
+Because the other agent already spent three dollars.
 
 Another forty-eight would break the daily budget.
 
@@ -269,7 +269,7 @@ This time, it works.
 
 Another payee nobody has approved.
 
-Five dollars to one of those was refused.
+Two dollars to one of those was refused.
 
 Fifty cents goes through.
 

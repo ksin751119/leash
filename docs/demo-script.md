@@ -82,7 +82,7 @@ and every caller treats `ERR` as a mismatch.
 ### The order on the day
 
 1. `./preflight.sh` — expect warnings about the processes, nothing else
-2. `./reset-demo.sh 0x…c0de 0x…face` — only if step 1 flagged the pointer or a payee
+2. `./reset-demo.sh` — only if step 1 flagged the pointer or a payee. It generates the fresh addresses itself
 3. `./run-demo.sh --dry` — starts the page and both agents, pays nothing
 4. `./preflight.sh` again — now everything should be green
 5. Open both windows: `?agent=payments` and `?agent=subscriptions`
@@ -210,8 +210,8 @@ read the budget note below.
 | **do** | click the chip **pay the studio retainer** (or type it) |
 | **type** | `Pay this month's studio retainer.` |
 | **⏱** | **21.8 s** before the card appears — keep talking |
-| **say** | *"It's the first of the month…"* → *"Five dollars out of fifty."* |
-| **watch for** | a card with **DONE**, then the budget bar moving to `5.00` about **6 s** later |
+| **say** | *"It's the first of the month…"* → *"One dollar out of fifty."* |
+| **watch for** | a card with **DONE**, then the budget bar moving to `1.00` about **6 s** later |
 
 The card appears already DONE — the model, the send and the receipt all happen inside that
 one wait. There is no "pending" state to narrate.
@@ -239,8 +239,8 @@ Then:
 | **⏱** | **unmeasured.** This is the number the rehearsal is for |
 | **watch for** | `YOUR FACE APPROVED IT — THE AGENT WILL NOTICE ON ITS NEXT TICK` |
 | **⏱** | **~8–16 s** for the next tick |
-| **say** | *"We don't message the agent…"* → *"Ten dollars out of fifty."* |
-| **watch for** | the card turns **DONE**, budget `10.00`, the payee row flips to **allowed** |
+| **say** | *"We don't message the agent…"* → *"Three dollars out of fifty."* |
+| **watch for** | the card turns **DONE**, budget `3.00`, the payee row flips to **allowed** |
 
 If the scan runs long, cut while the phone is up. The World App interaction is worth
 showing; every second of it is not.
@@ -254,7 +254,7 @@ showing; every second of it is not.
 | **do** | move to the **subscriptions** window (or click its tab) |
 | **type** | `Renew our annual design-tools licence — 48.00 USDC for the year.` |
 | **⏱** | **~10 s** |
-| **watch for** | `8 · OVER_PERIOD_LIMIT` and the line *"this would exceed the period budget — 40.00 left of 50.00 USDC, and this payment is 48.00"* |
+| **watch for** | `8 · OVER_PERIOD_LIMIT` and the line *"this would exceed the period budget — 47.00 left of 50.00 USDC, and this payment is 48.00"* |
 | **say** | *"Now let's switch agents…"* → *"Another forty-eight would break the daily budget."* |
 | **point at** | the agent's **third** message — its own words, unprompted |
 | **say** | *"And the agent understands that from the chain."* |
@@ -303,16 +303,49 @@ Stop recording. Then **`./run-demo.sh --stop`**.
 
 | | amount | why that one |
 |---|---|---|
-| retainer | 5.00 | unchanged since March; the payment nobody wants to make by hand |
-| Bluefin's first invoice | 5.00 | a new counterparty — the one case where interrupting a human is right |
-| annual licence | **48.00** | chosen so the refusal survives a skipped face scan: 5 + 48 and 10 + 48 both exceed 50 |
-| API top-up | 0.50 | under `MicroPaymentPolicy`'s 1.00 cap, which is the only reason beat 4 lands |
+| retainer | **1.00** | the payment nobody wants to make by hand, and small enough to repeat |
+| Bluefin's first invoice | **2.00** | a new counterparty — the one case where interrupting a human is right. Above `MicroPaymentPolicy`'s 1.00 cap, so it stays refused whichever policy is installed |
+| annual licence | **48.00** | refused by the day's spending, not by its own size. 3.00 + 48.00 = 51.00 against a 50.00 limit |
+| API top-up | **0.50** | under the 1.00 cap, which is the only reason beat 4 lands |
 
-The 48 is not cosmetic. If beat 2's scan fails and you carry on, the budget is at 5.00
-rather than 10.00 — and a 45 would then pass, turning the demo's best beat into nothing at
-all. 48 refuses in both worlds.
+### A full run costs 3.50, and that is the point
 
----
+| | |
+|---|---|
+| a complete four-beat run | **3.50** |
+| against a daily budget of | 50.00 |
+| **takes available per day** | **14** |
+
+They were 5.00 and 5.00, which is 10.50 a run and **four takes a day** — and a bad morning
+runs out of budget long before it runs out of time. Nothing in the script depends on the
+figures being large; three of them are spoken aloud and the narration was changed to match
+in the same commit.
+
+### Most of a take costs nothing to redo
+
+The video is cut between shots anyway, so a fumbled beat is reshot on its own rather than
+by starting again:
+
+| | cost to retry |
+|---|---|
+| **beat 3** — the shared-budget refusal | **free.** It is refused, so no transaction exists |
+| **the face scan itself** | **free.** `leash-owner` is reused; World answers "nullifier reuse" |
+| **the policy switch** | **free** but for gas |
+| beat 1 | 1.00 |
+| beat 2's payment after the scan | 2.00, and it needs `./reset-demo.sh` first so the payee is unapproved again |
+| beat 4's top-up | 0.50 |
+
+Only three actions in the whole demo spend anything.
+
+### The budget cannot be reset, and that is the product
+
+`spent[node][token][bucket]` moves only when `epoch` or `period` does, and both are written
+only by `setRule`, which takes an attestation from the real `WorldAttester`. Raising a limit
+costs a live human — which is the thing the video is about, so hitting it from the inside is
+the design working rather than a gap to route around.
+
+It zeroes itself at **00:00 UTC / 08:00 Taipei** and not otherwise. `preflight.sh` prints the
+countdown and says which beats still fit in whatever is left.
 
 ## How long it actually takes
 

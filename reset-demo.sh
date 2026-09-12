@@ -8,13 +8,24 @@
 # sitting on screen from the first frame.
 #
 # Moving the ENS record has no such residue, and it is what a name indirection is for.
+#   ./reset-demo.sh                  # fresh addresses, generated
+#   ./reset-demo.sh 0x… 0x…          # or supply your own
 set -euo pipefail
 cd /home/ubuntu/DEV/ETHOnline2026
 set -a; . ./.env; set +a
 
 STANDARD=0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b
-BLUEFIN_NEW="${1:?fresh address for bluefin.leash.eth}"
-API_NEW="${2:?fresh address for api.leash.eth}"
+# Fresh addresses, generated rather than invented. Between takes you need two the wallet
+# has never seen, and thinking of them by hand is both a chore and a trap: the first pair
+# picked this way differed from the ones they replaced in the last character, which on a
+# 1080p frame is two addresses nobody can tell apart, one allowed and one not.
+#
+# Derived from the clock so they differ between runs, and padded out to a length that makes
+# the shortened form on screen obviously distinct.
+gen() { printf '0x%040x' "$(( 0x$(date +%s%N | sha256sum | cut -c1-12) ))"; }
+BLUEFIN_NEW="${1:-$(gen)}"
+sleep 1
+API_NEW="${2:-$(gen)}"
 
 node -e '
 const { namehash } = require("/home/ubuntu/DEV/leash/agent/node_modules/viem");
