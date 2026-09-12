@@ -40,7 +40,8 @@ for i, (kind, text) in enumerate(out):
     out[i] = (kind, text, in_cut and kind == "say")
 
 for kind, text, is_cut in out:
-    plain = re.sub(r"[*`\[\]⟨⟩]", "", text)
+    plain = re.sub(r"⟨cut⟩\s*", "", text)
+    plain = re.sub(r"[*`\[\]⟨⟩]", "", plain)
     if kind == "head":
         print("\n" + "=" * 72 + f"\n{plain.upper()}\n" + "=" * 72)
     elif kind == "do":
@@ -54,7 +55,8 @@ for kind, text, is_cut in out:
     else:
         print()
 
-cut_words = sum(len(re.sub(r"[*`\[\]⟨⟩]", "", x).split()) for k, x, c in out if c)
+cut_words = sum(len(re.sub(r"[*`\[\]⟨⟩]", "", re.sub(r"⟨cut⟩\s*", "", x)).split())
+                for k, x, c in out if c)
 print("\n" + "-" * 72)
 print(f"as written  {spoken} words   ~{spoken/165:.1f} min at 165 wpm")
 print(f"with cuts   {spoken-cut_words} words   ~{(spoken-cut_words)/165:.1f} min")

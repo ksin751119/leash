@@ -18,150 +18,249 @@
 
 ---
 
-## Cold open — what this is, then the example
+## Cold open — what this is
 
-> [the page, idle, two windows side by side]
+> [page idle, two windows side by side]
 
-A permission engine for AI agent wallets. **What an agent may spend, and who it may pay,
-lives in a contract on chain, and the wallet enforces it on every transaction — instead of
-the agent enforcing it on itself.**
+This is a permission system for AI agent wallets.
 
-Here is the example that makes that legible.
+The rules for what an agent can spend, and who it can pay, live in a smart contract.
+
+The wallet checks those rules on every payment an agent makes.
+
+So we don't need to trust the AI agent to follow the rules itself.
+
+Here's a simple example.
 
 > [beat]
 
-A four-person studio, and two AI agents already working here: one pays invoices, one
-handles renewals.
+We have a small studio with four people and two AI agents.
 
-At nine, the renewals agent puts through an annual licence. At eleven, the invoices agent
-pays a contractor. At noon the account is empty, and the payment that mattered is the one
-that fails.
+One agent pays invoices.
 
-**Neither agent did anything wrong.** Each stayed inside its limit. There were two limits
-and one bank account.
+The other handles subscriptions.
 
-> [point at the band — "The name resolves to the rule", then the budget beside it]
+⟨cut⟩ Imagine this:
+At 9 AM, the subscription agent renews a yearly license.
+At 11, the invoice agent pays a contractor.
+At noon, there's no money left for an important payment.
+Both agents followed their own limits.
+The problem is: we had two separate limits, but only one account.
 
-So we stopped giving limits to agents. The limit belongs to a **name**, and the wallet
-finds the rule by walking **ENS** on every payment: registry, subname, then the policy
-address out of the resolver record.
+> [point at the band — the name, then the budget beside it]
 
-Both agents work under that name. **One budget. Fifty dollars a day.**
+So instead of giving each agent its own budget, we attach the budget to an ENS name.
+
+For every payment, the wallet looks up that name on ENS and finds the policy contract.
+
+Both agents use the same name.
+
+So they share one budget:
+
+Fifty dollars per day.
 
 ---
 
-## One — the part you wanted automated
+## One — a normal payment
 
 > [payments window; type the instruction]
 
-First of the month.
+It's the first of the month.
 
 > [the model runs]
 
-**Claude** is deciding what to pay — and notice what it never does. It never writes an
-address. It picks a vendor by name, and those are **ENS records**. Our directory holds no
-addresses at all. **A hallucinated payee has nowhere to appear.**
+Claude is deciding what to pay.
 
-Retainer's done. Budget: five of fifty.
+But notice: Claude never enters an address.
+
+It only chooses a vendor by name.
+
+Those names are ENS records.
+
+Our vendor directory doesn't store wallet addresses at all.
+
+So if the AI makes up a vendor, it can't make up an address and send money there.
+
+> [payment completes]
+
+The retainer is paid.
+
+We've used five dollars out of fifty.
 
 ---
 
-## Two — the payment you'd want to be asked about
+## Two — a payment that gets blocked
 
-> [same window; Bluefin's first invoice; the line turns red]
+> [Bluefin's first invoice; the line turns red]
 
-New contractor, first invoice. The agent read it correctly, picked the right vendor — and
-the wallet refused it.
+Now we have a new contractor.
 
-**Nobody caught it.** No filter, no review queue, no dashboard. The wallet asked the rule,
-and the rule said: I have never heard of this payee.
+This is their first invoice.
 
-⟨cut⟩ Every other way of doing this puts the limit somewhere the agent can reach —
-a config file, an API key, a session key whose cap the agent enforces on itself. Compromise
-the agent, you get the limit. **Here, what the agent believes it may do is irrelevant.**
+The agent reads the invoice correctly.
 
-> [the agent's next message]
+It picks the right vendor.
 
-And it finds out the same way you did — it reads **a subgraph on The Graph** every few
-seconds. A blocked payment doesn't revert, it emits an event, so **the index is the only
-place a refusal is visible.**
+But the payment doesn't happen.
 
-> [point at "Refused by the chain"]
+⟨cut⟩ And nobody had to review it.
+There's no filter and no approval queue.
 
-And it's why we can show you this: **every payment the chain has turned away**, who asked,
-and why. No contract can be asked that question.
+This payee has never been approved.
+
+> [point at where the "no" came from]
+
+And notice where that "no" came from.
+
+Not from our backend.
+
+The agent asked the chain what the rule is, and didn't even send the payment.
+
+But the rule is not in the agent.
+
+If it sent it anyway, the wallet would refuse.
+
+> [point at the agent's next message, then "Refused by the chain"]
+
+That has happened, and we can show you.
+
+The agent reads our subgraph on The Graph every few seconds.
+
+A refused payment doesn't revert — it emits an event.
+
+So every refusal the wallet has made is here: who tried it, how much, and why.
+
+No contract can be asked that question.
 
 > [press the button; scan]
 
-But we do want to pay them. Loosening what an agent may do costs a live human — not a key, a
-face. **World ID Selfie Check**: front camera, real liveness, and a proof this wallet checks
-against **the one World ID it has registered.** No key can change which one.
+But this contractor is real, and we do want to pay them.
 
-⟨cut⟩ Steal every key we own: you can spend inside the limits you find. You cannot raise
-them.
+To give the agent more permission, we require a real person.
 
-> [widening lands; next tick; paid]
+We use World ID Selfie Check.
 
-Nobody told the agent. It asked again, and the answer had changed. Budget: ten of fifty.
+I scan my face, prove I'm a real live person, and the wallet checks that proof against the one World ID registered to it.
+
+An API key or an agent key cannot do this.
+
+> [the permission lands; next tick; paid]
+
+And we don't need to tell the agent anything.
+
+It tries again.
+
+The answer has changed.
+
+Now the payment goes through.
+
+We've used ten dollars out of fifty.
 
 ---
 
-## Three — the Tuesday, solved
+## Three — two agents, one budget
 
 > [switch to the subscriptions window]
 
-The other agent. Different key, different process, one dollar spent all day.
+Now let's look at the other agent.
 
-> **Renew our annual design-tools licence — forty-eight dollars for the year.**
+⟨cut⟩ Different agent.
+Different key.
+But the same shared budget.
 
-Vendor is on the allow-list. Amount is under the per-transaction cap. **Refused anyway** —
-eight, over the period limit.
+> [type: Renew our annual design-tools licence — forty-eight dollars for the year.]
 
-> [read its own words off the screen]
+The vendor is approved.
 
-Listen to how it explains itself: *we'd need the budget increased, or expenses in other
-categories reduced.* **Nobody told it another agent existed.** It read the chain and worked
-out it has a colleague.
+The amount is below the per-transaction limit.
 
-> [point at the split under the budget bar, top right]
+But the payment is still refused.
 
-Two names, one track. The ledger on chain is keyed by the name, the token and the day —
-**there is no agent in that key.** The budget was never an agent's. The chain is what adds
-it up.
+Why?
 
-And notice what my face bought a minute ago. **It added a payee. It did not add a penny.**
+Because we already spent ten dollars today.
+
+Another forty-eight would go over the daily budget.
+
+> [point at the agent's response]
+
+And look at what the agent says.
+
+It knows the budget needs to increase, or spending somewhere else needs to go down.
+
+⟨cut⟩ Nobody told this agent that another agent exists.
+It just reads the chain and sees the shared budget.
+
+> [point at the split under the budget bar]
+
+The budget isn't attached to an agent.
+
+It's attached to the ENS name.
+
+Both agents spend from the same fifty dollars, and the chain adds it up.
+
+Also notice:
+
+When I used my face earlier, I only approved a new payee.
+
+I did not increase the budget.
 
 ---
 
-## Four — the rule itself is a choice somebody made
+## Four — switching policies
 
-> [right column, "The admin key"; read the second rule aloud]
+> [right column, "The admin key"]
 
-A second rule, already approved by a human: *small payments to anyone, or the full original
-rules.* Two policy contracts composed with an OR.
+We also have a second policy that a human already approved.
 
-> [press "point the name here"; then the payments window]
+⟨cut⟩ The first one has our normal rules.
+The second allows very small payments to anyone.
 
-⟨cut⟩ Admin moves the **ENS** pointer. Admin **cannot approve a rule** — so a stolen admin
-key picks between rules a human already agreed to, and nothing else.
+We combine them with an OR.
 
-Fifty cents to a provider still not on the allow-list, and it goes through.
+> [press "point the name here"]
 
-**Two payments to strangers. One refused, one allowed. The only difference is the size.**
+The admin key can point the ENS name at a different policy.
+
+But only at one that is already on the approved list — never at arbitrary code.
+
+So a stolen admin key can only choose between rules a human already agreed to.
+
+> [payments window; fifty cents to the inference API]
+
+Now fifty cents, to a provider that is not on the allow-list.
+
+> [payment succeeds]
+
+And this time, it works.
+
+Same unknown payee.
+
+The earlier payment was blocked.
+
+This one is allowed.
+
+The difference is the amount.
 
 ---
 
 ## Close
 
-Nobody reviewed anything today. Two agents proposed all of it, the chain decided all of it —
-and would have decided identically if either one were compromised or lying.
+So today, nobody reviewed any of these payments.
 
-And the rule is a contract. Today's reads a payee, a cap, a budget, a window — **swap it
-and it reads something else**, with no change to how the wallet enforces it. **This governs
-who may move money. It is not an opinion about your books.**
+The agents proposed them, the wallet checked the rules, and the chain decided.
 
-And every refusal is on Sepolia — the list you saw is read back out of it. **A system that
-hides its refusals is only telling you about the days it worked.**
+Even if an agent is compromised, it still can't get past those rules.
+
+⟨cut⟩ And because the policy is itself a smart contract, the rules can be changed or combined without changing the wallet.
+Today we check payees, transaction limits, daily budgets and time windows.
+Tomorrow the policy could check something completely different.
+
+And every payment the wallet refused is recorded on Sepolia.
+
+So we don't only see the payments that worked.
+
+We can see what the agents tried to do, and exactly why the wallet said no.
 
 ---
 
@@ -239,14 +338,27 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 
 `python3 docs/read-aloud.py` prints this file as a reading script — what you say, with what
 you do and what you type marked — and counts it. **That script is the only source for these
-numbers**, because counting them a second way by hand produced a different answer twice and
-the difference was the difference between fitting and not.
+numbers.** Counting them a second way by hand produced a different answer twice, and the
+difference was the difference between fitting and not.
 
-| | words | at 165 wpm |
-|---|---|---|
-| as written | **773** | 4.7 min |
-| with all three **⟨cut⟩** paragraphs dropped | **678** | **4.1 min** |
+| | words | 165 wpm | 175 wpm |
+|---|---|---|---|
+| as written | **826** | 5.0 min | 4.7 min |
+| with all five **⟨cut⟩** blocks dropped | **684** | 4.1 min | **3.9 min** |
 
-Both are over the 4.0 cap. **This is not a script you can read at leisure** — it needs
-either a faster delivery (180 wpm puts the cut version at 3.8) or one more paragraph out,
-and which one depends on what your rehearsal shows is already obvious from the screen.
+**The cap is 4 minutes.** The cut version fits only at a brisk pace, and short declarative
+lines are read faster than a words-per-minute model predicts — which is an argument for
+timing yourself, not for trusting either number.
+
+Every ⟨cut⟩ block is one whose point the screen has already made:
+
+| block | why it survives being dropped |
+|---|---|
+| the Tuesday (9 AM / 11 / noon) | the hook, but the budget bar makes the same point in one glance |
+| "no filter and no approval queue" | the refusal card is on screen with nobody having touched it |
+| "different agent / different key" | the tab strip shows both, with both addresses |
+| "nobody told this agent another exists" | the agent's own message says it better than the narration does |
+| the two policy descriptions | both are on screen, written by the human who approved them |
+
+Drop them in that order until it fits.
+
