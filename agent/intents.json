@@ -9,14 +9,14 @@
   {
     "id": "bluefin",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
-    "payee": "0x000000000000000000000000000000000000b1ef",
+    "payee": "0x000000000000000000000000000000000000c0de",
     "amount": "5000000",
     "note": "bluefin.leash.eth — a contractor the allow-list has never seen"
   },
   {
     "id": "inference-api",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
-    "payee": "0x0000000000000000000000000000000000000a9c",
+    "payee": "0x000000000000000000000000000000000000face",
     "amount": "500000",
     "note": "api.leash.eth — 50 cents, under MicroPaymentPolicy's cap"
   }
