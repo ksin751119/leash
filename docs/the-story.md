@@ -267,13 +267,13 @@ Now let's try fifty cents to a provider that isn't on the allow-list.
 
 This time, it works.
 
-Same unknown payee.
+Another payee nobody has approved.
 
-The large payment was blocked.
+Five dollars to one of those was refused.
 
-The small payment is allowed.
+Fifty cents goes through.
 
-That's not a special case in our wallet.
+The difference is the amount — and that's not a special case in our wallet.
 
 That's just another policy.
 
