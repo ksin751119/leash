@@ -248,6 +248,14 @@
     border-top: 1px solid var(--line); padding-top: 14px; min-height: 0;
   }
   .act-left, .act-right { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .act-left > h2, .act-right > h2 {
+    margin: 0 0 2px; font-size: 13px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--mut);
+  }
+  .act-left > h2 span, .act-right > h2 span {
+    letter-spacing: .02em; font-weight: 500; text-transform: none;
+  }
+  .wait-label { font-size: 13px; color: var(--mut); letter-spacing: .02em; }
 
   #widen {
     font: inherit; font-size: 17px; font-weight: 700;
@@ -494,9 +502,21 @@
 
   <div class="act">
     <div class="act-left">
+      <!-- This strip had no heading, so a viewer had to work out from a button, a sentence
+           and an unlabelled bar what they were looking at - and the honest guess was "some
+           kind of history". It is the opposite: the only thing on this page a PERSON can
+           do, and when the agent will next look at the chain. -->
+      <h2>YOU <span>— the one thing only a human can do</span></h2>
       <button id="widen" disabled>Approve this payee with a face scan</button>
       <div id="widenMsg">waiting for the agent…</div>
       <div id="wait" class="wait" hidden>
+        <div class="row">
+          <!-- Labelled, because a bar that fills on its own with no caption reads as
+               progress towards something the viewer started. It is neither: it is the
+               agent's own heartbeat, and the point of showing it is that nobody has to
+               press anything for the next check to happen. -->
+          <span class="wait-label">the agent re-reads the chain on its own</span>
+        </div>
         <div class="row">
           <span>subgraph is <b id="waitLag">—</b></span>
           <span id="waitTick">next tick in 5…</span>
@@ -510,8 +530,9 @@
         <div id="qr"></div>
         <div id="qrHint">scan with World App — it will ask for your face</div>
       </div>
+      <h2>THE CHAIN <span>— what your face changed</span></h2>
       <div class="cmd-head">
-        <span id="cmdLabel">THE COMMAND APPEARS HERE AFTER THE SCAN</span>
+        <span id="cmdLabel">nothing yet — the scan writes here</span>
         <button id="copy" hidden>copy</button>
       </div>
       <!-- `:empty` collapses this to nothing before a scan. It used to hold a large empty
@@ -664,6 +685,7 @@
     // The placeholder and the intents are mutually exclusive: one of them is always the
     // right thing to be looking at, and showing both would be a page that cannot decide.
     $("empty").hidden = (state?.intents ?? []).length > 0 || (state?.messages ?? []).length > 0;
+    $("whoWallet").textContent = state?.wallet ? shortHex(state.wallet) : "—";
     paintChat(state?.messages ?? []);
     last = state;
     // Computed once per state and kept, so the 4Hz repaint below and this frame can never
@@ -784,7 +806,6 @@
 
   function paintRules(rules) {
     $("whoAgent").textContent = rules.ensName ?? "—";
-    $("whoWallet").textContent = state?.wallet ? shortHex(state.wallet) : "—";
 
     $("ensName").textContent = rules.ensName ?? "no name resolves here";
     $("subnameLive").textContent = rules.ensLive ? "live" : "not live";
