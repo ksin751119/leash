@@ -98,9 +98,15 @@ redeployment is a fact about the system and not an embarrassment.
 ## The rule is composable, and that is not a claim you have to take on trust
 
 `StandardPolicy` ANDs every check together, and one of them is the payee allow-list. So
-**every payment to a payee nobody has vetted is refused, however small** — an agent topping
-up an API for fifty cents needs a human to find their phone and scan their face. That is a
-real limitation, and every corporate card in the world already solves it with an `OR`:
+**every payment to a payee nobody has vetted is refused, however small.**
+
+A face scan does not approve a payment — it adds a payee, permanently, and that payee never
+needs another one. The cost is therefore **per counterparty, not per payment**, which is
+exactly right for a new contractor's first invoice and absurd for a fifty-cent API top-up
+from a provider you may use once. **And you cannot pre-approve the world:** an agent meets
+counterparties you did not enumerate in advance, which is most of the reason to have an agent.
+
+Every corporate card in the world already solves this with an `OR`:
 
 ```
 ( amount ≤ 1.00 USDC  AND  still inside the period budget )     ← MicroPaymentPolicy

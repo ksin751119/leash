@@ -149,8 +149,10 @@ The payment goes through.
 
 Scroll to **05 THE ADMIN KEY**. Two approved rules; one is live.
 
-> "Paying fifty cents shouldn't need my face every time. So don't change the allow-list —
-> change the rule."
+> "A face scan doesn't approve a payment — it adds a payee, permanently. One scan, one
+> counterparty, forever. That is exactly right for a new contractor's first invoice. It is
+> absurd for a fifty-cent API top-up from a provider we may use once. **And you cannot
+> pre-approve the world.** So don't change the allow-list — change the rule."
 
 Read the second rule's description aloud; a human wrote it at approval time:
 
