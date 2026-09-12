@@ -1,23 +1,23 @@
 [
   {
-    "id": "retainer",
+    "id": "acme-retainer",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
     "payee": "0x000000000000000000000000000000000000beef",
     "amount": "5000000",
-    "note": "monthly retainer, already allow-listed"
+    "note": "acme.leash.eth — monthly retainer, already allow-listed"
   },
   {
-    "id": "newvendor",
+    "id": "bluefin",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
-    "payee": "0x00000000000000000000000000000000000cafe0",
+    "payee": "0x000000000000000000000000000000000000b1ef",
     "amount": "5000000",
-    "note": "a vendor the policy has never seen"
+    "note": "bluefin.leash.eth — a contractor the allow-list has never seen"
   },
   {
-    "id": "apitopup",
+    "id": "inference-api",
     "token": "0x768f42455a2d082e23ceef7d51e5787c82d67a39",
-    "payee": "0x000000000000000000000000000000000000f00d",
+    "payee": "0x0000000000000000000000000000000000000a9c",
     "amount": "500000",
-    "note": "50 cents, under the micro cap"
+    "note": "api.leash.eth — 50 cents, under MicroPaymentPolicy's cap"
   }
 ]

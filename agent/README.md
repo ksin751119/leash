@@ -16,6 +16,26 @@ curl -s localhost:8788/api/agent/state | jq     # what it currently believes
 curl -s -X POST localhost:8788/api/agent/tick   # run one cycle now, do not wait
 ```
 
+### Two agents, one wallet
+
+`./run-demo.sh` (repo root) starts the page server and **one loop process per agent**:
+`payments` on 8788 with `AGENT_PK`, `subscriptions` on 8789 with `AGENT2_PK`. Add `--dry`
+to start both with an empty intent list and pay nothing.
+
+`AGENT_NAME` is what a process calls itself. It changes no behaviour — the chain has never
+heard of it — but the page labels every payment with it, and on the shared-budget beat that
+label is the only difference between two rows.
+
+**The processes are not told about each other, and do not need to be.** They share a budget
+because they share a *name*: the ledger is `spent[node][token][bucket]`, which has no agent
+in its key, and `bindAgent`'s `AlreadyBound` guard refuses an agent that is already bound
+rather than a node that already has one. Bind a second agent to `vendors` and the account
+enforces one budget across both, with no coordination anywhere in this directory.
+
+`subgraph.mjs:buildCohort` reconstructs who spent what from the spend log, by walking
+`spentAfter` back from the budget's current total until it reaches zero. That walk finds the
+period boundary by arithmetic, so it stays correct if the rule's period ever changes.
+
 Extract single variables as above. **Never source `.env` wholesale** — it also holds
 `WALLET_PK` and `WORLD_RP_SIGNER_PK`, and this process must hold neither.
 

@@ -79,6 +79,13 @@ test("exceeding the remaining period budget is blocked with OVER_PERIOD_LIMIT", 
   const d = decide(base(), intent({ amount: "800000000" }), NOW, KNOWN);
   assert.equal(d.verdict, "will-be-blocked");
   assert.equal(d.reason, REASON.OVER_PERIOD_LIMIT);
+  // The explanation goes on screen verbatim. Base units went out during a rehearsal and
+  // read as "23500000 left of 50000000", which nobody could size at a glance — and this is
+  // the one sentence in the whole demo that has to make a shared budget legible.
+  assert.equal(
+    d.explain,
+    "this would exceed the period budget — 700.00 left of 1000.00 USDC, and this payment is 800.00",
+  );
 });
 
 test("exactly the remaining budget still passes", () => {

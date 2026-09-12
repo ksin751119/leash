@@ -15,6 +15,10 @@ import { sendSpend } from "./send.mjs";
 
 const PORT = Number(process.env.PORT || 8788);
 const TICK_MS = Number(process.env.AGENT_TICK_MS || 5000);
+// What this process is FOR, in one word. Two of these run against one wallet in the demo
+// ("payments" and "subscriptions"), and the page needs to name them apart — an address is
+// a poor label for a colleague. It changes no behaviour: the chain has never heard of it.
+const AGENT_NAME = (process.env.AGENT_NAME || "payments").trim();
 const SUBGRAPH_URL =
   process.env.SUBGRAPH_URL ||
   "https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.9";
@@ -440,6 +444,11 @@ export function publicState(s) {
     // address a viewer can look up rather than an abstraction — and it comes from the
     // validated env, not the snapshot, because it is true whether or not the read worked.
     wallet: WALLET_ADDR ?? null,
+    // This process's own identity, from env rather than from the index — true even on a
+    // tick whose read failed, which is exactly when a page most needs to say who it is
+    // talking to.
+    name: AGENT_NAME,
+    agentAddr: AGENT_ADDR ?? null,
     agent: s.snapshot?.agent ?? null,
     subname: s.snapshot?.subname ?? null,
     policy: s.snapshot?.policy ?? null,
@@ -452,6 +461,15 @@ export function publicState(s) {
     // back to the previous tick. A stale list here would show a rule as available after it
     // had been revoked.
     approvedPolicies: s.snapshot?.approvedPolicies ?? [],
+    // Every agent bound to this name, with each one's share of the period's spending.
+    // Published by BOTH processes and identical in both, because it is read from the chain
+    // rather than from either process's own memory — which is the claim it exists to make.
+    cohort: s.snapshot?.cohort ?? [],
+    // What this wallet has turned away. Forwarded from the snapshot like `payees`, so it is
+    // absent exactly when the read failed rather than falling back to the previous tick — a
+    // stale refusal list is a page claiming something was refused that may since have been
+    // allowed.
+    refusals: s.snapshot?.refusals ?? [],
     intents: Object.values(s.intents).map((i) => ({
       id: i.id,
       note: i.note,
@@ -486,7 +504,12 @@ async function tick() {
       wallet: WALLET_ADDR,
       node: LEASH_NODE,
       agent: AGENT_ADDR,
-      token: intents[0]?.token,
+      // The token the budget is denominated in. Taken from the plan when there is one, and
+      // otherwise from env: with two agents sharing one budget, the panel showing that
+      // budget is part of the opening frame, and a page that can only say what the limit is
+      // once somebody has proposed a payment makes the shared budget look like a
+      // consequence of the payment rather than the constraint it was under all along.
+      token: intents[0]?.token ?? MOCK_USDC,
     };
     let chainBlock;
     try {

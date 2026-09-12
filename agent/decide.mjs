@@ -51,6 +51,21 @@ const pass = () => ({
 });
 
 const lower = (a) => String(a ?? "").toLowerCase();
+
+// Base units are what the chain speaks and what every comparison above uses; they are not
+// what a person reads. "23500000 left of 50000000" went on screen during a rehearsal and
+// nobody in the room could tell at a glance whether it was 23 dollars or 23 million.
+//
+// The 6 is USDC's and is stated here rather than looked up: this module has no chain
+// access, the demo pays in one token, and a decimals() call it cannot make would be a
+// worse lie than a named assumption. Only the EXPLANATION is formatted — every decision
+// above stays in base units.
+const USDC_DECIMALS = 6n;
+const usdc = (units) => {
+  const n = BigInt(units);
+  const scale = 10n ** USDC_DECIMALS;
+  return `${n / scale}.${String(n % scale).padStart(Number(USDC_DECIMALS), "0").slice(0, 2)}`;
+};
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 // `knownPolicy` is the address of the `StandardPolicy` whose rules the policy layer below
@@ -132,7 +147,7 @@ export function decide(snapshot, intent, nowSec, knownPolicy) {
     if (spent + BigInt(intent.amount) > limit) {
       return blocked(
         REASON.OVER_PERIOD_LIMIT,
-        `this would exceed the period budget (${limit - spent} left of ${limit})`,
+        `this would exceed the period budget — ${usdc(limit - spent)} left of ${usdc(limit)} USDC, and this payment is ${usdc(intent.amount)}`,
       );
     }
   }
