@@ -18,50 +18,57 @@
 
 ---
 
-## Cold open — what this is
+## Cold open — AI can move money. But who sets the rules?
 
 > [page idle, two windows side by side]
 
-This is a permission system for AI agent wallets.
+AI agents can already move money.
 
-The rules for what an agent can spend, and who it can pay, live in a smart contract.
+The hard part is not making them pay.
 
-The wallet checks those rules on every payment an agent makes.
+The hard part is making sure they can only pay what they're allowed to pay.
 
-So we don't need to trust the AI agent to follow the rules itself.
+That's what we built.
 
-Here's a simple example.
+A permission layer for AI agent wallets.
+
+⟨cut⟩ The agent proposes a payment.
+The wallet checks the rules.
+And the chain decides.
+
+The agent cannot bypass those rules — because the rules don't live in the agent.
+
+They live on-chain.
+
+Here's what that looks like.
 
 > [beat]
 
-We have a small studio with four people and two AI agents.
+We have a small studio with two AI agents.
 
-One agent pays invoices.
+One pays invoices.
 
 The other handles subscriptions.
 
-⟨cut⟩ Imagine this:
-At 9 AM, the subscription agent renews a yearly license.
-At 11, the invoice agent pays a contractor.
-At noon, there's no money left for an important payment.
-Both agents followed their own limits.
-The problem is: we had two separate limits, but only one account.
+> [point at the name, then the budget]
 
-> [point at the band — the name, then the budget beside it]
+But we don't give each agent its own budget.
 
-So instead of giving each agent its own budget, we attach the budget to an ENS name.
+They share one budget through an ENS name.
 
-For every payment, the wallet looks up that name on ENS and finds the policy contract.
+For every payment, the wallet resolves that name and finds the policy contract.
 
-Both agents use the same name.
+Two agents.
 
-So they share one budget:
+One account.
+
+One shared budget.
 
 Fifty dollars per day.
 
 ---
 
-## One — a normal payment
+## One — let the agent do its job
 
 > [payments window; type the instruction]
 
@@ -71,196 +78,236 @@ It's the first of the month.
 
 Claude is deciding what to pay.
 
-But notice: Claude never enters an address.
+But notice something:
+
+Claude never touches a wallet address.
 
 It only chooses a vendor by name.
 
 Those names are ENS records.
 
-Our vendor directory doesn't store wallet addresses at all.
+Our vendor directory doesn't even store wallet addresses.
 
-So if the AI makes up a vendor, it can't make up an address and send money there.
+So if the AI makes up a vendor, it can't just make up an address and send money there.
 
 > [payment completes]
 
 The retainer is paid.
 
-We've used five dollars out of fifty.
+No approval.
+
+No human click.
+
+Five dollars out of fifty.
+
+⟨cut⟩ This is what we want:
+let the agent work when it's inside the rules.
 
 ---
 
-## Two — a payment that gets blocked
+## Two — and stop it when it isn't
 
 > [Bluefin's first invoice; the line turns red]
 
-Now we have a new contractor.
-
-This is their first invoice.
+Now, a new contractor.
 
 The agent reads the invoice correctly.
 
-It picks the right vendor.
+It finds the right vendor.
 
 But the payment doesn't happen.
 
-⟨cut⟩ And nobody had to review it.
-There's no filter and no approval queue.
+Why?
 
 This payee has never been approved.
 
 > [point at where the "no" came from]
 
-And notice where that "no" came from.
+And this is the important part:
 
-Not from our backend.
+the agent is not the security boundary.
 
-The agent asked the chain what the rule is, and didn't even send the payment.
+The rule doesn't live in its prompt.
 
-But the rule is not in the agent.
+It doesn't live in a config file.
 
-If it sent it anyway, the wallet would refuse.
+It lives on-chain.
+
+The agent can disagree with the rule.
+
+It can ignore it.
+
+It can even be compromised.
+
+Here, it didn't even send the payment — it read the rule and knew it would fail.
+
+But if it sent it anyway, the wallet would still refuse.
+
+And that has happened.
 
 > [point at the agent's next message, then "Refused by the chain"]
 
-That has happened, and we can show you.
+The wallet emits an event when it blocks a payment.
 
-The agent reads our subgraph on The Graph every few seconds.
+The Graph indexes those events.
 
-A refused payment doesn't revert — it emits an event.
+So here we can see every refusal the wallet actually made:
 
-So every refusal the wallet has made is here: who tried it, how much, and why.
+who tried it,
 
-No contract can be asked that question.
+how much,
+
+and why.
+
+We don't just audit what agents did.
+
+We can audit what they tried to do.
 
 > [press the button; scan]
 
-But this contractor is real, and we do want to pay them.
+But this contractor is real.
 
-To give the agent more permission, we require a real person.
+So now we want to change the permission.
+
+And this is where the human comes back in.
 
 We use World ID Selfie Check.
 
-I scan my face, prove I'm a real live person, and the wallet checks that proof against the one World ID registered to it.
+I scan my face.
 
-An API key or an agent key cannot do this.
+I prove that a real, live human is here.
+
+And the wallet checks that proof against the World ID registered to it.
+
+No key can do this — not the agent's, not ours.
 
 > [the permission lands; next tick; paid]
 
-And we don't need to tell the agent anything.
+We don't message the agent.
+
+We don't restart it.
 
 It tries again.
 
-The answer has changed.
+The on-chain permission has changed.
 
-Now the payment goes through.
+And the payment goes through.
 
-We've used ten dollars out of fifty.
+Ten dollars out of fifty.
 
 ---
 
-## Three — two agents, one budget
+## Three — one budget across many agents
 
 > [switch to the subscriptions window]
 
-Now let's look at the other agent.
+Now let's switch agents.
 
-⟨cut⟩ Different agent.
-Different key.
-But the same shared budget.
+> [type: **Renew our annual design-tools licence — forty-eight dollars for the year.**]
 
-> [type: Renew our annual design-tools licence — forty-eight dollars for the year.]
+This vendor is approved.
 
-The vendor is approved.
+The payment itself is under the transaction limit.
 
-The amount is below the per-transaction limit.
+But it's still refused.
 
-But the payment is still refused.
+Because the other agent already spent ten dollars.
 
-Why?
-
-Because we already spent ten dollars today.
-
-Another forty-eight would go over the daily budget.
+Another forty-eight would break the daily budget.
 
 > [point at the agent's response]
 
-And look at what the agent says.
-
-It knows the budget needs to increase, or spending somewhere else needs to go down.
-
-⟨cut⟩ Nobody told this agent that another agent exists.
-It just reads the chain and sees the shared budget.
+And the agent understands that from the chain.
 
 > [point at the split under the budget bar]
 
-The budget isn't attached to an agent.
+This is why the budget doesn't belong to an agent.
 
-It's attached to the ENS name.
+It belongs to the ENS name.
 
-Both agents spend from the same fifty dollars, and the chain adds it up.
+You can have two agents.
 
-Also notice:
+Or twenty.
 
-When I used my face earlier, I only approved a new payee.
+⟨cut⟩ They can use different models and different keys.
+But they all share the same on-chain policy.
 
-I did not increase the budget.
+And when I approved that contractor earlier, I only added a payee.
+
+I didn't add a single dollar to the budget.
 
 ---
 
-## Four — switching policies
+## Four — policies are programmable
 
 > [right column, "The admin key"]
 
-We also have a second policy that a human already approved.
+⟨cut⟩ And these rules aren't hard-coded into the wallet.
+They're policies.
 
-⟨cut⟩ The first one has our normal rules.
-The second allows very small payments to anyone.
+Here we have another policy that a human already approved.
 
-We combine them with an OR.
+It allows very small payments to anyone.
+
+We can combine policies with an OR.
 
 > [press "point the name here"]
 
-The admin key can point the ENS name at a different policy.
+The admin key can switch between approved policies.
 
-But only at one that is already on the approved list — never at arbitrary code.
+But it cannot introduce arbitrary code.
 
-So a stolen admin key can only choose between rules a human already agreed to.
+So even if the admin key is stolen, it can only choose rules a human already agreed to.
 
 > [payments window; fifty cents to the inference API]
 
-Now fifty cents, to a provider that is not on the allow-list.
+Now let's try fifty cents to a provider that isn't on the allow-list.
 
 > [payment succeeds]
 
-And this time, it works.
+This time, it works.
 
 Same unknown payee.
 
-The earlier payment was blocked.
+The large payment was blocked.
 
-This one is allowed.
+The small payment is allowed.
 
-The difference is the amount.
+That's not a special case in our wallet.
+
+That's just another policy.
 
 ---
 
 ## Close
 
-So today, nobody reviewed any of these payments.
+Today, no human reviewed these payments.
 
-The agents proposed them, the wallet checked the rules, and the chain decided.
+The agents proposed.
 
-Even if an agent is compromised, it still can't get past those rules.
+The wallet checked.
 
-⟨cut⟩ And because the policy is itself a smart contract, the rules can be changed or combined without changing the wallet.
-Today we check payees, transaction limits, daily budgets and time windows.
-Tomorrow the policy could check something completely different.
+The chain decided.
 
-And every payment the wallet refused is recorded on Sepolia.
+⟨cut⟩ When the agents stayed inside the rules, they worked automatically.
+When they went outside the rules, the wallet stopped them.
+And when the rules needed to change, a human came back into the loop.
 
-So we don't only see the payments that worked.
+That's the model:
 
-We can see what the agents tried to do, and exactly why the wallet said no.
+Agents get autonomy.
+
+Humans keep control.
+
+And the rules live somewhere neither side can quietly change —
+
+on-chain.
+
+Every allowed payment is verifiable.
+
+Every refusal the wallet made is visible.
+
+And even if the agent is compromised, the rules stay the same.
 
 ---
 
@@ -338,27 +385,27 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 
 `python3 docs/read-aloud.py` prints this file as a reading script — what you say, with what
 you do and what you type marked — and counts it. **That script is the only source for these
-numbers.** Counting them a second way by hand produced a different answer twice, and the
-difference was the difference between fitting and not.
+numbers.**
 
-| | words | 165 wpm | 175 wpm |
-|---|---|---|---|
-| as written | **826** | 5.0 min | 4.7 min |
-| with all five **⟨cut⟩** blocks dropped | **684** | 4.1 min | **3.9 min** |
+| | words | 165 wpm | 175 wpm | 185 wpm |
+|---|---|---|---|---|
+| as written | **772** | 4.7 min | 4.4 min | 4.2 min |
+| with all five **⟨cut⟩** blocks dropped | **683** | 4.1 min | **3.9 min** | 3.7 min |
 
-**The cap is 4 minutes.** The cut version fits only at a brisk pace, and short declarative
-lines are read faster than a words-per-minute model predicts — which is an argument for
-timing yourself, not for trusting either number.
+**The cap is 4 minutes.** This version is built from short declarative lines with hard
+stops, which are genuinely read faster than a words-per-minute model predicts — so the real
+number is likely better than the table. It is still a reason to time yourself rather than to
+trust the table.
 
-Every ⟨cut⟩ block is one whose point the screen has already made:
+Every ⟨cut⟩ block is one whose point something else already makes:
 
 | block | why it survives being dropped |
 |---|---|
-| the Tuesday (9 AM / 11 / noon) | the hook, but the budget bar makes the same point in one glance |
-| "no filter and no approval queue" | the refusal card is on screen with nobody having touched it |
-| "different agent / different key" | the tab strip shows both, with both addresses |
-| "nobody told this agent another exists" | the agent's own message says it better than the narration does |
-| the two policy descriptions | both are on screen, written by the human who approved them |
+| "The agent proposes / the wallet checks / the chain decides" | the close repeats it word for word, where it lands as a callback |
+| "This is what we want: let the agent work inside the rules" | "No approval. No human click." just said it |
+| "different models and different keys" | true and good, but "two agents or twenty" carries the point |
+| "these rules aren't hard-coded, they're policies" | the next three lines demonstrate it |
+| the close's three-line recap | the video has just shown all three |
 
 Drop them in that order until it fits.
 
