@@ -24,6 +24,8 @@ const PORT = Number(process.env.PORT || 8787);
 const APP_ID = process.env.WORLD_APP_ID || "app_452654c9c277c08df71fec3315501c00";
 const ACTION = process.env.WORLD_ACTION || "expand-policy";
 const RP_ID = process.env.WORLD_RP_ID || "rp_ef35d4e2d4f1a031";
+const RESOLVER_ADDR = process.env.LEASH_RESOLVER || "0x607a4d7363d9E7511a932F82eAE1e12FB609915b";
+const APPROVALS_ADDR = "0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4";
 
 // Selfie Check produces a World ID **3.0**-format proof (their words: "Currently uses
 // World ID 3.0 technology, with World ID 4.0 support not yet available"), but
@@ -100,6 +102,65 @@ async function relayWidening({ node, token, payee, nonce, nullifier, attestation
       sent: false,
       error: redact(String(err?.shortMessage ?? err?.message ?? err), process.env.SEPOLIA_RPC),
     };
+  }
+}
+
+/// Points the ENS name at a different approved policy. **ADMIN's authority, and the
+/// narrow limit of it.**
+///
+/// ADMIN can move this pointer and can issue or revoke subnames. ADMIN cannot approve a
+/// policy — that is `PolicyApprovals`, whose attester is immutable — so the worst a stolen
+/// ADMIN key does here is swap between rules a human already approved. That asymmetry is
+/// the reason the two live in different contracts, and exposing this button is what makes
+/// it visible rather than asserted.
+///
+/// The target is checked against the approval list before the transaction is built. The
+/// resolver would happily store an unapproved address and the account would then refuse
+/// every spend with `4 POLICY_NOT_APPROVED` — technically safe, and a confusing way to
+/// find out.
+async function setPolicyPointer(policy) {
+  const pk = process.env.ADMIN_PK;
+  if (!pk) return { ok: false, error: "ADMIN_PK is not set" };
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(policy ?? ""))) {
+    return { ok: false, error: "policy must be 0x + 40 hex chars" };
+  }
+  try {
+    const transport = viemHttp(process.env.SEPOLIA_RPC);
+    const account = privateKeyToAccount(pk);
+    const pub = createPublicClient({ chain: sepolia, transport });
+
+    const approved = await pub.readContract({
+      address: APPROVALS_ADDR,
+      abi: [{
+        type: "function", name: "isApproved", stateMutability: "view",
+        inputs: [{ type: "address" }], outputs: [{ type: "bool" }],
+      }],
+      functionName: "isApproved",
+      args: [policy],
+    });
+    if (!approved) {
+      return {
+        ok: false,
+        error:
+          "that policy is not on the approval list. ADMIN can move this pointer but " +
+          "cannot approve a rule — approving one needs an attestation.",
+      };
+    }
+
+    const wallet = createWalletClient({ account, chain: sepolia, transport });
+    const hash = await wallet.writeContract({
+      address: RESOLVER_ADDR,
+      abi: [{
+        type: "function", name: "setPolicy", stateMutability: "nonpayable",
+        inputs: [{ type: "bytes32" }, { type: "address" }], outputs: [],
+      }],
+      functionName: "setPolicy",
+      args: [process.env.LEASH_NODE, policy],
+    });
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    return { ok: receipt.status === "success", tx: hash, status: receipt.status, by: account.address };
+  } catch (err) {
+    return { ok: false, error: redact(String(err?.shortMessage ?? err?.message ?? err), process.env.SEPOLIA_RPC) };
   }
 }
 
@@ -372,6 +433,13 @@ const server = createServer(async (req, res) => {
         // nobody was looking.
         credential: result.responses[0].identifier,
       });
+    }
+
+    // ADMIN's one button. See setPolicyPointer for what it deliberately cannot do.
+    if (req.method === "POST" && req.url === "/api/set-policy") {
+      const { policy } = await readBody(req);
+      const r = await setPolicyPointer(policy);
+      return json(res, r.ok ? 200 : 400, r);
     }
 
     if (req.method === "GET" && req.url.startsWith("/api/widen-plan")) {

@@ -149,23 +149,34 @@
 
   .cols {
     display: grid;
-    grid-template-columns: 1.18fr 1fr;
+    grid-template-columns: 1.15fr 1fr;
     gap: 72px;
     align-items: start;
   }
-  .col { min-width: 0; }
-  .col > h2, .act-left > h2, .act-right > h2 {
-    margin: 0 0 var(--sp-md);
-    font-family: var(--mono);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: .18em;
-    text-transform: uppercase;
-    color: var(--fg-mute);
+  .stack { display: flex; flex-direction: column; gap: var(--sp-lg); min-width: 0; }
+
+  /* A zone is one authority's area. The heading is a caption, the number is what makes
+     five of them read as a sequence rather than as five boxes of similar weight. */
+  .zone { min-width: 0; }
+  .zone > h2 {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin: 0 0 var(--sp-md); padding-bottom: 10px;
+    border-bottom: 1px solid var(--fg);
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--fg);
   }
-  .col > h2 span, .act-left > h2 span, .act-right > h2 span {
-    letter-spacing: .04em; text-transform: none; font-family: var(--font);
+  .zone > h2 .num {
+    font-size: 11px; letter-spacing: .1em; color: var(--fg-mute);
   }
+  .zone > h2 > span:not(.num) {
+    letter-spacing: .02em; text-transform: none; font-family: var(--font);
+    font-size: 13px; font-weight: 400; color: var(--fg-mute);
+  }
+  .zone-note {
+    margin: 0 0 var(--sp-md); font-size: 13px; line-height: 1.65; color: var(--fg-mute);
+    max-width: 54ch;
+  }
+  .zone-note b { color: var(--fg-soft); }
 
   /* ---------- ask ---------- */
 
@@ -328,6 +339,13 @@
   .pol.live .pol-addr { color: var(--fg); font-weight: 500; }
   .pol-desc { font-size: 13px; color: var(--fg-mute); margin-top: 4px; }
   .pol.live .pol-desc { color: var(--fg-soft); }
+  .pol-switch {
+    font: inherit; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    padding: 0 0 2px; border: 0; border-bottom: 1px solid currentColor;
+    background: none; color: var(--fg); cursor: pointer; white-space: nowrap;
+  }
+  .pol-switch:hover:not(:disabled) { color: var(--accent); }
+  .pol-switch:disabled { color: var(--fg-mute); border-bottom-color: transparent; cursor: default; }
 
   #payees { margin-top: var(--sp-sm); }
   #payees > div {
@@ -338,11 +356,13 @@
 
   /* ---------- the strip ---------- */
 
-  .act {
-    display: grid; grid-template-columns: 1.18fr 1fr; gap: 72px;
-    border-top: 1px solid var(--line); padding-top: var(--sp-md);
-  }
-  .act-left, .act-right { display: flex; flex-direction: column; gap: var(--sp-sm); min-width: 0; }
+  /* Zone 04 holds the button, the QR and the receipt in one column; zone 05 holds the
+     rule list. Both are plain stacks now that the page is cut by authority rather than
+     by an action strip pinned to the bottom. */
+  #widen + #widenMsg { margin-top: 10px; }
+  #qrWrap { margin-top: var(--sp-md); }
+  .cmd-head { margin-top: var(--sp-md); }
+  #wait { margin-top: var(--sp-md); }
 
   #widen {
     align-self: flex-start;
@@ -400,13 +420,13 @@
 </style>
 
 <div class="stage">
-  <div class="top">
+
+  <!-- ============================================================= masthead -->
+  <header class="top">
     <div class="brand">
       <h1>LEASH</h1>
-      <!-- Who this is, in the names the chain knows them by. The company is a name, the
-           agent is a subname of it, and the wallet is what that subname governs — saying
-           it here means the rest of the page can use short forms without anyone wondering
-           whose money is moving. -->
+      <!-- Who this is, in the names the chain knows them by: the company is a name, the
+           agent is a subname of it, and the wallet is what that subname governs. -->
       <span class="who">
         <b id="whoCompany">leash.eth</b>
         <span class="sep">›</span>
@@ -421,65 +441,74 @@
       <span><b id="clock">—</b></span>
       <span>index <b id="lag">—</b></span>
     </div>
-  </div>
+  </header>
 
+  <!-- The page is cut by WHO ACTS, not by what kind of data it is. Three different
+       authorities appear here and none of them can do the others' job: the agent only
+       proposes, a face is the only thing that widens, and ADMIN can point the name at a
+       different rule but cannot approve one. Numbering the sections is how that reads as
+       a sequence instead of a dashboard. -->
   <div class="cols">
-    <section class="col">
-      <h2>AGENT <span>— what it is about to do</span></h2>
 
-      <!-- The instruction is the first thing in this column because it is the first thing
-           that happens: a person asks, the model proposes, the chain decides. Putting it
-           above the intents makes that order visible without a caption. -->
-      <form id="askForm" class="ask">
-        <input id="ask" autocomplete="off" spellcheck="false"
-               placeholder="tell the agent what to do — e.g. pay this month's retainer" />
-        <button id="askGo" type="submit">Ask</button>
-      </form>
-      <div id="askMsg" class="askMsg"></div>
-      <!-- What the agent says. Two turns matter and the second is the one worth waiting
-           for: it proposed a payment, the chain refused it, and it comes back and says so
-           in its own words. A canned "I was blocked" would prove nothing about whether it
-           understood being overruled. -->
-      <div id="chat" class="chat"></div>
+    <div class="stack">
+      <!-- ========================================================= 01 the agent -->
+      <section class="zone">
+        <h2><span class="num">01</span> THE AGENT <span>— what you ask it to do</span></h2>
 
-      <div id="blind" class="banner" hidden>
-        <strong id="blindHead">the agent is blind — it will propose nothing</strong>
-        <span id="blindDetail" class="detail grow"></span>
-      </div>
+        <form id="askForm" class="ask">
+          <input id="ask" autocomplete="off" spellcheck="false"
+                 placeholder="tell the agent what to do — e.g. pay this month's retainer" />
+          <button id="askGo" type="submit">Ask</button>
+        </form>
+        <div id="askMsg" class="askMsg"></div>
 
-      <!-- Shown until an instruction produces something. An empty column is the first
-           thing a visitor sees, and "nothing here" and "waiting for you" look identical
-           unless one of them says so. -->
-      <div id="empty" class="empty">
-        <p><b>Nothing is proposed yet.</b></p>
-        <p>
-          Ask the agent to do something above. A language model turns what you type into
-          payments; it never writes an address, only picks from a vendor directory. What
-          happens to those payments is decided on chain, by the policy on the right.
-        </p>
-        <p class="empty-try">
-          Try: <button type="button" class="chip" data-ask="Pay this month's studio retainer, and top up our inference API credits by 50 cents.">pay the retainer and top up the API</button>
-          <button type="button" class="chip" data-ask="We just hired Bluefin Design for the rebrand. Pay their first invoice.">pay a contractor we just hired</button>
-        </p>
-      </div>
+        <!-- Two turns matter and the second is the one worth waiting for: it proposed a
+             payment, the chain refused it, and it comes back and says so. -->
+        <div id="chat" class="chat"></div>
 
-      <div id="intents"></div>
-    </section>
+        <div id="empty" class="empty">
+          <p><b>Nothing is proposed yet.</b></p>
+          <p>
+            A language model turns what you type into payments. It never writes an address —
+            it picks from a vendor directory of ENS names, and the address is read off the
+            chain. What happens to those payments is not its decision.
+          </p>
+          <p class="empty-try">
+            Try
+            <button type="button" class="chip" data-ask="Pay this month's studio retainer, and top up our inference API credits by 50 cents.">pay the retainer and top up the API</button>
+            <button type="button" class="chip" data-ask="We just hired Bluefin Design for the rebrand. Pay their first invoice.">pay a contractor we just hired</button>
+          </p>
+        </div>
+      </section>
 
-    <section class="col">
-      <h2>RULES <span>— what the chain lets it do</span></h2>
+      <!-- ========================================================= 02 the chain -->
+      <section class="zone">
+        <h2><span class="num">02</span> THE CHAIN <span>— what it allowed, and what it refused</span></h2>
 
-      <div class="panel">
-        <!-- The policy address is not configured anywhere. It is RESOLVED, every tick,
-             by walking ENS - and showing the walk is the difference between a judge
-             reading "we use ENS" in a README and watching a name become a rule. -->
+        <div id="blind" class="banner" hidden>
+          <strong id="blindHead">the agent is blind — it will propose nothing</strong>
+          <span id="blindDetail" class="detail grow"></span>
+        </div>
+
+        <div id="intents"></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <!-- ========================================================== 03 the rule -->
+      <section class="zone">
+        <h2><span class="num">03</span> THE RULE <span>— where it comes from, and what it says</span></h2>
+
+        <!-- The policy address is not configured anywhere. It is RESOLVED, every tick, by
+             walking ENS — and showing the walk is the difference between a judge reading
+             "we use ENS" and watching a name become a rule. -->
         <div class="kv">
-          <span class="k">WHERE THE RULE COMES FROM</span>
+          <span class="k">resolved through ENS</span>
           <span id="subnameLive" class="pill no">not live</span>
         </div>
         <div class="ens">
           <div class="ens-row"><span id="ensName" class="ens-name">—</span></div>
-          <div class="ens-arrow">resolved through ENS, every tick</div>
+          <div class="ens-arrow">three hops, every tick — break one and nothing passes</div>
           <div class="ens-row">
             <span id="policyAddr" class="addr">—</span>
             <span id="policyApproved" class="pill no">not approved</span>
@@ -490,90 +519,87 @@
         <hr />
 
         <div class="kv">
-          <span class="k">BUDGET THIS PERIOD</span>
+          <span class="k">budget this period</span>
           <span id="budgetPct" class="budget-line"><b>—</b></span>
         </div>
         <div class="bar"><i id="budgetFill" style="width:0%"></i></div>
         <div class="budget-line">spent <b id="budgetSpent">—</b> of <b id="budgetLimit">—</b> USDC</div>
-      </div>
 
-      <!-- What the wallet COULD be pointed at, not only what it is pointed at. A panel
-           showing one address makes the rule look like a property of the wallet; showing
-           the list makes it a choice, and swapping it one transaction. -->
-      <div class="panel">
-        <div class="kv"><span class="k">RULES A HUMAN HAS APPROVED</span></div>
-        <div id="policies" class="policies"></div>
-      </div>
+        <hr />
 
-      <div class="panel fill">
-        <div class="kv"><span class="k">PAYEES THIS WALLET ALLOWS</span></div>
+        <div class="kv"><span class="k">payees this wallet allows</span></div>
         <div id="payees"></div>
-      </div>
-    </section>
+      </section>
 
-    <!-- The label is one short word because the gutter it has to fit inside is ~61px wide;
-         anything longer would need a plate wider than the gap and would paint over the
-         intent card's amount. drawWire hides it outright if it still does not fit. -->
-    <svg id="wires" aria-hidden="true">
-      <path id="wirePath" fill="none" stroke="var(--blocked)" stroke-width="2"
-            stroke-dasharray="7 5" opacity="0" />
-      <circle id="wireDot" r="4" fill="var(--blocked)" opacity="0" />
-      <rect id="wireLabelBg" rx="4" fill="var(--bg)" opacity="0" />
-      <text id="wireLabel" font-size="13" font-family="system-ui, sans-serif"
-            fill="var(--blocked)" text-anchor="middle" opacity="0">absent</text>
-    </svg>
+      <!-- ======================================================= 04 only a human -->
+      <section class="zone">
+        <!-- "ONLY A HUMAN" was the wrong label: it read as though ADMIN below were not
+             one. The difference between these two zones is not who is human — in this demo
+             all three authorities are the same person — it is WHAT THEY PRESENT. One is a
+             face. The other is a key. -->
+        <h2><span class="num">04</span> A FACE <span>— the only thing that widens the allow-list</span></h2>
+        <p class="zone-note">
+          Not a key. The wallet has registered one World ID, and no key — not even its own —
+          can change which one. Reductions need nothing at all: tightening a rule, removing a
+          payee, revoking the agent and pausing the wallet are free, because when something
+          has gone wrong nobody should have to find their phone before pulling the brake.
+        </p>
+
+        <button id="widen" disabled>Approve this payee with a face scan</button>
+        <div id="widenMsg">waiting for the agent…</div>
+
+        <div id="qrWrap" hidden>
+          <div id="qr"></div>
+          <div id="qrHint">scan with World App — it will ask for your face</div>
+        </div>
+
+        <div class="cmd-head">
+          <span id="cmdLabel">nothing yet — the scan writes here</span>
+          <button id="copy" hidden>copy</button>
+        </div>
+        <pre id="cmd"></pre>
+        <div id="valid" hidden><span id="validText">signed · valid for 15 min</span> <span id="expires"></span></div>
+
+        <div id="wait" class="wait" hidden>
+          <div class="row">
+            <span class="wait-label">the agent re-reads the chain on its own</span>
+          </div>
+          <div class="row">
+            <span>subgraph is <b id="waitLag">—</b></span>
+            <span id="waitTick">next tick in 5…</span>
+          </div>
+          <div id="tickBar"><i id="tickBarFill"></i></div>
+        </div>
+      </section>
+
+      <!-- ========================================================= 05 only admin -->
+      <section class="zone">
+        <h2><span class="num">05</span> THE ADMIN KEY <span>— points the name at a different rule</span></h2>
+        <p class="zone-note">
+          A key, not a face, and it buys strictly less. ADMIN moves this pointer and issues
+          subnames. <b>ADMIN cannot approve a rule</b> — that needs an attestation, and the
+          attester is immutable — so a stolen ADMIN key can only swap between rules a human
+          already approved, and cannot widen a single payee.
+        </p>
+
+        <div id="policies" class="policies"></div>
+        <div id="adminMsg" class="askMsg"></div>
+      </section>
+    </div>
   </div>
 
-  <div class="act">
-    <div class="act-left">
-      <!-- This strip had no heading, so a viewer had to work out from a button, a sentence
-           and an unlabelled bar what they were looking at - and the honest guess was "some
-           kind of history". It is the opposite: the only thing on this page a PERSON can
-           do, and when the agent will next look at the chain. -->
-      <h2>YOU <span>— the one thing only a human can do</span></h2>
-      <button id="widen" disabled>Approve this payee with a face scan</button>
-      <div id="widenMsg">waiting for the agent…</div>
-      <div id="wait" class="wait" hidden>
-        <div class="row">
-          <!-- Labelled, because a bar that fills on its own with no caption reads as
-               progress towards something the viewer started. It is neither: it is the
-               agent's own heartbeat, and the point of showing it is that nobody has to
-               press anything for the next check to happen. -->
-          <span class="wait-label">the agent re-reads the chain on its own</span>
-        </div>
-        <div class="row">
-          <span>subgraph is <b id="waitLag">—</b></span>
-          <span id="waitTick">next tick in 5…</span>
-        </div>
-        <div id="tickBar"><i id="tickBarFill"></i></div>
-      </div>
-    </div>
-
-    <div class="act-right">
-      <div id="qrWrap" hidden>
-        <div id="qr"></div>
-        <div id="qrHint">scan with World App — it will ask for your face</div>
-      </div>
-      <h2>THE CHAIN <span>— what your face changed</span></h2>
-      <div class="cmd-head">
-        <span id="cmdLabel">nothing yet — the scan writes here</span>
-        <button id="copy" hidden>copy</button>
-      </div>
-      <!-- `:empty` collapses this to nothing before a scan. It used to hold a large empty
-           rectangle whenever there was no command, which is the most prominent thing on a
-           page can be and it was saying nothing. -->
-      <pre id="cmd"></pre>
-      <div id="valid" hidden><span id="validText">signed · valid for 15 min · run the command</span> <span id="expires"></span></div>
-    </div>
-  </div>
+  <!-- Drawn from a refusal to the allow-list that explains it, and only when the refusal
+       really is about a missing payee. drawWire hides it outright if it does not fit. -->
+  <svg id="wires" aria-hidden="true">
+    <path id="wirePath" fill="none" stroke="var(--accent)" stroke-width="1"
+          stroke-dasharray="5 4" opacity="0" />
+    <circle id="wireDot" r="3" fill="var(--accent)" opacity="0" />
+    <rect id="wireLabelBg" rx="0" fill="var(--bg)" opacity="0" />
+    <text id="wireLabel" font-size="11" font-family="var(--mono)"
+          fill="var(--accent)" text-anchor="middle" opacity="0">absent</text>
+  </svg>
 </div>
 
-<!-- @worldcoin/idkit-core, served from this origin. NOT idkit-standalone: that widget
-     speaks only the `verification_level` vocabulary, which has no Selfie Check in it at
-     all - measured 2026-09-11, a scan against a brand-new action opened no camera and
-     returned `identifier: "device"`. A face check is a 4.0 credential request, and this
-     is the package that can make one. Self-hosted because it resolves its WASM relative
-     to itself. -->
 <script src="/idkit.global.js"></script>
 
 <script type="module">
@@ -675,15 +701,60 @@
       const addr = document.createElement("span");
       addr.className = "pol-addr";
       addr.textContent = r.short;
-      const pill = document.createElement("span");
-      pill.className = `pill ${r.live ? "yes" : "wait"}`;
-      pill.textContent = r.live ? "live" : "approved, not in use";
-      head.append(addr, pill);
+      // Live rows say so; the others offer the swap. ADMIN's whole authority on this page
+      // is this one button, and the server refuses a policy the approval list does not
+      // carry — so "ADMIN cannot approve a rule" is enforced rather than captioned.
+      let right;
+      if (r.live) {
+        right = document.createElement("span");
+        right.className = "pill yes";
+        right.textContent = "live";
+      } else {
+        right = document.createElement("button");
+        right.type = "button";
+        right.className = "pol-switch";
+        right.textContent = "point the name here";
+        right.addEventListener("click", () => switchPolicy(r.addr, right));
+      }
+      head.append(addr, right);
       const desc = document.createElement("div");
       desc.className = "pol-desc";
       desc.textContent = r.description ?? "no description was recorded";
       box.append(head, desc);
       el.append(box);
+    }
+  }
+
+  // ADMIN's action. Deliberately not awaited into the render loop: the pointer moving is
+  // a chain fact, and the page learns about it the same way it learns everything else —
+  // from the next tick. Watching it arrive that way is the point.
+  let switching = false;
+  async function switchPolicy(addr, button) {
+    if (switching) return;
+    switching = true;
+    button.disabled = true;
+    const before = button.textContent;
+    button.textContent = "sending…";
+    $("adminMsg").className = "askMsg";
+    $("adminMsg").textContent = "ADMIN is moving the ENS pointer…";
+    try {
+      const r = await fetch("/api/set-policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy: addr }),
+      });
+      const body = await r.json();
+      if (!r.ok || !body.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+      $("adminMsg").innerHTML =
+        `pointer moved in <b>${String(body.tx).slice(0, 10)}…</b> — the agent will notice on its next tick. ` +
+        `Nobody told it.`;
+    } catch (err) {
+      $("adminMsg").className = "askMsg bad";
+      $("adminMsg").textContent = String(err?.message ?? err);
+      button.textContent = before;
+      button.disabled = false;
+    } finally {
+      switching = false;
     }
   }
 
