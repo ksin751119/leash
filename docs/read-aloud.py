@@ -62,7 +62,7 @@ for kind, text, is_cut in out:
             emit("\n" + "=" * 72 + f"\n{plain.upper()}\n" + "=" * 72)
     elif kind == "do":
         stage = text.strip("[]")
-        emit(f"`→ {stage}`" if MD else f"   \033[2m\u2192 {stage}\033[0m")
+        emit(f"> **▶** {stage}" if MD else f"   \033[2m\u2192 {stage}\033[0m")
     elif kind == "type":
         emit(f"**TYPE →** {plain}" if MD else f"   \033[1;33mTYPE: {plain}\033[0m")
     elif kind == "say":

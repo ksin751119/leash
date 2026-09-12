@@ -20,7 +20,7 @@
 
 ## Cold open — AI can move money. But who sets the rules?
 
-> [page idle, two windows side by side]
+> [OPEN two windows: `?agent=payments` left, `?agent=subscriptions` right. Nothing to click. SEE `0.00 of 50.00`]
 
 AI agents can already move money.
 
@@ -42,7 +42,7 @@ They live on-chain.
 
 Here's what that looks like.
 
-> [beat]
+> [pause — let the page sit]
 
 We have a small studio with two AI agents.
 
@@ -50,7 +50,7 @@ One pays invoices.
 
 The other handles subscriptions.
 
-> [point at the name, then the budget]
+> [POINT at the ENS panel, then the budget beside it. SEE `vendors.leash.eth` → `StandardPolicy/1: …`]
 
 But we don't give each agent its own budget.
 
@@ -70,11 +70,11 @@ Fifty dollars per day.
 
 ## One — let the agent do its job
 
-> [payments window; type the instruction]
+> [CLICK the chip **pay the studio retainer**  ·  TYPE `Pay this month's studio retainer.`]
 
 It's the first of the month.
 
-> [the model runs]
+> [WAIT ~22s — keep talking. The card appears already DONE; there is no pending state]
 
 Claude is deciding what to pay.
 
@@ -90,7 +90,7 @@ Our vendor directory doesn't even store wallet addresses.
 
 So if the AI makes up a vendor, it can't just make up an address and send money there.
 
-> [payment completes]
+> [SEE the card **DONE**, then ~6s later the budget bar moves to `1.00`]
 
 The retainer is paid.
 
@@ -107,7 +107,7 @@ let the agent work when it's inside the rules.
 
 ## Two — and stop it when it isn't
 
-> [Bluefin's first invoice; the line turns red]
+> [CLICK the chip **pay a contractor we just hired**  ·  WAIT ~10s, nothing is sent  ·  SEE red card `6 · PAYEE_NOT_ALLOWED`, the amber button lights, `0x0000…` appears as **not on the list**]
 
 Now, a new contractor.
 
@@ -121,7 +121,7 @@ Why?
 
 This payee has never been approved.
 
-> [point at where the "no" came from]
+> [POINT at the red card, then at the amber button]
 
 And this is the important part:
 
@@ -145,7 +145,7 @@ But if it sent it anyway, the wallet would still refuse.
 
 And that has happened.
 
-> [point at the agent's next message, then "Refused by the chain"]
+> [POINT at the agent's second message, then at **Refused by the chain** below the cards]
 
 The wallet emits an event when it blocks a payment.
 
@@ -163,7 +163,7 @@ We don't just audit what agents did.
 
 We can audit what they tried to do.
 
-> [press the button; scan]
+> [PRESS **Approve this payee with a face scan**  ·  SEE the QR in the page  ·  SCAN with World App — **the front camera must open**. If it only asks for device verification, stop]
 
 But this contractor is real.
 
@@ -181,7 +181,7 @@ And the wallet checks that proof against the World ID registered to it.
 
 No key can do this — not the agent's, not ours.
 
-> [the permission lands; next tick; paid]
+> [SEE `YOUR FACE APPROVED IT`  ·  WAIT ~8–16s for the next tick  ·  SEE the card turn **DONE**, budget `3.00`, the payee row flip to **allowed**]
 
 We don't message the agent.
 
@@ -199,11 +199,11 @@ Three dollars out of fifty.
 
 ## Three — one budget across many agents
 
-> [switch to the subscriptions window]
+> [MOVE to the **subscriptions** window]
 
 Now let's switch agents.
 
-> [type: **Renew our annual design-tools licence — forty-eight dollars for the year.**]
+> [TYPE **Renew our annual design-tools licence — 48.00 USDC for the year.**  ·  WAIT ~10s  ·  SEE `8 · OVER_PERIOD_LIMIT`]
 
 This vendor is approved.
 
@@ -215,11 +215,11 @@ Because the other agent already spent three dollars.
 
 Another forty-eight would break the daily budget.
 
-> [point at the agent's response]
+> [POINT at the agent's **third** message — its own words, nobody told it]
 
 And the agent understands that from the chain.
 
-> [point at the split under the budget bar]
+> [POINT at the split under the budget bar: two names, one track]
 
 This is why the budget doesn't belong to an agent.
 
@@ -240,7 +240,7 @@ I didn't add a single dollar to the budget.
 
 ## Four — policies are programmable
 
-> [right column, "The admin key"]
+> [SCROLL the right column to **The admin key**. SEE two rules, the live one green-edged]
 
 ⟨cut⟩ And these rules aren't hard-coded into the wallet.
 They're policies.
@@ -251,7 +251,7 @@ It allows very small payments to anyone.
 
 We can combine policies with an OR.
 
-> [press "point the name here"]
+> [PRESS **point the name here** on the second rule  ·  WAIT ~12–15s, one block  ·  SEE the green edge move, and the band's rule description change]
 
 The admin key can switch between approved policies.
 
@@ -259,11 +259,11 @@ But it cannot introduce arbitrary code.
 
 So even if the admin key is stolen, it can only choose rules a human already agreed to.
 
-> [payments window; fifty cents to the inference API]
+> [BACK to the **payments** window  ·  TYPE `Top up our inference API credits by 50 cents.`  ·  WAIT ~22s]
 
 Now let's try fifty cents to a provider that isn't on the allow-list.
 
-> [payment succeeds]
+> [SEE **DONE**, and the payee panel reading `paid, never listed`]
 
 This time, it works.
 
@@ -280,6 +280,8 @@ That's just another policy.
 ---
 
 ## Close
+
+> [nothing to click. Let the finished page sit]
 
 Today, no human reviewed these payments.
 
@@ -411,4 +413,3 @@ Every ⟨cut⟩ block is one whose point something else already makes:
 | the close's three-line recap | the video has just shown all three |
 
 Drop them in that order until it fits.
-
