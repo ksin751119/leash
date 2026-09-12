@@ -5,7 +5,9 @@
 // directory", and the tests are the places that could give more away.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toBaseUnits, buildPrompt, parsePlan, resolvePlan, planPayments } from "./plan.mjs";
+import {
+  toBaseUnits, buildPrompt, buildOutcomePrompt, parsePlan, resolvePlan, planPayments,
+} from "./plan.mjs";
 
 const TOKEN = "0x768f42455a2d082e23ceef7d51e5787c82d67a39";
 const VENDORS = [
@@ -51,18 +53,42 @@ test("the prompt offers ids and never asks for an address", () => {
 // --- parsing ---
 
 test("a fenced answer is unwrapped, because a fence is formatting and not content", () => {
-  assert.deepEqual(parsePlan('```json\n[{"vendor":"bluefin","amount":"5"}]\n```'), [
-    { vendor: "bluefin", amount: "5" },
-  ]);
-  assert.deepEqual(parsePlan('```\n[]\n```'), []);
+  assert.deepEqual(parsePlan('```json\n{"say":"ok","payments":[{"vendor":"bluefin","amount":"5"}]}\n```'), {
+    say: "ok",
+    payments: [{ vendor: "bluefin", amount: "5" }],
+  });
+  assert.deepEqual(parsePlan('```\n{"say":"nothing to do","payments":[]}\n```'), {
+    say: "nothing to do",
+    payments: [],
+  });
+});
+
+// The shape this returned before the model was asked to speak. Still accepted: refusing it
+// would turn a model that answered the older contract correctly into a failure.
+test("a bare array is still accepted, with no sentence", () => {
+  assert.deepEqual(parsePlan('[{"vendor":"bluefin","amount":"5"}]'), {
+    say: null,
+    payments: [{ vendor: "bluefin", amount: "5" }],
+  });
+});
+
+test("an object with no payments array is refused", () => {
+  assert.throws(() => parsePlan('{"say":"I will pay them"}'), /no payments array/);
+});
+
+test("a runaway sentence is bounded, because it is rendered on a page", () => {
+  const long = JSON.stringify({ say: "x".repeat(900), payments: [] });
+  assert.equal(parsePlan(long).say.length, 240);
 });
 
 test("prose around the JSON is an error, not something to salvage", () => {
   assert.throws(() => parsePlan('Sure! Here you go: [{"vendor":"bluefin"}]'), /did not return JSON/);
 });
 
-test("an object is refused - a plan is a list of payments or it is nothing", () => {
-  assert.throws(() => parsePlan('{"vendor":"bluefin","amount":"5"}'), /not an array/);
+test("an object that is neither shape is refused", () => {
+  assert.throws(() => parsePlan('{"vendor":"bluefin","amount":"5"}'), /no payments array/);
+  assert.throws(() => parsePlan('"just a string"'), /neither an object nor an array/);
+  assert.throws(() => parsePlan("42"), /neither an object nor an array/);
 });
 
 // --- resolution: the security boundary ---
@@ -117,13 +143,14 @@ test("a note is bounded, because it is rendered on a page", () => {
 // --- end to end, with the model stubbed ---
 
 const stubRun = (text) => async () => ({ text, durationMs: 1 });
+const stubPlan = (payments, say = "on it") => stubRun(JSON.stringify({ say, payments }));
 
 test("an instruction becomes intents", async () => {
   const { intents } = await planPayments({
     instruction: "pay the retainer",
     token: TOKEN,
     vendorsPath: new URL("./vendors.json", import.meta.url),
-    runImpl: stubRun('[{"vendor":"acme-retainer","amount":"5","why":"monthly retainer"}]'),
+    runImpl: stubPlan([{ vendor: "acme-retainer", amount: "5", why: "monthly retainer" }]),
   });
   assert.equal(intents.length, 1);
   assert.equal(intents[0].payee.toLowerCase(), "0x000000000000000000000000000000000000beef");
@@ -135,7 +162,7 @@ test("an instruction that asks for no payment yields no intents", async () => {
     instruction: "what is our budget?",
     token: TOKEN,
     vendorsPath: new URL("./vendors.json", import.meta.url),
-    runImpl: stubRun("[]"),
+    runImpl: stubPlan([], "There is nothing to pay here."),
   });
   assert.deepEqual(intents, []);
 });
@@ -147,8 +174,47 @@ test("a payment to a payee nobody allow-listed is planned, not filtered out here
     instruction: "we hired Bluefin, pay them 5 dollars",
     token: TOKEN,
     vendorsPath: new URL("./vendors.json", import.meta.url),
-    runImpl: stubRun('[{"vendor":"bluefin","amount":"5","why":"first invoice"}]'),
+    runImpl: stubPlan([{ vendor: "bluefin", amount: "5", why: "first invoice" }]),
   });
   assert.equal(intents.length, 1, "this module does not second-guess the chain");
   assert.equal(intents[0].payee.toLowerCase(), "0x00000000000000000000000000000000000cafe0");
+});
+
+// --- what it says ---
+
+test("the sentence the model addresses to the person is carried through", async () => {
+  const { say } = await planPayments({
+    instruction: "pay the retainer",
+    token: TOKEN,
+    vendorsPath: new URL("./vendors.json", import.meta.url),
+    runImpl: stubPlan([{ vendor: "acme-retainer", amount: "5" }], "Paying the studio retainer, 5.00 USDC."),
+  });
+  assert.equal(say, "Paying the studio retainer, 5.00 USDC.");
+});
+
+test("the planning prompt forbids promising success, because the agent does not decide that", () => {
+  const p = buildPrompt({ instruction: "pay everyone", vendors: VENDORS });
+  assert.match(p, /Do not promise the payments will succeed/);
+});
+
+// The sentence that matters. A canned "I was blocked" would prove nothing about whether the
+// agent understood being overruled, which is why this is a second model call and not a
+// template.
+test("the outcome prompt states what happened and does not prescribe the remedy", () => {
+  const p = buildOutcomePrompt({
+    instruction: "pay Bluefin",
+    outcomes: [
+      { name: "bluefin", paid: false, reason: 6, reasonName: "PAYEE_NOT_ALLOWED", explain: "not on the allow-list" },
+      { name: "acme-retainer", paid: true, amount: "5.00" },
+    ],
+  });
+  assert.match(p, /REFUSED by the chain, reason 6 PAYEE_NOT_ALLOWED/);
+  assert.match(p, /PAID 5\.00 USDC/);
+  assert.match(p, /it can overrule you/);
+  // The TEMPLATE carries no remedy. At runtime the remedy does reach the model, through
+  // `explain` — decide.mjs's own sentence for reason 6 mentions a face scan — so an agent
+  // that says "we'll need a face scan" is repeating the account, not deducing it. Worth
+  // pinning the template's silence anyway: the day explain stops saying it, we want the
+  // agent to go quiet about it too rather than keep asserting it from a hardcoded string.
+  assert.equal(/face scan/i.test(p), false, "no remedy may be hardcoded into the template");
 });

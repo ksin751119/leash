@@ -49,10 +49,13 @@ export function buildPrompt({ instruction, vendors }) {
     "The instruction:",
     `  ${instruction}`,
     "",
-    "Reply with ONLY a JSON array, no prose and no code fence. Each element:",
-    '  {"vendor": "<one of the ids above>", "amount": "<US dollars, e.g. 5 or 0.50>", "why": "<a short phrase>"}',
+    "Reply with ONLY a JSON object, no prose and no code fence:",
+    '  {"say": "<one sentence to the person, first person>",',
+    '   "payments": [{"vendor": "<one of the ids above>", "amount": "<US dollars, e.g. 5 or 0.50>", "why": "<a short phrase>"}]}',
     "",
     "Rules:",
+    '- "say" is what you tell the person you are about to do. Plain, brief, no hedging.',
+    "  Do not promise the payments will succeed - you do not decide that.",
     "- Use only the ids listed above. You cannot pay anyone else.",
     "- Carry out EVERY payment the instruction asks for, not just the first.",
     "- When the instruction does not name an amount, use the one in that vendor's context.",
@@ -78,8 +81,15 @@ export function parsePlan(raw) {
   } catch (err) {
     throw new Error(`the model did not return JSON: ${String(err.message).slice(0, 120)}`);
   }
-  if (!Array.isArray(parsed)) throw new Error("the model returned something that is not an array of payments");
-  return parsed;
+  // An array is still accepted: it is what this returned before the model was asked to
+  // speak, and refusing it would turn a model that answered the older shape correctly into
+  // a failure. The `say` is the addition, not the contract.
+  if (Array.isArray(parsed)) return { say: null, payments: parsed };
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("the model returned neither an object nor an array");
+  }
+  if (!Array.isArray(parsed.payments)) throw new Error("the model returned no payments array");
+  return { say: typeof parsed.say === "string" ? parsed.say.slice(0, 240) : null, payments: parsed.payments };
 }
 
 /// Resolves a plan against the directory. **This is where a proposal becomes an address**,
@@ -103,6 +113,46 @@ export function resolvePlan({ plan, vendors, token }) {
       note: String(row?.why ?? vendor.name).slice(0, 80),
     };
   });
+}
+
+/// What the agent says once the chain has answered.
+///
+/// A second call rather than a template, because the sentence that matters is the one
+/// where it acknowledges being overruled — and a canned string saying "I was blocked"
+/// proves nothing about whether the agent understood it. This one is written by the same
+/// model that proposed the payment, looking at what happened to it.
+///
+/// It is told the reason code and the explanation the account gave, and nothing else. The
+/// prompt template carries no remedy.
+///
+/// Be precise about what that does and does not show, because the output reads as more than
+/// it is: when the agent says "we'll need a face scan", it is reading that from `explain`,
+/// which is `decide.mjs`'s own sentence for reason 6. It is repeating the account's words,
+/// not deducing the remedy. What IS its own is the acknowledgement — that it tried, that it
+/// was refused, and that it cannot get around it.
+export function buildOutcomePrompt({ instruction, outcomes }) {
+  const lines = outcomes
+    .map((o) =>
+      o.paid
+        ? `  - ${o.name}: PAID ${o.amount} USDC`
+        : `  - ${o.name}: REFUSED by the chain, reason ${o.reason} ${o.reasonName}. ${o.explain ?? ""}`,
+    )
+    .join("\n");
+
+  return [
+    "You are the payments agent for a small company. You proposed some payments and the",
+    "blockchain has now decided which of them happen. You do not decide that; the wallet's",
+    "policy does, and it can overrule you.",
+    "",
+    `What you were asked to do: ${instruction}`,
+    "",
+    "What happened:",
+    lines,
+    "",
+    "Reply with one or two short sentences to the person, in the first person, saying what",
+    "happened. If something was refused, say plainly that you cannot get around it and what",
+    "would have to change. No apology, no hedging, no markdown. Prose only - no JSON.",
+  ].join("\n");
 }
 
 /// Runs `claude -p`. Separated from everything above so the rest of this file is pure and
@@ -145,7 +195,7 @@ export async function planPayments({ instruction, token, vendorsPath, runImpl = 
   const vendors = JSON.parse(await readFile(vendorsPath, "utf8"));
   const prompt = buildPrompt({ instruction, vendors });
   const { text, durationMs } = await runImpl({ prompt });
-  const plan = parsePlan(text);
-  const intents = resolvePlan({ plan, vendors, token });
-  return { intents, durationMs, raw: text };
+  const { say, payments } = parsePlan(text);
+  const intents = resolvePlan({ plan: payments, vendors, token });
+  return { intents, say, durationMs, raw: text };
 }

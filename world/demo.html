@@ -265,6 +265,21 @@
   .cmd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   #cmdLabel { font-size: 14px; color: var(--mut); letter-spacing: .06em; }
   #cmd:empty { display: none; }
+  .chat { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .msg-row { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; line-height: 1.5; }
+  .msg-who {
+    flex: 0 0 52px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--mut); padding-top: 3px;
+  }
+  .msg-row.you .msg-what { color: var(--fg); }
+  .msg-row.agent .msg-what {
+    color: var(--fg); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 13px;
+  }
+  .msg-row.agent .msg-who { color: var(--accent); }
+  .msg-row.system .msg-what { color: var(--blocked); }
+  .msg-what { min-width: 0; }
+  .thinking { color: var(--mut); font-style: italic; }
   .empty {
     border: 1px dashed var(--line); border-radius: 10px; padding: 16px 18px;
     color: var(--mut); font-size: 15px; line-height: 1.55; max-width: 60ch;
@@ -361,6 +376,11 @@
         <button id="askGo" type="submit">Ask</button>
       </form>
       <div id="askMsg" class="askMsg"></div>
+      <!-- What the agent says. Two turns matter and the second is the one worth waiting
+           for: it proposed a payment, the chain refused it, and it comes back and says so
+           in its own words. A canned "I was blocked" would prove nothing about whether it
+           understood being overruled. -->
+      <div id="chat" class="chat"></div>
 
       <div id="blind" class="banner" hidden>
         <strong id="blindHead">the agent is blind — it will propose nothing</strong>
@@ -555,10 +575,31 @@
     });
   }
 
+  // Rebuilt wholesale rather than diffed: the list is short, bounded server-side, and only
+  // ever grows by one. Diffing it would be machinery guarding nothing.
+  function paintChat(msgs) {
+    const chat = $("chat");
+    if (chat.childElementCount === msgs.length) return;
+    chat.replaceChildren();
+    for (const m of msgs) {
+      const row = document.createElement("div");
+      row.className = `msg-row ${m.role}`;
+      const who = document.createElement("span");
+      who.className = "msg-who";
+      who.textContent = m.role === "you" ? "you" : m.role === "agent" ? "agent" : "";
+      const what = document.createElement("span");
+      what.className = "msg-what";
+      what.textContent = m.text;
+      row.append(who, what);
+      chat.append(row);
+    }
+  }
+
   function render(state) {
     // The placeholder and the intents are mutually exclusive: one of them is always the
     // right thing to be looking at, and showing both would be a page that cannot decide.
-    $("empty").hidden = (state?.intents ?? []).length > 0;
+    $("empty").hidden = (state?.intents ?? []).length > 0 || (state?.messages ?? []).length > 0;
+    paintChat(state?.messages ?? []);
     last = state;
     // Computed once per state and kept, so the 4Hz repaint below and this frame can never
     // print two different readings of the same tick.

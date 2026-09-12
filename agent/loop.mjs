@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { createPublicClient, http as viemHttp } from "viem";
 import { sepolia } from "viem/chains";
 import { fetchSnapshot } from "./subgraph.mjs";
-import { planPayments } from "./plan.mjs";
+import { planPayments, buildOutcomePrompt, runClaude } from "./plan.mjs";
 import { decide } from "./decide.mjs";
 import { sendSpend } from "./send.mjs";
 
@@ -369,6 +369,7 @@ let AGENT_PK, SEPOLIA_RPC, WALLET_ADDR, AGENT_ADDR, LEASH_NODE, STANDARD_POLICY,
 // has no business knowing the clock, and `tick` is the only caller that does.
 let backoffMs = TICK_MS;
 let backoffUntil = 0;
+let reported = false;
 
 // What a person last asked the agent to do, and what the model made of it. Kept so the page
 // can show the instruction beside the payments it produced - without that pairing, an
@@ -376,9 +377,58 @@ let backoffUntil = 0;
 let instruction = null;
 let planning = false;
 
+// The conversation. Kept as a list rather than a single "last reply" because the point is
+// the SECOND thing the agent says: it proposed a payment, the chain refused it, and it
+// comes back and says so. One slot would overwrite the interesting half.
+let messages = [];
+let reporting = false;
+const MAX_MESSAGES = 12;
+
+const speak = (role, text) => {
+  messages = [...messages, { role, text, at: new Date().toISOString() }].slice(-MAX_MESSAGES);
+};
+
+/// True once every intent has an answer, whether that answer is payment or refusal.
+/// `unknown` is not terminal: the chain has not spoken yet, and reporting on it would have
+/// the agent narrating its own guess.
+const settled = (s_) => {
+  const rows = Object.values(s_.intents ?? {});
+  if (!rows.length) return false;
+  return rows.every((r) => r.verdict === "done" || r.verdict === "will-be-blocked" || r.verdict === "invalid");
+};
+
+/// Ask the model what it makes of the outcome. Fire-and-forget: a tick must never wait on
+/// it, and a model that is slow or down costs a sentence rather than the demo.
+async function reportOutcome() {
+  if (reporting || !instruction?.text) return;
+  reporting = true;
+  try {
+    const outcomes = Object.values(state.intents ?? {}).map((r) => ({
+      name: r.id,
+      paid: r.verdict === "done",
+      amount: r.amount ? (Number(r.amount) / 1e6).toFixed(2) : null,
+      reason: r.reason,
+      reasonName: r.reasonName,
+      explain: r.explain,
+    }));
+    const { text } = await runClaude({
+      prompt: buildOutcomePrompt({ instruction: instruction.text, outcomes }),
+    });
+    const said = String(text ?? "").trim();
+    if (said) speak("agent", said.slice(0, 400));
+  } catch (err) {
+    // Silence is the right failure here. A fabricated "everything went fine" would be the
+    // one lie this page must not tell, and the intent cards already carry the truth.
+    console.error("outcome report failed:", String(err?.message ?? err));
+  } finally {
+    reporting = false;
+  }
+}
+
 export function publicState(s) {
   return {
     instruction,
+    messages,
     tick: s.tick,
     at: s.at,
     source: s.source,
@@ -448,6 +498,13 @@ async function tick() {
     const nowSec = Math.floor(Date.now() / 1000);
     const advanced = advance(state, snapshot, intents, nowSec, STANDARD_POLICY);
     state = advanced.state;
+
+    // Once every intent has an answer, the agent says what it makes of it. Not awaited:
+    // the tick's job is the chain, and a slow model must not hold it up.
+    if (!reported && settled(state)) {
+      reported = true;
+      void reportOutcome();
+    }
 
     for (const intent of advanced.toSend) {
       const rec = await sendAndRecord(state.intents[intent.id], intent, {
@@ -600,7 +657,7 @@ if (isMain) {
         planning = true;
         instruction = { text, at: new Date().toISOString(), status: "thinking" };
         try {
-          const { intents: planned, durationMs } = await planPayments({
+          const { intents: planned, say, durationMs } = await planPayments({
             instruction: text,
             token: MOCK_USDC,
             vendorsPath: new URL("./vendors.json", import.meta.url),
@@ -614,12 +671,19 @@ if (isMain) {
           intents = planned;
           state = { ...initialState(), tick: state.tick };
           instruction = { text, at: instruction.at, status: "planned", tookMs: durationMs, count: planned.length };
+          messages = [];
+          speak("you", text);
+          speak("agent", say ?? `Proposing ${planned.length} payment${planned.length === 1 ? "" : "s"}.`);
+          reported = false;
         } catch (err) {
           // The model failing must not leave a stale plan running. An agent that keeps
           // paying from an instruction it could not re-read is worse than one that stops.
           intents = [];
           state = { ...initialState(), tick: state.tick };
           instruction = { text, at: instruction.at, status: "failed", error: String(err?.message ?? err) };
+          messages = [];
+          speak("you", text);
+          speak("system", `the agent could not turn that into payments: ${instruction.error}`);
           return json(502, { error: instruction.error });
         } finally {
           planning = false;
