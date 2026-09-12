@@ -170,6 +170,14 @@ Verify the central claim yourself in four `cast` calls — the recipe is in
 `docs/deployments.md`. It walks `leash.eth` down to a policy address; point the first
 hop at `0x0` and the same walk returns nothing, which is exactly what stops a payment.
 
+> **We did not have to run that experiment in the end; we ran it by accident.** On
+> 2026-09-12 a script zeroed the live pointer for about five minutes. `resolvePolicy` on the
+> deployed account returned `0x0000…0000`, and every agent payment would have blocked with
+> `3 NO_POLICY` — while hops one and two kept answering perfectly. The wallet was disarmed
+> by an ENS record and nothing else. Block numbers, both transactions, and what the five
+> minutes taught us are in
+> [`docs/deployments.md`](docs/deployments.md#the-ens-dependency-demonstrated-by-accident-2026-09-12).
+
 ## Three keys, deliberately separated
 
 | Key | Holds | Can do | Deliberately cannot |

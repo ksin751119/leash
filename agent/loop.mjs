@@ -436,6 +436,10 @@ export function publicState(s) {
     source: s.source,
     readError: s.readError ?? null,
     tickError: s.tickError ?? null,
+    // Whose money this is. Shown beside the agent's name so "the wallet" is a specific
+    // address a viewer can look up rather than an abstraction — and it comes from the
+    // validated env, not the snapshot, because it is true whether or not the read worked.
+    wallet: WALLET_ADDR ?? null,
     agent: s.snapshot?.agent ?? null,
     subname: s.snapshot?.subname ?? null,
     policy: s.snapshot?.policy ?? null,

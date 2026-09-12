@@ -21,6 +21,49 @@ redeployed" below)
 | `MockAttester` ⚠️ | `0x268990a91B0727E80d38d5ED4Ab10d8889754124` | [`0x3142d584…`](https://sepolia.etherscan.io/tx/0x3142d584af188eb0f40e6cb2b474ccf99e2e2ffff3f9db0942548ef75b61540c) |
 | `WorldAttester` | `0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26` | [`0xec9a06d3…`](https://sepolia.etherscan.io/tx/0xec9a06d398d51868fa5b576bdc54f424d9826acfd461be3226dc2d3720368cfa) |
 
+### The ENS dependency, demonstrated by accident (2026-09-12)
+
+The README's central claim about ENS is **"remove ENS and the spend cannot pass."** On
+2026-09-12 that was not a thought experiment for about five minutes, because a script I did
+not intend to run zeroed the live pointer.
+
+| block | what |
+|---|---|
+| 11686336 | `acme.leash.eth` paid 5.00 USDC — the pointer still resolved |
+| 11686340 | [`0x79fe18a0…`](https://sepolia.etherscan.io/tx/0x79fe18a045e9f1220e53d3517b6cd5805a1175303a2450aacccca738c494a4e7) set `vendors.leash.eth`'s policy record to `0x0` |
+| — | `resolvePolicy(node, "vendors")` on the live account returned `0x0000…0000`. Every agent payment would now block with `3 NO_POLICY` |
+| 11686xxx | [`0x1399d6f7…`](https://sepolia.etherscan.io/tx/0x1399d6f7bf2cb5c472feaa0febd9d849c665ff00e596e3e779221cfe2d369ff2) restored it to `StandardPolicy` |
+
+Read back from the account after the restore, which is the check that matters because the
+account does the walk rather than trusting a stored value:
+
+```
+$ cast call $WALLET "resolvePolicy(bytes32,string)(address)" $NODE "vendors"
+0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b
+```
+
+**What the five minutes actually showed**, and it is worth more than the tidy version:
+
+1. The three-hop walk is real. `getSubregistry("leash")` → `getResolver("vendors")` →
+   `resolve(dnsName, addr(node))`. Break the third and the first two still answer perfectly
+   while the wallet is disarmed.
+2. **The account never trusts a cached policy address.** It walks every single spend, so the
+   pointer going to zero disarms it on the next transaction rather than at some later
+   refresh.
+3. The subgraph reported the *old* pointer for a while afterwards, because `PolicyPointer`
+   is written from the `PolicyPointerSet` event and the index was behind. So for a few
+   blocks the page said one thing and the chain said another — which is the exact gap the
+   `index N blocks behind` line on the demo page exists to make visible.
+
+**How it happened, recorded because the process failure is the more useful lesson.** The
+script was written and executed in a single shell invocation. My human partner rejected that
+invocation, and the rejection landed after the transaction had already gone out — so a
+refusal that was given was not a refusal that took effect. Anything that writes to the chain
+is now written to a file in one step and run in a separate one, so there is a moment where
+"no" can still mean no.
+
+---
+
 ### `LeashAccount` v3 — the face outranks the key (2026-09-11)
 
 | What | Value |

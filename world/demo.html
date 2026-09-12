@@ -78,6 +78,10 @@
     margin: 0; font-size: 22px; font-weight: 700; letter-spacing: .14em; color: var(--fg);
   }
   .brand .tag { font-size: 16px; color: var(--mut); white-space: nowrap; }
+  .who { display: flex; align-items: baseline; gap: 8px; font-size: 15px; color: var(--mut); }
+  .who b { color: var(--fg); font-weight: 600; font-family: var(--mono); font-size: 15px; }
+  .who .sep { color: var(--line); }
+  .who .mono { font-family: var(--mono); font-size: 14px; }
   .beat { display: flex; align-items: center; gap: 14px; font-size: 16px; color: var(--mut); }
   .beat b { color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
   .beat .dot {
@@ -367,7 +371,17 @@
   <div class="top">
     <div class="brand">
       <h1>LEASH</h1>
-      <span class="tag">an agent with a wallet, and a policy on the chain that outranks it</span>
+      <!-- Who this is, in the names the chain knows them by. The company is a name, the
+           agent is a subname of it, and the wallet is what that subname governs — saying
+           it here means the rest of the page can use short forms without anyone wondering
+           whose money is moving. -->
+      <span class="who">
+        <b id="whoCompany">leash.eth</b>
+        <span class="sep">›</span>
+        <b id="whoAgent">—</b>
+        <span class="sep">·</span>
+        <span id="whoWallet" class="mono">—</span>
+      </span>
     </div>
     <div class="beat">
       <span id="link" class="dot"></span>
@@ -769,6 +783,9 @@
   }
 
   function paintRules(rules) {
+    $("whoAgent").textContent = rules.ensName ?? "—";
+    $("whoWallet").textContent = state?.wallet ? shortHex(state.wallet) : "—";
+
     $("ensName").textContent = rules.ensName ?? "no name resolves here";
     $("subnameLive").textContent = rules.ensLive ? "live" : "not live";
     $("subnameLive").className = `pill ${rules.ensLive ? "yes" : "no"}`;
