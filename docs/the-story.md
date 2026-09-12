@@ -383,7 +383,10 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 
 ## The count
 
-`python3 docs/read-aloud.py` prints this file as a reading script — what you say, with what
+`python3 docs/read-aloud.py` prints this file as a reading script; `--md` writes it to
+`docs/narration.md`, which is git-ignored on purpose — it is a rendering of this file, and
+tracking it would mean two copies that can disagree, with the hand-edited one being the one
+that gets regenerated over. It — what you say, with what
 you do and what you type marked — and counts it. **That script is the only source for these
 numbers.**
 

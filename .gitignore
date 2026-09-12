@@ -32,3 +32,8 @@ dist/
 # --- matchstick build artifacts ---
 subgraph/tests/.bin/
 subgraph/tests/.latest.json
+
+# The reading script. A rendering of docs/the-story.md produced by read-aloud.py --md;
+# tracking it would mean two copies that can disagree, and the one anybody edits by hand
+# is the one that gets regenerated over.
+docs/narration.md
