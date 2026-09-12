@@ -3,6 +3,7 @@
 #
 #   ./run-demo.sh              # the real thing — the first tick SPENDS MONEY
 #   ./run-demo.sh --dry        # same wiring, no payments (empty intent list)
+#   ./run-demo.sh --stop       # stop everything, and stop burning the subgraph quota
 #
 # Two agents, one wallet. Each process is given ONLY the key it is allowed to hold; the
 # .env is never sourced, because it also holds WALLET_PK and WORLD_RP_SIGNER_PK and an
@@ -16,6 +17,18 @@ ENV="${LEASH_ENV:-/home/ubuntu/DEV/ETHOnline2026/.env}"
 LOG="${LEASH_LOG_DIR:-/tmp/leash}"
 mkdir -p "$LOG"
 get() { grep -m1 "^$1=" "$ENV" | cut -d= -f2- | tr -d '\r'; }
+
+# Stop everything. Not a convenience: two agents ticking every 8 s is 900 subgraph
+# queries an hour, and leaving them idle overnight is what exhausted three Studio
+# deployments in a row — the quota was never spent by anybody using the demo. Stop them
+# when you are not watching and the deployment survives to the next day.
+if [ "${1:-}" = "--stop" ]; then
+  pkill -f "node server.mjs" 2>/dev/null || true
+  pkill -f "node loop.mjs"   2>/dev/null || true
+  sleep 1
+  echo "stopped. The subgraph stops being queried, which is the point."
+  exit 0
+fi
 
 INTENTS="${AGENT_INTENTS:-$PWD/agent/intents.json}"
 if [ "${1:-}" = "--dry" ]; then

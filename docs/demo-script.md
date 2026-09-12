@@ -105,9 +105,19 @@ The Graph's Studio limits **per deployment**, and a 15-second tick left running 
 will exhaust it. When it does, the page says `subgraph is rate-limiting us; retrying in Ns`
 and the agent backs off — correct behaviour, terrible footage.
 
-**Deploy a fresh version the morning you record.** `graph deploy --version-label v0.0.N`
-with identical code gets a fresh allowance; that is measured, not assumed (v0.0.5 and v0.0.6
-answered 200 while v0.0.7 was throttled). Then start the agent only when you are ready.
+**The quota is not spent by recording. It is spent by leaving the agents running.** Two
+agents ticking every 8 seconds is 900 queries an hour; idle overnight is about ten thousand,
+and that is how v0.0.7, v0.0.9 and v0.0.10 each died — none of them to anybody using the
+demo. On the page it reads as `no name resolves here`, which looks like the project is
+broken when only the allowance is.
+
+**So: `./run-demo.sh --stop` whenever you walk away.** A deployment that is not being
+queried keeps its allowance, and the same version label lasts across days.
+
+If one does get throttled, `graph deploy --version-label v0.0.N` with identical code gets a
+fresh allowance — measured, not assumed (v0.0.5 and v0.0.6 answered 200 while v0.0.7 was
+throttled). Treat that as the repair, not the routine: redeploying every morning is treating
+the symptom, and it costs a sync wait you do not want before a take.
 
 ### 🔴 The World action, and the advice that used to be here
 
