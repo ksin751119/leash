@@ -109,15 +109,29 @@ and the agent backs off — correct behaviour, terrible footage.
 with identical code gets a fresh allowance; that is measured, not assumed (v0.0.5 and v0.0.6
 answered 200 while v0.0.7 was throttled). Then start the agent only when you are ready.
 
-### The World action
+### 🔴 The World action, and the advice that used to be here
 
-`WORLD_ACTION` must be an action **this person has not verified before**. `precheck` mints
-actions on demand, so any unused string works — the Portal is not involved. Use
-`expand-policy-demo2` for the take and keep `demo3` spare.
+**`WORLD_ACTION` must be `leash-owner`, and must not be rotated.**
 
-`ownerNullifier` on the wallet is bound to the action `leash-owner`. **That is the action the
-widening scan must use**, and it is what `WORLD_ACTION` is set to at scan time — a different
-action produces a different nullifier and the account will refuse it, by design.
+This file previously said the opposite — "use an action this person has not verified
+before" — which was true before the wallet had a face registered and is now a way to lose a
+take. A nullifier is `hash(person, action)`. `allowPayeeByFace` refuses anything that is not
+the registered `ownerNullifier`, so a *fresh* action produces a *different* number and the
+widening is refused by design. The scan is spent either way.
+
+The binding is checkable rather than remembered:
+
+```
+ownerNullifier()                    0x180f9ee1…b49e881   (on chain, right now)
+a leash-owner scan, 2026-09-11      0x180f9ee1…b49e881   (getDebugReport, evidence E9)
+```
+
+Re-verifying an action that has already been used succeeds — World answers *"Proof verified
+successfully (nullifier reuse)"* — so the same action works for every take and every
+rehearsal. Nothing needs rotating between them.
+
+`precheck` does mint actions on demand, so the Portal is not involved either way; that part
+of the old advice still holds. It is only the *choice* of action that was wrong.
 
 ### What is on screen
 
@@ -297,7 +311,7 @@ Reset for the next one:
 
 1. `setPolicy(node, StandardPolicy)` — put the pointer back
 2. Point `bluefin.leash.eth` and `api.leash.eth` at fresh addresses
-3. Set `WORLD_ACTION` to the next unused action
+3. **Leave `WORLD_ACTION` alone** — it is `leash-owner` and rotating it breaks the scan
 4. Restart **both** agents with an empty intent list
 
 The budget is the one thing a reset cannot undo — see the note above. A second take on the

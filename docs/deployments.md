@@ -670,6 +670,24 @@ Created and verified via `precheck` on 2026-09-09; all three came back `status: 
 | `expand-policy-demo1` | `action_1f91e0b88227d9c86c276c28d30c3324` | first live run / rehearsal | no |
 | `expand-policy-demo2` | `action_e7e06eb49915d9225abcb5d01a7ec166` | recording the video | no |
 | `expand-policy-demo3` | `action_ffa11f8425f2d2e4bd7fa9c114df710e` | live judging, spare | no |
+| **`leash-owner`** | minted by `precheck` on demand | **every widening, always** | reusable |
+
+### 🔴 Superseded on 2026-09-12: the three reserved actions are not for the widening scan
+
+The table above predates `ownerNullifier`. Once a face is registered, **the action is no
+longer a free choice** — a nullifier is `hash(person, action)`, `allowPayeeByFace` refuses
+anything that is not the registered value, and a fresh action therefore produces a different
+number and a refused widening.
+
+```
+ownerNullifier()                      0x180f9ee1…b49e881   read from the wallet, 2026-09-12
+a leash-owner scan on 2026-09-11      0x180f9ee1…b49e881   getDebugReport, evidence E9
+```
+
+`WORLD_ACTION` is `leash-owner` and stays there. Re-verification of a used action succeeds
+(*"Proof verified successfully (nullifier reuse)"*), so it costs nothing to reuse it every
+take. The `expand-policy-demo*` actions remain valid for anything that does **not** check
+against a registered face — nothing in the current demo does.
 
 `expand-policy` itself was consumed on 2026-09-07 and is dead. Update the Spent column as
 each is used — a scan that is already gone is the one fact that is expensive to rediscover,
