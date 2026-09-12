@@ -169,3 +169,28 @@ test("renderRules keeps 'never on the list' distinguishable from 'revoked'", () 
   assert.equal(by["0dead"].everAllowed, false);
   assert.equal(by["0dead"].paid, false, "never allowed and never paid is not the same row");
 });
+
+// The index reports last period's total until a new spend is indexed, so a page that shows
+// it verbatim overstates how little room is left. Found live: the period rolled over with
+// 47.00 of 50.00 showing, and the panel said 94% used about a budget the chain had emptied.
+test("renderRules zeroes a budget whose period has already ended", () => {
+  const base = {
+    policy: { address: "0xabc", approved: true },
+    payees: {},
+    budget: { limit: "50000000", spent: "47000000", token: "0xt", periodEnd: 1000 },
+  };
+  assert.equal(renderRules(base, 999).pct, 94, "before the boundary, the index is right");
+  assert.equal(renderRules(base, 1000).pct, 0, "at the boundary the chain has reset");
+  assert.equal(renderRules(base, 5000).pct, 0);
+  assert.equal(renderRules(base, 5000).spent, "0.00");
+  assert.equal(renderRules(base, 5000).hasSpent, false, "and the bar must not keep a sliver");
+});
+
+test("a budget with no periodEnd is left alone rather than guessed at", () => {
+  const s = {
+    policy: { address: "0xabc", approved: true },
+    payees: {},
+    budget: { limit: "50000000", spent: "47000000", token: "0xt" },
+  };
+  assert.equal(renderRules(s, 9_999_999_999).pct, 94);
+});

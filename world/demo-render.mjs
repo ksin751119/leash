@@ -63,9 +63,22 @@ export function renderIntent(intent, payees) {
   };
 }
 
-export function renderRules(s) {
+export function renderRules(s, nowSec = Math.floor(Date.now() / 1000)) {
   const limit = s.budget?.limit ?? null;
-  const spent = s.budget?.spent ?? null;
+
+  // The index only moves `spent` when a spend is indexed, so once `periodEnd` has passed
+  // the chain has already zeroed the budget while the index still reports the last
+  // period's total. `agent/decide.mjs` has applied this rule since it was written; this
+  // panel did not, and the gap is not cosmetic — at 09/12 08:00 the period rolled over
+  // with 47.00 of 50.00 showing, so the page said "94% used" about a budget the chain had
+  // just emptied. A panel that overstates how little room is left is a panel that will
+  // explain the wrong reason for the next refusal.
+  //
+  // Read with the meaning the schema gives the field. That is not re-deriving policy logic,
+  // and it is the same sentence decide.mjs carries.
+  const periodEnd = Number(s.budget?.periodEnd ?? 0);
+  const rolledOver = periodEnd > 0 && periodEnd <= nowSec;
+  const spent = s.budget == null ? null : rolledOver ? "0" : s.budget.spent;
   let pct = 0;
   let hasSpent = false;
   try {
