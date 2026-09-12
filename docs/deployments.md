@@ -855,3 +855,39 @@ The second transaction is the latch working: the agent sent once, got a refusal,
 asking — the re-send happened because the *policy pointer changed between ticks*, which is
 exactly one of the three conditions `advance()` treats as "something that could change the
 answer".
+
+### The face scan, run by a human, end to end (2026-09-12 12:1x UTC)
+
+The last untested step. A person scanned with World App, the front camera opened, the
+widening relayed itself, and the agent paid on its next tick without being told.
+
+| | |
+|---|---|
+| payee before | `0x…b1ef` — `allowed: false`, `everAllowed: false` |
+| payee after | `allowed: true`, `everAllowed: true` |
+| the payment | [`0x05286487…`](https://sepolia.etherscan.io/tx/0x052864877ce387d2a985999121f44f8e2e0bdace44c05e0fd9e64da9147078e2) — 5.00 USDC to `bluefin.leash.eth`, `SpendExecuted` |
+| action used | `leash-owner`, reused — World answered on a nullifier it had already seen |
+
+`WORLD_ACTION` had been wrong in `.env` an hour earlier (`expand-policy-demo2`, which
+would have produced a different nullifier and a refused widening); this run is the
+correction working.
+
+#### A distinction the page was blurring, found by watching it rather than reading it
+
+The refused `bluefin` card **never appeared in the refusal log**, and that is correct:
+
+```
+decide()  → PAYEE_NOT_ALLOWED, predicted from the index
+loop.mjs  → sends only `will-pass`, so no transaction exists
+chain     → no SpendBlocked event, so the index has nothing to show
+```
+
+**The agent declining to try and the chain refusing are different events**, and only the
+second is indexable. Everything in that list was a real `SpendBlocked`.
+
+This is the honest behaviour — an agent that spends gas on a payment it can already see
+will fail is a worse agent — but the page said `Turned away earlier` over a list that
+silently meant something narrower. It now says **`Refused by the chain`**, with one line
+underneath drawing the line explicitly. The case that *does* reach the list is the one
+worth being able to see: `blocked-despite-green`, where the pre-flight was wrong and the
+contract caught it. Two of those are recorded above.

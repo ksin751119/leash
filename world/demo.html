@@ -341,6 +341,7 @@ body {
 .ref .to { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .ref .rsn { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--refuse); }
 .ref .ago { font-size: 11px; color: var(--ink-3); min-width: 50px; text-align: right; }
+.foot { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 12px; }
 
 /* ------------------------------------------------- what a key cannot do ---- */
 .note { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin: 0 0 12px; }
@@ -551,10 +552,22 @@ body {
              something nothing else can, which is why it says so out loud. -->
         <div id="refusalsWrap" hidden>
           <div class="ph">
-            <h2>Turned away earlier</h2>
+            <h2>Refused by the chain</h2>
             <span class="src">from the index — the chain keeps no such list</span>
           </div>
           <div id="refusals"></div>
+          <!-- The distinction this line draws is real and was easy to miss: a red card
+               above says WILL BE BLOCKED, and it never arrives here. That is not a gap.
+               `decide()` read the rule off the index and declined to spend gas on a
+               payment it could see would fail, so no transaction exists and there is no
+               event to index. A refusal reaches this list only when the agent tried and
+               the chain said no — which is also what happens when the pre-flight is
+               wrong, and that is the case worth being able to see. -->
+          <div class="foot">
+            Only payments the agent actually sent. A red card above that never appears
+            here is the agent reading the rule and declining to try — its own doing.
+            This list is the chain's.
+          </div>
         </div>
       </section>
     </div>

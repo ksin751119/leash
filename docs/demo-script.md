@@ -189,7 +189,7 @@ Still on **payments**:
 Refused, in red, `6 · PAYEE_NOT_ALLOWED`, with the dashed line pointing at the allow-list.
 Then the agent comes back and says so in its own words.
 
-Point at **what this wallet has turned away**, directly below:
+Point at **Refused by the chain**, directly below:
 
 > "And that is why we can show you this — every payment this wallet has refused, who asked
 > for it, and why. **No contract can be asked that question.** A refusal is a no-op plus an
@@ -198,6 +198,15 @@ Point at **what this wallet has turned away**, directly below:
 Four things on the page carry a `from the index` note for the same reason: this list, the
 payee allow-list, the list of approved rules, and the per-agent split of the budget. None of
 them can be read back from a contract.
+
+**Do not say the refusal on screen "is in that list" — it is not, and a judge may check.**
+The red card is a prediction: the agent read the rule off the index and declined to spend
+gas on a payment it could see would fail, so no transaction exists and there is nothing to
+index. The list holds only refusals the chain actually issued. The page says so in a line
+under it. If asked, that is a better answer than a worse one: an agent that burns gas
+proving what it already knows is a worse agent, and the case that *does* land in the list —
+the pre-flight being wrong and the contract catching it — is on chain twice already
+(`docs/deployments.md`).
 
 > "Nothing the agent could have said would have changed that. The rule is not in the agent."
 
