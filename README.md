@@ -25,7 +25,7 @@ refusal is an onchain event you can look up. **The interesting demo is the one w
 agent proposes something the rules refuse** — because an agent that has to be well-behaved
 for your money to be safe is not safe.
 
-![a refused payment, and the allow-list that explains it](docs/img/refusal.png)
+![the demo page: identity, the rule in force, the shared budget, and a refused payment](docs/img/dashboard.png)
 
 ## If you have two minutes, look at these
 
@@ -460,7 +460,7 @@ any of them stops the system:
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.9
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.10
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it

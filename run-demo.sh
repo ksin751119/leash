@@ -53,9 +53,20 @@ start_agent payments      8788 AGENT_PK  AGENT_ADDR
 start_agent subscriptions 8789 AGENT2_PK AGENT2_ADDR
 
 sleep 4
-echo "page   http://localhost:8787/?agent=payments"
-echo "       http://localhost:8787/?agent=subscriptions"
+echo
+echo "  the page is the only thing to open:"
+echo "     http://localhost:8787/?agent=payments"
+echo "     http://localhost:8787/?agent=subscriptions"
+echo
+# The agents serve /api/agent/state and nothing else — opening localhost:8788 in a
+# browser correctly returns {"error":"not found"}. Reporting a bare HTTP code here
+# made that look like a dead process, so report what is actually true instead.
 for p in 8788 8789; do
-  curl -s "localhost:$p/api/agent/state" | jq -c '{name, agentAddr, readError}' \
-    || echo "  agent on $p did not answer — see $LOG"
+  body=$(curl -s --max-time 5 "localhost:$p/api/agent/state" || true)
+  name=$(printf '%s' "$body" | jq -r '.name // empty' 2>/dev/null || true)
+  if [ -n "$name" ]; then
+    printf '  agent %-14s up on :%s  (state endpoint only; it serves no page)\n' "$name" "$p"
+  else
+    printf '  agent on :%s did NOT answer — see %s/agent-*.log\n' "$p" "$LOG"
+  fi
 done

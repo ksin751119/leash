@@ -497,7 +497,7 @@ does not burn itself out on one run.
 ## The subgraph is live
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.9
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.10
 ```
 
 Deployed to Subgraph Studio, indexing from block 11662233 (the control plane) and 11664742

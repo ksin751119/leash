@@ -24,505 +24,495 @@
   anyway.
 -->
 
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
 <style>
-  /* ==========================================================================
-     Minimalism — white ground, one accent, hierarchy from type alone.
-     Applied 2026-09-12, replacing a dark dashboard.
+/* ============================================================================
+   An instrument, not a document.
 
-     Two places the style's own rules had to bend, because the content pushed
-     back. Both bends make the page MORE minimal, not less:
+   The previous version of this page was white, hairline-ruled and flat, and the
+   complaint it earned was the right one: everything sat at the same depth, so
+   nothing could recede and there was nowhere for the eye to be sent. On video
+   that is fatal — four minutes, four beats, and the viewer has to find the
+   changed thing without being told.
 
-     1. The style says "accent no more than six times". A live page has to show
-        which payments happened and which did not, and the dark version used a
-        three-colour traffic light — green, amber, red. That is hierarchy by
-        colour, which this style forbids for good reason: it makes everything
-        look equally important and loud.
+   So: a dark petrol ground with panels one step lighter. Separation comes from
+   SURFACE rather than from borders, which is why there are almost no rules on
+   this page and no boxes drawn around anything.
 
-        So: **only a refusal is red. Everything else on this page is black on
-        white.** A wall of calm text with exactly one red thing in it, which is
-        the one thing the demo exists to show. Paid is not green — it is simply
-        stated, because a payment going through is the unremarkable case.
+   The one point of view worth stating: REFUSALS ARE LOUD AND APPROVALS ARE QUIET.
+   Every other dashboard does the opposite — green shouts, red is an alarm you
+   hope never fires. Here a paid invoice is a quiet line of ink and a refusal
+   gets the hot hue, a filled bar and the widest type on the page, because the
+   refusal is the thing this project exists to show.
+   ========================================================================== */
 
-     2. The style asks for 120–200px between sections. This is a live dashboard
-        being recorded, and a beat that needs scrolling is a beat the camera
-        misses. Sections get generous air — 56px at the seams, 32px within —
-        but not editorial-print air. Whitespace serves the reading; it does not
-        outrank it.
-     ========================================================================== */
+:root {
+  /* Petrol, not neutral near-black. Instrument housings and marine panels are
+     this colour; a terminal emulator is not. It also puts the single hot hue in
+     a cool field, which is most of why the refusals read from across a room. */
+  --ground:  #0C1619;
+  --panel:   #132227;
+  --raised:  #192C33;
+  --line:    #223A41;
+  --line-2:  #1A2E34;
 
-  :root {
-    color-scheme: light;
+  --ink:     #E8F2F1;
+  --ink-2:   #93AFB4;
+  --ink-3:   #6E888E;
 
-    --bg: #ffffff;
-    --bg-soft: #f7f7f7;
-    --fg: #0a0a0a;
-    --fg-soft: #555555;
-    --fg-mute: #999999;
-    --line: #e5e5e5;
-    --accent: #d4391c;
+  /* Three states, each doing a job. Not one decorative accent. */
+  --refuse:  #FF6A4D;
+  --allow:   #6FCFA8;
+  --human:   #F2B138;
+  /* The second agent's share of the shared budget. Deliberately NOT --human: that
+     hue means "a person has to act", and a colour doing two jobs means neither. */
+  --agent-2: #5EA8D8;
 
-    --sp-xs: 8px;
-    --sp-sm: 16px;
-    --sp-md: 32px;
-    --sp-lg: 56px;
+  --refuse-dim: #2E1A18;
+  --human-dim:  #2A2419;
 
-    --font: "PingFang TC", "Noto Sans TC", "Helvetica Neue", Arial, sans-serif;
-    --mono: "SF Mono", Menlo, Consolas, ui-monospace, monospace;
-  }
+  --sans: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  * { box-sizing: border-box; }
+  --gap: 12px;
+  --pad: 16px;
+}
 
-  /* `hidden` is set from JavaScript on the banner, the empty state, the QR wrapper and
-     four other things. The attribute works through the UA stylesheet's `display: none`,
-     and ANY author `display` outranks it — so `.banner { display: flex }` silently made
-     a hidden element visible. It showed up as a red "the last tick errored" line on a
-     page whose last tick was fine, and it would have put an empty QR frame on screen
-     during the recording. One rule, once, rather than remembering it at seven call sites. */
-  [hidden] { display: none !important; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
-  html, body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--font);
-    font-size: 15px;
-    line-height: 1.75;
-    letter-spacing: .005em;
-    -webkit-font-smoothing: antialiased;
-  }
+html { background: var(--ground); }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
 
-  b, strong { font-weight: 600; }
-  hr { border: 0; border-top: 1px solid var(--line); margin: var(--sp-md) 0; }
+/* Numbers are data. They line up or they are not comparable. */
+.num, .amount, .amt, .am, #budgetSpent, #budgetLimit, #tick, #lag {
+  font-variant-numeric: tabular-nums;
+}
 
-  .stage {
-    min-height: 100vh;
-    max-width: 1180px;
-    margin: 0 auto;
-    padding: 56px 40px 64px;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: var(--sp-lg);
-  }
+.stage { padding: var(--gap); max-width: 1760px; margin: 0 auto; }
 
-  /* ---------- masthead ---------- */
+/* --------------------------------------------------------------- the band --
+   Identity, the rule in force, and the fuel gauge. True at every beat, so it
+   never moves and is never scrolled past. The budget lives here rather than in
+   a column because it is the one thing the two agents have in common — putting
+   it beside one of them would make it look like that one's. */
+.band {
+  display: grid;
+  grid-template-columns: 268px minmax(360px, 1fr) minmax(360px, 1fr);
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+.band > section { background: var(--panel); border-radius: 3px; padding: var(--pad); }
 
-  .top {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: var(--sp-md);
-    padding-bottom: var(--sp-sm);
-    border-bottom: 1px solid var(--line);
-  }
-  .brand { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  .brand h1 {
-    margin: 0;
-    font-size: clamp(34px, 4.4vw, 52px);
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -.03em;
-  }
-  .brand .tag { display: none; }
+.ident h1 {
+  margin: 0 0 2px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.ident .wallet { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.ident .beat {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+  font-size: 12px; color: var(--ink-3); white-space: nowrap;
+}
+.ident .beat b { color: var(--ink-2); font-weight: 500; }
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--allow); flex: none;
+}
+.dot.off { background: var(--refuse); }
 
-  .who {
-    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-    font-family: var(--mono); font-size: 12px; letter-spacing: .04em;
-    color: var(--fg-soft);
-  }
-  .who b { color: var(--fg); font-weight: 500; }
-  .who .sep { color: var(--fg-mute); }
-  .who .mono { color: var(--fg-mute); }
+/* The head of every panel. Sentence case, weight doing the work — no tracked-out
+   capitals, because a label that shouts competes with the data under it. */
+.ph { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.ph h2 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.ph .sub { font-size: 13px; color: var(--ink-3); }
+.ph .src { margin-left: auto; font-size: 11px; color: var(--ink-3); text-align: right; }
 
-  /* Right of the masthead: the heartbeat, set as a caption so it never competes
-     with the name. */
-  .beat {
-    display: flex; align-items: center; gap: 20px;
-    font-family: var(--mono); font-size: 11px;
-    letter-spacing: .16em; text-transform: uppercase; color: var(--fg-mute);
-    white-space: nowrap;
-  }
-  .beat b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
-  .beat .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg); }
-  .beat .dot.off { background: var(--accent); }
+/* --- the ENS walk. Showing the walk is the difference between a judge reading
+   "we use ENS" and watching a name become a rule, so it is drawn as a descent
+   rather than written as a sentence. */
+.walk { display: grid; gap: 6px; }
+.walk .name { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.walk .hops {
+  font-size: 11px; color: var(--ink-3);
+  padding-left: 14px; border-left: 2px solid var(--line);
+  margin-left: 3px; padding-block: 4px;
+}
+.walk .rule { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.walk .addr { font-family: var(--mono); font-size: 13px; color: var(--ink-2); }
+.walk .desc {
+  font-size: 13px; color: var(--ink);
+  background: var(--raised); border-radius: 2px;
+  padding: 7px 9px; margin-top: 4px;
+}
 
-  /* ---------- two columns ---------- */
+.pill {
+  font-size: 11px; font-weight: 500; letter-spacing: 0.02em;
+  padding: 2px 7px; border-radius: 2px; white-space: nowrap;
+}
+.pill.yes  { background: rgba(111,207,168,.14); color: var(--allow); }
+.pill.no   { background: var(--refuse-dim); color: var(--refuse); }
+.pill.wait { background: var(--human-dim); color: var(--human); }
 
-  .cols {
-    display: grid;
-    grid-template-columns: 1.15fr 1fr;
-    gap: 72px;
-    align-items: start;
-  }
-  .stack { display: flex; flex-direction: column; gap: var(--sp-lg); min-width: 0; }
+/* --- the shared budget. One track. Two owners. The split under it is the whole
+   multi-agent argument, so it is set in ink rather than in a caption grey. */
+.gauge .big {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
+}
+.gauge .big .of { font-size: 14px; font-weight: 400; color: var(--ink-3); }
+.gauge .big .pct { margin-left: auto; font-size: 14px; color: var(--ink-2); }
+.bar {
+  display: flex; height: 8px; border-radius: 2px;
+  background: var(--line-2); overflow: hidden; margin: 10px 0 12px;
+}
+.bar i { display: block; height: 8px; background: var(--allow); }
+/* The second agent's share of the same track. One bar, two colours: the sharing
+   has to be visible in the shape of the thing, not only in the numbers. */
+.bar i.b { background: var(--agent-2); }
 
-  /* A zone is one authority's area. The heading is a caption, the number is what makes
-     five of them read as a sequence rather than as five boxes of similar weight. */
-  .zone { min-width: 0; }
-  .zone > h2 {
-    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
-    margin: 0 0 var(--sp-md); padding-bottom: 10px;
-    border-bottom: 1px solid var(--fg);
-    font-family: var(--mono); font-size: 11px; font-weight: 500;
-    letter-spacing: .18em; text-transform: uppercase; color: var(--fg);
-  }
-  .zone > h2 .num {
-    font-size: 11px; letter-spacing: .1em; color: var(--fg-mute);
-  }
-  .zone > h2 > span:not(.num) {
-    letter-spacing: .02em; text-transform: none; font-family: var(--font);
-    font-size: 13px; font-weight: 400; color: var(--fg-mute);
-  }
-  .zone-note {
-    margin: 0 0 var(--sp-md); font-size: 13px; line-height: 1.65; color: var(--fg-mute);
-    max-width: 54ch;
-  }
-  .zone-note b { color: var(--fg-soft); }
+.split-row {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; padding: 3px 0;
+}
+.split-row .sw { width: 9px; height: 9px; border-radius: 2px; background: var(--allow); flex: none; }
+.split-row.b .sw { background: var(--agent-2); }
+.split-row .nm { min-width: 104px; }
+.split-row .ad { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.split-row .am { margin-left: auto; font-weight: 500; }
+.split-row.idle { color: var(--ink-3); }
+.split-row.idle .am { color: var(--ink-3); font-weight: 400; }
+.split-note { font-size: 11px; color: var(--ink-3); margin-top: 8px; line-height: 1.45; }
 
-  /* ---------- ask ---------- */
+/* ------------------------------------------------------------- the columns --
+   Cut by WHO ACTS. The agent only proposes; the chain alone decides; and the
+   right-hand column is the set of things a proposal cannot do to itself. The
+   centre is widest because the verdicts are what the demo is about. */
+.cols {
+  display: grid;
+  grid-template-columns: minmax(330px, 1fr) minmax(430px, 1.35fr) minmax(340px, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.col { display: grid; gap: var(--gap); }
+.panel { background: var(--panel); border-radius: 3px; padding: var(--pad); }
 
-  /* A hairline, not a box. The input is the only thing on the page a person
-     types into, so it earns the page's largest body type and nothing else. */
-  .ask { display: flex; align-items: baseline; gap: var(--sp-sm); margin-bottom: var(--sp-sm); }
-  #ask {
-    flex: 1; min-width: 0;
-    font: inherit; font-size: 20px; line-height: 1.4;
-    padding: 6px 0;
-    border: 0; border-bottom: 1px solid var(--fg);
-    border-radius: 0; background: transparent; color: var(--fg);
-  }
-  #ask::placeholder { color: var(--fg-mute); }
-  #ask:focus { outline: none; border-bottom-color: var(--accent); }
-  #ask:disabled { color: var(--fg-mute); border-bottom-color: var(--line); }
-  #askGo {
-    font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .08em;
-    text-transform: uppercase;
-    padding: 0 0 3px; border: 0; border-bottom: 1px solid currentColor;
-    background: none; color: var(--fg); cursor: pointer;
-  }
-  #askGo:disabled { color: var(--fg-mute); cursor: default; }
+/* One thing is lit. Derived from data already on the page — a refusal lights the
+   chain and the face panel together, because that pair IS the beat. */
+.panel.lit { background: var(--raised); box-shadow: inset 3px 0 0 var(--refuse); }
+.panel.lit-human { background: var(--raised); box-shadow: inset 3px 0 0 var(--human); }
 
-  .askMsg { font-size: 13px; color: var(--fg-mute); min-height: 20px; margin-bottom: var(--sp-md); }
-  .askMsg.bad { color: var(--accent); }
-  .askMsg b { color: var(--fg); }
+/* ---------------------------------------------------------------- agents --- */
+.agents { display: flex; gap: 6px; margin-bottom: 14px; }
+.tab {
+  appearance: none; flex: 1; text-align: left; cursor: pointer;
+  font: inherit; color: var(--ink-3);
+  background: var(--ground); border: 0; border-radius: 2px;
+  padding: 9px 11px;
+}
+.tab .tn { display: block; font-size: 14px; font-weight: 600; }
+.tab .ta { display: block; font-family: var(--mono); font-size: 10px; margin-top: 2px; }
+.tab.on { background: var(--raised); color: var(--ink); box-shadow: inset 0 -2px 0 var(--allow); }
+.tab.down { color: var(--refuse); }
+.tab.down .tn::after { content: " · offline"; font-weight: 400; font-size: 11px; }
 
-  /* ---------- conversation ---------- */
+.ask { display: flex; gap: 8px; }
+#ask {
+  flex: 1; min-width: 0;
+  background: var(--ground); border: 1px solid var(--line);
+  border-radius: 2px; padding: 11px 12px;
+  color: var(--ink); font: inherit;
+}
+#ask::placeholder { color: var(--ink-3); }
+#ask:focus { outline: 2px solid var(--allow); outline-offset: -1px; border-color: transparent; }
+#askGo {
+  appearance: none; cursor: pointer; font: inherit; font-weight: 600;
+  background: var(--allow); color: #06201A; border: 0; border-radius: 2px;
+  padding: 0 18px;
+}
+#askGo:disabled { background: var(--line); color: var(--ink-3); cursor: default; }
+.askMsg { font-size: 12px; color: var(--ink-2); margin-top: 9px; min-height: 16px; }
+.askMsg.bad { color: var(--refuse); }
 
-  .chat { display: flex; flex-direction: column; gap: var(--sp-sm); margin-bottom: var(--sp-md); }
-  .msg-row { display: grid; grid-template-columns: 64px 1fr; gap: var(--sp-sm); align-items: baseline; }
-  .msg-who {
-    font-family: var(--mono); font-size: 10px; letter-spacing: .18em;
-    text-transform: uppercase; color: var(--fg-mute);
-  }
-  /* Speaker distinguished by weight, not by a bubble. Two voices, one colour. */
-  .msg-row.you .msg-what { color: var(--fg); font-weight: 500; }
-  .msg-row.agent .msg-what { color: var(--fg-soft); }
-  .msg-row.system .msg-what { color: var(--accent); }
-  .msg-what { min-width: 0; }
+.chat { margin-top: 14px; display: grid; gap: 12px; }
+.msg-row { display: grid; grid-template-columns: 68px 1fr; gap: 10px; align-items: baseline; }
+.msg-who { font-size: 11px; color: var(--ink-3); }
+.msg-what { font-size: 14px; line-height: 1.55; }
+.msg-row.you .msg-what { font-weight: 600; }
+.msg-row.agent .msg-what { color: var(--ink-2); }
+.msg-row.system .msg-what { color: var(--refuse); }
 
-  /* ---------- payments ---------- */
+.empty { margin-top: 14px; font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+.empty p { margin: 0 0 10px; }
+.empty b { color: var(--ink); }
+.empty-try { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.chip {
+  appearance: none; cursor: pointer; font: inherit; font-size: 12px;
+  background: var(--ground); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 2px; padding: 5px 9px;
+}
+.chip:hover { color: var(--ink); border-color: var(--allow); }
 
-  /* A list with hairlines, not cards. Four lines per payment, each one a row that
-     spans the column, so the eye runs down the left edge and across only when it
-     needs a number. Line height is tightened from the page's 1.75 — that value is
-     for reading paragraphs, and this is a table pretending not to be one. */
-  .intent {
-    padding: 20px 0;
-    border-top: 1px solid var(--line);
-    line-height: 1.5;
-  }
-  .intent:last-child { border-bottom: 1px solid var(--line); }
-  .intent .line {
-    display: flex; align-items: baseline; gap: var(--sp-sm);
-  }
-  .intent .grow { flex: 1; min-width: 0; }
+/* ------------------------------------------------------------ the verdicts --
+   The hero. A refusal is the loudest thing on the page: hot bar, hot word,
+   raised surface. A payment that went through says so once, quietly, and gets
+   out of the way. */
+.banner {
+  display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+  background: var(--refuse-dim); border-radius: 2px;
+  padding: 10px 12px; margin-bottom: 12px; font-size: 13px;
+}
+.banner strong { color: var(--refuse); }
+.banner.warn { background: var(--human-dim); }
+.banner.warn strong { color: var(--human); }
+.banner .detail { color: var(--ink-2); }
 
-  /* Which agent proposed the payment. Set before the id and in the accent, because on the
-     shared-budget beat the only difference between two rows is whose key sent them. */
-  .intent .who {
-    font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--accent); align-self: center;
-  }
-  .intent .id { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
-  .intent .note { color: var(--fg-soft); font-size: 14px; }
-  .intent .verdict {
-    font-family: var(--mono); font-size: 11px; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--fg-mute); white-space: nowrap;
-  }
-  .intent .ens { font-family: var(--mono); font-size: 13px; color: var(--fg); }
-  .intent .payee { font-family: var(--mono); font-size: 13px; color: var(--fg-mute); }
-  .intent .amount {
-    font-family: var(--mono); font-size: 15px; white-space: nowrap;
-    font-variant-numeric: tabular-nums;
-  }
-  .intent .amount i { font-style: normal; color: var(--fg-mute); font-size: 12px; }
-  .intent .why { color: var(--fg-soft); font-size: 14px; }
-  .intent .reason { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
-  .intent .tx { font-family: var(--mono); font-size: 11px; color: var(--fg-mute); white-space: nowrap; }
+#intents { display: grid; gap: 10px; }
+#intents.dim { opacity: .4; }
 
-  /* THE one red thing. A refusal, and nothing else on the page, is accented —
-     including a rule in the margin, so the eye finds the row before reading a word. */
-  .intent.tone-blocked {
-    border-left: 2px solid var(--accent);
-    padding-left: var(--sp-sm);
-    margin-left: -18px;
-  }
-  .intent.tone-blocked .verdict,
-  .intent.tone-blocked .reason { color: var(--accent); }
-  /* Paid is stated, never celebrated. A payment going through is the unremarkable
-     case, and colouring it would put it in competition with the one refusal. */
-  .intent.tone-done .verdict { color: var(--fg); }
-  .intent.tone-pending .verdict { color: var(--fg-soft); }
-  .verdict.tone-blocked { color: var(--accent); }
+.intent {
+  background: var(--ground); border-radius: 2px;
+  padding: 13px 15px; display: grid; gap: 7px;
+  box-shadow: inset 3px 0 0 var(--line);
+}
+.intent .line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.intent .grow { flex: 1; }
+.intent .who {
+  font-size: 11px; font-weight: 600; color: var(--ink-3);
+}
+.intent .id { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.intent .note { font-size: 13px; color: var(--ink-3); }
+.intent .verdict { font-size: 12px; font-weight: 600; letter-spacing: 0.03em; }
+.intent .ens { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.intent .payee { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.intent .amount { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-left: auto; }
+.intent .amount i { font-style: normal; font-size: 12px; font-weight: 400; color: var(--ink-3); margin-left: 4px; }
+.intent .why { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.intent .reason { font-family: var(--mono); font-size: 12px; }
+.intent .tx { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 
-  /* `dim` fires when the index read failed: the agent is blind, so what is on screen
-     is last known rather than current, and must not look authoritative. */
-  #intents.dim { opacity: .45; }
+/* Refused: everything turns up. */
+.intent.tone-blocked {
+  background: var(--raised);
+  box-shadow: inset 3px 0 0 var(--refuse);
+}
+.intent.tone-blocked .verdict,
+.intent.tone-blocked .reason,
+.intent.tone-blocked .amount { color: var(--refuse); }
 
-  /* ---------- empty state ---------- */
+/* Paid: said once, in plain ink, and then it stops asking for attention. */
+.intent.tone-done { box-shadow: inset 3px 0 0 var(--allow); }
+.intent.tone-done .verdict { color: var(--allow); }
+.intent.tone-done .amount,
+.intent.tone-done .id { color: var(--ink-2); }
 
-  .empty { max-width: 56ch; color: var(--fg-soft); }
-  .empty p { margin: 0 0 var(--sp-sm); }
-  .empty b { color: var(--fg); }
-  .empty-try { display: flex; flex-wrap: wrap; gap: var(--sp-sm); align-items: baseline; }
-  .chip {
-    font: inherit; font-size: 14px; padding: 0 0 2px;
-    border: 0; border-bottom: 1px solid var(--fg-mute);
-    background: none; color: var(--fg); cursor: pointer;
-  }
-  .chip:hover { border-bottom-color: var(--accent); color: var(--accent); }
+.intent.tone-ok      { box-shadow: inset 3px 0 0 var(--allow); }
+.intent.tone-ok .verdict { color: var(--allow); }
+.intent.tone-pending { box-shadow: inset 3px 0 0 var(--human); }
+.intent.tone-pending .verdict { color: var(--human); }
+.intent.tone-unknown .verdict { color: var(--ink-3); }
 
-  .banner { display: flex; gap: var(--sp-sm); padding: var(--sp-sm) 0; border-top: 1px solid var(--line); }
-  .banner strong { color: var(--accent); }
-  .banner .detail { color: var(--fg-soft); font-size: 14px; }
+/* --- the refusal log. No onchain equivalent exists, which is the point. */
+#refusalsWrap { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-2); }
+.ref {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 0; font-size: 13px;
+  border-bottom: 1px solid var(--line-2);
+}
+.ref:last-child { border-bottom: 0; }
+.ref .who { font-size: 11px; color: var(--ink-3); min-width: 92px; }
+.ref .amt { font-weight: 500; min-width: 78px; }
+.ref .to { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.ref .rsn { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--refuse); }
+.ref .ago { font-size: 11px; color: var(--ink-3); min-width: 50px; text-align: right; }
 
-  /* ---------- rules ---------- */
+/* ------------------------------------------------- what a key cannot do ---- */
+.note { font-size: 12px; color: var(--ink-3); line-height: 1.5; margin: 0 0 12px; }
+.note b { color: var(--ink-2); }
 
-  /* No panels. Sections separated by air and a hairline, in the order a
-     question gets answered: where does the rule come from, what does it allow,
-     who is on the list. */
-  .panel { margin-bottom: var(--sp-lg); }
-  .panel.fill { margin-bottom: 0; }
-  .kv { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-sm); }
-  .k {
-    font-family: var(--mono); font-size: 11px; letter-spacing: .18em;
-    text-transform: uppercase; color: var(--fg-mute);
-  }
+#widen {
+  appearance: none; width: 100%; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600;
+  background: var(--human); color: #21190A;
+  border: 0; border-radius: 2px; padding: 13px 16px;
+}
+#widen:disabled { background: var(--line-2); color: var(--ink-3); cursor: default; }
+#widenMsg { font-size: 12px; color: var(--ink-2); margin-top: 9px; }
 
-  /* State words, set as captions. No pills, no fills: a badge with a background
-     is a small coloured box, and this page has none. */
-  .pill {
-    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
-    text-transform: uppercase; color: var(--fg-mute); white-space: nowrap;
-  }
-  .pill.yes { color: var(--fg); }
-  .pill.no { color: var(--accent); }
-  .pill.wait { color: var(--fg-mute); }
+#qrWrap { display: block; margin-top: 14px; text-align: center; }
+#qr { background: #fff; border-radius: 3px; padding: 10px; display: inline-block; line-height: 0; }
+#qr svg { width: 190px; height: 190px; display: block; }
+#qrHint { font-size: 12px; color: var(--human); margin-top: 9px; }
 
-  .ens { margin-top: var(--sp-sm); }
-  .ens-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-sm); }
-  .ens-name { font-family: var(--mono); font-size: 20px; font-weight: 500; letter-spacing: -.01em; }
-  /* A rule down the left, so the name and the address read as one descent. */
-  .ens-arrow {
-    font-size: 12px; color: var(--fg-mute);
-    margin: 6px 0 6px 2px; padding: 2px 0 2px 14px;
-    border-left: 1px solid var(--line);
-  }
-  .addr { font-family: var(--mono); font-size: 14px; color: var(--fg); }
-  .ens-desc { font-size: 13px; color: var(--fg-soft); margin-top: 6px; }
+.cmd-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-top: 14px; font-size: 11px; color: var(--ink-3);
+}
+#copy {
+  appearance: none; margin-left: auto; cursor: pointer; font: inherit; font-size: 11px;
+  background: none; border: 1px solid var(--line); border-radius: 2px;
+  color: var(--ink-2); padding: 3px 8px;
+}
+#cmd {
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+  background: var(--ground); border-radius: 2px;
+  margin: 7px 0 0; padding: 10px;
+  max-height: 108px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all; color: var(--ink-3);
+}
+#cmd:empty { display: none; }
+#valid { font-size: 11px; color: var(--allow); margin-top: 7px; }
+#valid.stale { color: var(--refuse); }
 
-  .budget-line { font-size: 13px; color: var(--fg-soft); font-variant-numeric: tabular-nums; }
-  .budget-line b { color: var(--fg); }
-  /* One hairline track, one solid fill. Percentage is stated in words beside it,
-     so the bar is a glance and the number is the fact. */
-  .bar { height: 1px; background: var(--line); margin: 10px 0; overflow: hidden; display: flex; }
-  .bar i { display: block; height: 1px; background: var(--fg); }
-  /* The second agent's share of the same track. One bar, two colours - the sharing has to
-     be visible in the shape of the thing, not only in the numbers under it. */
-  .bar i.b { background: var(--accent); }
+.wait { margin-top: 14px; font-size: 12px; color: var(--ink-2); }
+.wait .row { display: flex; gap: 10px; justify-content: space-between; padding: 2px 0; }
+.wait-label { color: var(--ink-3); }
+#tickBar { height: 2px; background: var(--line-2); border-radius: 1px; margin-top: 8px; overflow: hidden; }
+#tickBarFill { display: block; height: 2px; background: var(--human); width: 0; }
 
-  /* Who spent the shared budget. Not a legend for the bar so much as the sentence the bar
-     is making: these are different keys, and this is one number. */
-  .split { margin-top: 8px; }
-  .split-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; padding: 3px 0; }
-  .split-row .sw { width: 10px; height: 1px; background: var(--fg); flex: none; transform: translateY(-4px); }
-  .split-row.b .sw { background: var(--accent); }
-  .split-row .nm { min-width: 104px; }
-  .split-row .ad { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
-  .split-row .am { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--fg); }
-  .split-row.idle .nm, .split-row.idle .am { color: var(--fg-soft); }
-  .split-note { font-size: 12px; color: var(--fg-soft); margin-top: 6px; }
+/* --- ADMIN. A key, and it buys strictly less than a face. */
+.pol {
+  background: var(--ground); border-radius: 2px;
+  padding: 11px 13px; margin-bottom: 8px;
+  box-shadow: inset 3px 0 0 var(--line-2);
+}
+.pol:last-child { margin-bottom: 0; }
+.pol.live { background: var(--raised); box-shadow: inset 3px 0 0 var(--allow); }
+.pol-head { display: flex; align-items: baseline; gap: 10px; }
+.pol-addr { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.pol-desc { font-size: 13px; color: var(--ink); margin-top: 5px; line-height: 1.45; }
+.pol-switch {
+  appearance: none; margin-left: auto; cursor: pointer; font: inherit;
+  font-size: 12px; font-weight: 600;
+  background: none; border: 0; color: var(--human);
+  border-bottom: 1px solid currentColor; padding: 0;
+}
+.pol-switch:disabled { color: var(--allow); border-bottom-color: transparent; cursor: default; }
 
-  /* Where a fact comes from, said beside the fact. Four things on this page exist only
-     because an index read the log — no contract can be asked for any of them — and a
-     judge cannot tell which those are by looking. */
-  .kv-src { align-items: baseline; }
-  .kv-src .src {
-    font-size: 11px; color: var(--fg-mute); text-align: right; margin-left: auto;
-    max-width: 58%;
-  }
+/* --- the allow-list. Four states, and the difference between two of them is the
+   punchline of the last beat. */
+.payee-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--line-2);
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+}
+.payee-row:last-child { border-bottom: 0; }
+.payee-row .pill { margin-left: auto; font-family: var(--sans); }
+.payee-row.pending { color: var(--ink-3); }
 
-  #refusalsWrap { margin-top: var(--sp-md); border-top: 1px solid var(--line); padding-top: var(--sp-sm); }
-  .ref { display: flex; align-items: baseline; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
-  .ref:last-child { border-bottom: 0; }
-  .ref .who {
-    font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-    color: var(--fg-mute); min-width: 88px;
-  }
-  .ref .amt { font-variant-numeric: tabular-nums; min-width: 62px; }
-  .ref .to { font-family: var(--mono); font-size: 12px; color: var(--fg-mute); }
-  .ref .rsn { color: var(--accent); font-family: var(--mono); font-size: 11px; margin-left: auto; }
-  .ref .ago { color: var(--fg-soft); font-size: 11px; min-width: 52px; text-align: right; }
+/* ---------------------------------------------------------------- the wire -- */
+#wires { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
-  /* The agent picker. Two processes, two keys, one wallet - so they are listed as peers
-     and the page says which one the box below is talking to. */
-  .agents { display: flex; gap: 0; margin-bottom: var(--sp-sm); border-bottom: 1px solid var(--line); }
-  .tab { appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
-         padding: 8px 14px 8px 0; margin-right: 20px; cursor: pointer; text-align: left;
-         font: inherit; color: var(--fg-soft); }
-  .tab:last-child { margin-right: 0; }
-  .tab.on { color: var(--fg); border-bottom-color: var(--accent); }
-  .tab .tn { display: block; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
-  .tab .ta { display: block; font-family: var(--mono); font-size: 11px; color: var(--fg-mute); margin-top: 2px; }
-  .tab.down .tn::after { content: " · offline"; color: var(--accent); text-transform: none; letter-spacing: 0; }
-
-  .policies { margin-top: var(--sp-sm); }
-  .pol { padding: 16px 0; border-top: 1px solid var(--line); }
-  .pol:last-child { border-bottom: 1px solid var(--line); }
-  .pol-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-sm); }
-  .pol-addr { font-family: var(--mono); font-size: 13px; color: var(--fg-mute); }
-  .pol.live .pol-addr { color: var(--fg); font-weight: 500; }
-  .pol-desc { font-size: 13px; color: var(--fg-mute); margin-top: 4px; }
-  .pol.live .pol-desc { color: var(--fg-soft); }
-  .pol-switch {
-    font: inherit; font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
-    padding: 0 0 2px; border: 0; border-bottom: 1px solid currentColor;
-    background: none; color: var(--fg); cursor: pointer; white-space: nowrap;
-  }
-  .pol-switch:hover:not(:disabled) { color: var(--accent); }
-  .pol-switch:disabled { color: var(--fg-mute); border-bottom-color: transparent; cursor: default; }
-
-  #payees { margin-top: var(--sp-sm); }
-  #payees > div {
-    display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-sm);
-    padding: 13px 0; border-top: 1px solid var(--line);
-  }
-  #payees > div:last-child { border-bottom: 1px solid var(--line); }
-
-  /* ---------- the strip ---------- */
-
-  /* Zone 04 holds the button, the QR and the receipt in one column; zone 05 holds the
-     rule list. Both are plain stacks now that the page is cut by authority rather than
-     by an action strip pinned to the bottom. */
-  #widen + #widenMsg { margin-top: 10px; }
-  #qrWrap { margin-top: var(--sp-md); }
-  .cmd-head { margin-top: var(--sp-md); }
-  #wait { margin-top: var(--sp-md); }
-
-  #widen {
-    align-self: flex-start;
-    font: inherit; font-size: 17px; font-weight: 600;
-    padding: 14px 28px; border: 1px solid var(--fg); border-radius: 0;
-    background: var(--fg); color: var(--bg); cursor: pointer;
-  }
-  #widen:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
-  #widen:disabled { background: none; color: var(--fg-mute); border-color: var(--line); cursor: default; }
-  #widenMsg { font-size: 14px; color: var(--fg-soft); min-height: 22px; }
-  #widenMsg.bad { color: var(--accent); }
-
-  .wait { font-size: 12px; color: var(--fg-mute); }
-  .wait .row { display: flex; gap: 20px; align-items: baseline; }
-  .wait b { color: var(--fg); font-weight: 500; }
-  .wait-label { font-size: 12px; color: var(--fg-mute); }
-  #tickBar { height: 1px; background: var(--line); margin-top: 8px; }
-  #tickBarFill { display: block; height: 1px; background: var(--fg-mute); width: 0; }
-
-  .cmd-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-sm); }
-  #cmdLabel { font-size: 13px; color: var(--fg-mute); }
-  #copy {
-    font: inherit; font-size: 12px; padding: 0 0 2px;
-    border: 0; border-bottom: 1px solid currentColor; background: none;
-    color: var(--fg); cursor: pointer;
-  }
-  #cmd {
-    margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.6;
-    white-space: pre-wrap; word-break: break-all; color: var(--fg);
-    background: var(--bg-soft); padding: 14px 16px; max-height: 190px; overflow-y: auto;
-  }
-  #cmd:empty { display: none; }
-  #valid { font-size: 12px; color: var(--fg-soft); }
-  #valid.stale { color: var(--accent); }
-  #expires { color: var(--fg-mute); font-variant-numeric: tabular-nums; }
-
-  /* The QR is the one large light object on the page; it needs no frame. */
-  #qrWrap { display: flex; align-items: center; gap: var(--sp-md); }
-  #qr { width: 172px; flex: 0 0 172px; }
-  #qr svg { width: 100%; height: auto; display: block; }
-  #qrHint { font-size: 14px; color: var(--fg-soft); }
-
-  /* The connector between a refusal and the list that explains it. */
-  #wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
-
-  @media (max-width: 1080px) {
-    .cols, .act { grid-template-columns: 1fr; gap: var(--sp-lg); }
-    .stage { padding: 40px 24px 48px; }
-  }
-  @media (max-width: 640px) {
-    .stage { padding: 32px 24px 40px; gap: var(--sp-md); }
-    .top { flex-direction: column; align-items: flex-start; gap: var(--sp-sm); }
-    #ask { font-size: 17px; }
-  }
+@media (max-width: 1180px) {
+  .band, .cols { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
 </style>
 
 <div class="stage">
 
-  <!-- ============================================================= masthead -->
-  <header class="top">
-    <div class="brand">
-      <h1>LEASH</h1>
-      <!-- Who this is, in the names the chain knows them by: the company is a name, the
-           agent is a subname of it, and the wallet is what that subname governs. -->
-      <span class="who">
-        <b id="whoCompany">leash.eth</b>
-        <span class="sep">›</span>
-        <b id="whoAgent">—</b>
-        <span class="sep">·</span>
-        <span id="whoWallet" class="mono">—</span>
-      </span>
-    </div>
-    <div class="beat">
-      <span id="link" class="dot"></span>
-      <span>tick <b id="tick">—</b></span>
-      <span><b id="clock">—</b></span>
-      <span>index <b id="lag">—</b></span>
-    </div>
-  </header>
+  <!-- ================================================================ band ==
+       Identity, the rule in force, and the fuel gauge. These three are true at
+       every beat, so they sit above everything and never move.
 
-  <!-- The page is cut by WHO ACTS, not by what kind of data it is. Three different
-       authorities appear here and none of them can do the others' job: the agent only
-       proposes, a face is the only thing that widens, and ADMIN can point the name at a
-       different rule but cannot approve one. Numbering the sections is how that reads as
-       a sequence instead of a dashboard. -->
+       The budget is here rather than in a column on purpose: it is the one thing
+       the two agents have in common, and putting it beside one of them would
+       make it look like that one's. -->
+  <div class="band">
+
+    <section class="ident">
+      <h1>Leash</h1>
+      <div class="wallet" id="whoWallet">—</div>
+      <div class="beat">
+        <span id="link" class="dot"></span>
+        <span>tick <b id="tick">—</b></span>
+        <span><b id="clock">—</b></span>
+        <span>index <b id="lag">—</b></span>
+      </div>
+      <!-- Still written by the render module; the band shows these where they
+           carry meaning instead of as a middle-dot string nobody parses. -->
+      <span hidden id="whoCompany">leash.eth</span>
+      <span hidden id="whoAgent">—</span>
+    </section>
+
+    <!-- The policy address is configured nowhere. It is RESOLVED, every tick, by
+         walking ENS — and drawing the walk is the difference between a judge
+         reading "we use ENS" and watching a name become a rule. -->
+    <section>
+      <div class="ph">
+        <h2>The name resolves to the rule</h2>
+        <span id="subnameLive" class="pill no">not live</span>
+      </div>
+      <div class="walk">
+        <div class="name" id="ensName">—</div>
+        <div class="hops">three hops, every tick — break one and nothing passes</div>
+        <div class="rule">
+          <span class="addr" id="policyAddr">—</span>
+          <span id="policyApproved" class="pill no">not approved</span>
+        </div>
+        <div class="desc" id="policyDesc"></div>
+      </div>
+    </section>
+
+    <section class="gauge">
+      <div class="ph">
+        <h2>One budget, two agents</h2>
+        <span class="src">the ledger is keyed by the name — there is no agent in the key</span>
+      </div>
+      <div class="big">
+        <b id="budgetSpent">—</b>
+        <span class="of">of <b id="budgetLimit">—</b> USDC this period</span>
+        <span class="pct" id="budgetPct"><b>—</b></span>
+      </div>
+      <div id="budgetBar" class="bar"></div>
+      <div id="split" class="split"></div>
+    </section>
+  </div>
+
+  <!-- Cut by WHO ACTS, not by what kind of data it is. Three authorities appear
+       here and none can do the others' job: the agent only proposes, the chain
+       alone decides, and the right-hand column holds the things a proposal
+       cannot do to itself. -->
   <div class="cols">
 
-    <div class="stack">
-      <!-- ========================================================= 01 the agent -->
-      <section class="zone">
-        <h2><span class="num">01</span> THE AGENTS <span>— two of them, one wallet</span></h2>
+    <!-- ============================================================ proposes -->
+    <div class="col">
+      <section class="panel">
+        <div class="ph">
+          <h2>The agents</h2>
+          <span class="sub">two processes, two keys</span>
+        </div>
 
-        <!-- Two separate processes holding two separate keys. Neither knows the other
-             exists; they are peers here because the chain treats them as peers. Whichever
-             is selected is the one the box below talks to. -->
+        <!-- Neither process is told the other exists. They are peers here because
+             the chain treats them as peers. -->
         <div id="agents" class="agents"></div>
 
         <form id="askForm" class="ask">
           <input id="ask" autocomplete="off" spellcheck="false"
-                 placeholder="tell the agent what to do — e.g. pay this month's retainer" />
+                 placeholder="tell this agent what to do, in English" />
           <button id="askGo" type="submit">Ask</button>
         </form>
         <div id="askMsg" class="askMsg"></div>
 
-        <!-- Two turns matter and the second is the one worth waiting for: it proposed a
-             payment, the chain refused it, and it comes back and says so. -->
+        <!-- Two turns matter, and the second is the one worth waiting for: it
+             proposed a payment, the chain refused it, and it comes back and
+             says so in its own words. -->
         <div id="chat" class="chat"></div>
 
         <div id="empty" class="empty">
@@ -533,16 +523,20 @@
             chain. What happens to those payments is not its decision.
           </p>
           <p class="empty-try">
-            Try
-            <button type="button" class="chip" data-ask="Pay this month's studio retainer, and top up our inference API credits by 50 cents.">pay the retainer and top up the API</button>
-            <button type="button" class="chip" data-ask="We just hired Bluefin Design for the rebrand. Pay their first invoice.">pay a contractor we just hired</button>
+            <button type="button" class="chip" data-ask="Pay this month's studio retainer.">pay the studio retainer</button>
+            <button type="button" class="chip" data-ask="Bluefin Design finished the rebrand. Pay their first invoice.">pay a contractor we just hired</button>
           </p>
         </div>
       </section>
+    </div>
 
-      <!-- ========================================================= 02 the chain -->
-      <section class="zone">
-        <h2><span class="num">02</span> THE CHAIN <span>— what it allowed, and what it refused</span></h2>
+    <!-- ============================================================= decides -->
+    <div class="col">
+      <section class="panel" id="chainPanel">
+        <div class="ph">
+          <h2>What the chain decided</h2>
+          <span class="sub">both agents, one list</span>
+        </div>
 
         <div id="blind" class="banner" hidden>
           <strong id="blindHead">the agent is blind — it will propose nothing</strong>
@@ -551,13 +545,13 @@
 
         <div id="intents"></div>
 
-        <!-- Everything this wallet has ever turned away. There is no onchain equivalent:
-             a refusal is a status-1 receipt carrying an event and no state change, so no
-             getter anywhere can be asked what was refused today. This panel is the index
-             doing something nothing else can, which is why it says so out loud. -->
+        <!-- There is no onchain equivalent of this list: a refusal is a status-1
+             receipt carrying an event and no state change, so no getter anywhere
+             can be asked what was turned away today. It is the index doing
+             something nothing else can, which is why it says so out loud. -->
         <div id="refusalsWrap" hidden>
-          <div class="kv kv-src">
-            <span class="k">what this wallet has turned away</span>
+          <div class="ph">
+            <h2>Turned away earlier</h2>
             <span class="src">from the index — the chain keeps no such list</span>
           </div>
           <div id="refusals"></div>
@@ -565,59 +559,17 @@
       </section>
     </div>
 
-    <div class="stack">
-      <!-- ========================================================== 03 the rule -->
-      <section class="zone">
-        <h2><span class="num">03</span> THE RULE <span>— where it comes from, and what it says</span></h2>
-
-        <!-- The policy address is not configured anywhere. It is RESOLVED, every tick, by
-             walking ENS — and showing the walk is the difference between a judge reading
-             "we use ENS" and watching a name become a rule. -->
-        <div class="kv">
-          <span class="k">resolved through ENS</span>
-          <span id="subnameLive" class="pill no">not live</span>
+    <!-- ================================================ what a key cannot do -->
+    <div class="col">
+      <section class="panel" id="facePanel">
+        <div class="ph">
+          <h2>A face</h2>
+          <span class="sub">the only thing that widens the list</span>
         </div>
-        <div class="ens">
-          <div class="ens-row"><span id="ensName" class="ens-name">—</span></div>
-          <div class="ens-arrow">three hops, every tick — break one and nothing passes</div>
-          <div class="ens-row">
-            <span id="policyAddr" class="addr">—</span>
-            <span id="policyApproved" class="pill no">not approved</span>
-          </div>
-          <div id="policyDesc" class="ens-desc"></div>
-        </div>
-
-        <hr />
-
-        <div class="kv">
-          <span class="k">budget this period</span>
-          <span id="budgetPct" class="budget-line"><b>—</b></span>
-        </div>
-        <div id="budgetBar" class="bar"></div>
-        <div class="budget-line">spent <b id="budgetSpent">—</b> of <b id="budgetLimit">—</b> USDC</div>
-        <div id="split" class="split"></div>
-
-        <hr />
-
-        <div class="kv kv-src">
-          <span class="k">payees this wallet allows</span>
-          <span class="src">from the index — no contract can list them</span>
-        </div>
-        <div id="payees"></div>
-      </section>
-
-      <!-- ======================================================= 04 only a human -->
-      <section class="zone">
-        <!-- "ONLY A HUMAN" was the wrong label: it read as though ADMIN below were not
-             one. The difference between these two zones is not who is human — in this demo
-             all three authorities are the same person — it is WHAT THEY PRESENT. One is a
-             face. The other is a key. -->
-        <h2><span class="num">04</span> A FACE <span>— the only thing that widens the allow-list</span></h2>
-        <p class="zone-note">
-          Not a key. The wallet has registered one World ID, and no key — not even its own —
-          can change which one. Reductions need nothing at all: tightening a rule, removing a
-          payee, revoking the agent and pausing the wallet are free, because when something
-          has gone wrong nobody should have to find their phone before pulling the brake.
+        <p class="note">
+          The wallet has registered one World ID, and <b>no key — not even its own</b> — can
+          change which one. Reductions stay free: tightening a rule or pulling the brake
+          should never wait for somebody to find their phone.
         </p>
 
         <button id="widen" disabled>Approve this payee with a face scan</button>
@@ -647,35 +599,40 @@
         </div>
       </section>
 
-      <!-- ========================================================= 05 only admin -->
-      <section class="zone">
-        <h2><span class="num">05</span> THE ADMIN KEY <span>— points the name at a different rule</span></h2>
-        <p class="zone-note">
-          A key, not a face, and it buys strictly less. ADMIN moves this pointer and issues
-          subnames. <b>ADMIN cannot approve a rule</b> — that needs an attestation, and the
-          attester is immutable — so a stolen ADMIN key can only swap between rules a human
-          already approved, and cannot widen a single payee.
-        </p>
-
-        <div class="kv kv-src">
-          <span class="k">rules a human has approved</span>
+      <section class="panel">
+        <div class="ph">
+          <h2>Payees this wallet allows</h2>
+          <span class="src">from the index — no contract can list them</span>
+        </div>
+        <div id="payees"></div>
+      </section>
+      <section class="panel">
+        <div class="ph">
+          <h2>The admin key</h2>
           <span class="src">from the index — approvals are events, not an array</span>
         </div>
+        <p class="note">
+          It points the name at a different rule, and buys strictly less than a face.
+          <b>ADMIN cannot approve one</b> — that needs an attestation, and the attester is
+          immutable. A stolen admin key picks between rules a human already approved.
+        </p>
         <div id="policies" class="policies"></div>
         <div id="adminMsg" class="askMsg"></div>
       </section>
+
     </div>
   </div>
 
-  <!-- Drawn from a refusal to the allow-list that explains it, and only when the refusal
-       really is about a missing payee. drawWire hides it outright if it does not fit. -->
+  <!-- Drawn from a refusal to the allow-list that explains it, and only when the
+       refusal really is about a missing payee. drawWire hides it outright if it
+       does not fit. -->
   <svg id="wires" aria-hidden="true">
-    <path id="wirePath" fill="none" stroke="var(--accent)" stroke-width="1"
+    <path id="wirePath" fill="none" stroke="var(--refuse)" stroke-width="1.5"
           stroke-dasharray="5 4" opacity="0" />
-    <circle id="wireDot" r="3" fill="var(--accent)" opacity="0" />
-    <rect id="wireLabelBg" rx="0" fill="var(--bg)" opacity="0" />
+    <circle id="wireDot" r="3.5" fill="var(--refuse)" opacity="0" />
+    <rect id="wireLabelBg" rx="2" fill="var(--ground)" opacity="0" />
     <text id="wireLabel" font-size="11" font-family="var(--mono)"
-          fill="var(--accent)" text-anchor="middle" opacity="0">absent</text>
+          fill="var(--refuse)" text-anchor="middle" opacity="0">absent</text>
   </svg>
 </div>
 
@@ -1024,6 +981,14 @@
     paintIntents(views);
 
     pending = widenable(views);
+
+    // One thing is lit, and it is derived from what is already on screen rather
+    // than from new state. A refusal lights the verdict panel and the face panel
+    // together, because that pair IS the beat — the chain said no, and the only
+    // thing that can answer it is a person. On a flat page a viewer has to be
+    // told where to look; this is the page telling them.
+    $("chainPanel").classList.toggle("lit", views.some((v) => v.tone === "blocked"));
+    $("facePanel").classList.toggle("lit-human", pending.length > 0);
 
     paintRules(renderRules(state));
     paintRefusals(renderRefusals(state));
