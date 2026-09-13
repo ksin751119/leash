@@ -258,7 +258,7 @@ export async function fetchSnapshot(cfg, fetchImpl = fetch) {
     // viewer — the point is that refusals are visible at all, not that all of them are.
     refusals: (d.spends ?? [])
       .filter((s) => s.executed === false)
-      .slice(0, 8)
+      .slice(0, 5)
       .map((s) => ({
         agent: lower(s.agent),
         payee: lower(s.payee),
