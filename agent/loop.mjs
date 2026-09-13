@@ -747,11 +747,15 @@ if (isMain) {
           planning = false;
         }
 
-        try {
-          await tick();
-        } catch {
-          // tick records its own error; the plan stands either way.
-        }
+        // NOT awaited. A tick reads the index, decides, sends, and waits for a receipt —
+        // about 22 seconds measured — and awaiting it here meant the whole round trip
+        // returned at the end of that, so the page showed nothing at all until the money
+        // had already moved. The model answers in four; the plan should appear then, and
+        // the chain's part should be watched happening rather than waited out in silence.
+        //
+        // The page polls once a second, so it picks up the send and the receipt as they
+        // land. `tick` guards its own re-entry, so a second instruction cannot overlap it.
+        void tick();
         return json(200, publicState(state));
       }
 

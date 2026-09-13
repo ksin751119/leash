@@ -1671,9 +1671,7 @@ body {
       $("askMsg").className = "askMsg";
       // Naming both halves of the wait, because the box stays disabled through the chain
       // part as well and "the model is deciding" stops being true after about five seconds.
-      $("askMsg").innerHTML = secs < 8
-        ? `the model is deciding what to pay… <b>${secs}s</b>`
-        : `the chain is deciding whether it may… <b>${secs}s</b>`;
+      $("askMsg").innerHTML = `the model is deciding what to pay… <b>${secs}s</b>`;
       $("askGo").textContent = `${secs}s`;
       setTimeout(tickMsg, 250);
     };
@@ -1695,7 +1693,7 @@ body {
       $("askMsg").className = "askMsg";
       $("askMsg").innerHTML =
         `the model proposed <b>${n}</b> payment${n === 1 ? "" : "s"} in <b>${((i.tookMs ?? 0) / 1000).toFixed(1)}s</b>. ` +
-        `What happens to them is not its decision.`;
+        `Now the chain decides.`;
       // Paint immediately rather than waiting for the poll: the instruction and the
       // payments it produced have to appear together or the causal link is lost.
       render(body);

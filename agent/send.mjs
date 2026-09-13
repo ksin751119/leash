@@ -71,8 +71,22 @@ export async function sendSpend({ rpcUrl, privKey, wallet, token, payee, amount 
       abi: ABI,
       functionName: "spend",
       args: [token, payee, BigInt(amount)],
+      // Sepolia's suggested tip is about 0.001 gwei, which is enough on an empty chain and
+      // is a coin-flip on a busy one — and a missed block is twelve seconds of a page that
+      // looks stuck. Two gwei of testnet gas buys first-block inclusion and costs nothing
+      // that matters. It cannot make a block arrive sooner: one block is the floor, and
+      // three payments in the demo means about thirty-six seconds of chain no edit can
+      // remove from the take, only from the cut.
+      maxPriorityFeePerGas: 2_000_000_000n,
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 120_000 });
+    // viem polls every 4 s by default over HTTP, so a receipt that exists is found up to
+    // four seconds after it exists. On a page somebody is filming, those are four seconds
+    // of a card that has already been decided still saying it is in flight.
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash: tx,
+      timeout: 120_000,
+      pollingInterval: 500,
+    });
     return { tx, ...classifyReceipt(receipt, wallet) };
   } catch (err) {
     // Never let an RPC url reach a log or a response: it can carry an API key.
