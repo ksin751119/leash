@@ -559,6 +559,11 @@ body {
             Only payments the agent actually sent. A red card above that never appears
             here is the agent reading the rule and declining to try — its own doing.
             This list is the chain's.
+            <br /><br />
+            Each link opens the transaction's event log. <b>The transaction itself
+            succeeded</b> — a refusal emits <code>SpendBlocked</code> and returns rather
+            than reverting, which is the only reason it can be indexed at all. The money
+            did not move.
           </div>
         </div>
       </section>
@@ -645,12 +650,17 @@ body {
   // for a claim the page is making. Linking them is the difference between "the chain
   // refused this" and "here is the receipt".
   const SCAN = "https://sepolia.etherscan.io/tx/";
-  function txLink(el, hash, label) {
+  // `logs: true` opens Etherscan on the event log rather than the summary. A refused
+  // payment is a SUCCESSFUL transaction — it emits `SpendBlocked` and returns instead of
+  // reverting, which is the whole reason the refusal is indexable — so the summary tab
+  // shows a green tick beside a row this page calls REFUSED. The first person to click one
+  // concluded the link was fake. The proof is one tab over.
+  function txLink(el, hash, label, logs = false) {
     el.replaceChildren();
     if (!hash) return;
     const a = document.createElement("a");
     a.className = "tx-link";
-    a.href = SCAN + hash;
+    a.href = SCAN + hash + (logs ? "#eventlog" : "");
     a.target = "_blank";
     a.rel = "noopener";
     a.textContent = label;
@@ -1202,7 +1212,7 @@ body {
       el.querySelector(".to").textContent = `to ${r.payeeShort}`;
       el.querySelector(".rsn").textContent = r.reasonLabel;
       if (r.tx) {
-        txLink(el.querySelector(".ago"), r.tx, `${r.ago} ↗`);
+        txLink(el.querySelector(".ago"), r.tx, `${r.ago} ↗`, true);
       } else {
         el.querySelector(".ago").replaceChildren(document.createTextNode(r.ago));
       }

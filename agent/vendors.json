@@ -2,7 +2,7 @@
   {
     "id": "acme-retainer",
     "name": "Acme Studio — monthly retainer",
-    "note": "Our design studio, on retainer since March. The agreed rate is 1.00 USDC per month.",
+    "note": "Our design studio, on retainer since March. The agreed rate is 1.00 USDC per month. They also license their design-tools suite to us annually.",
     "ens": "acme.leash.eth"
   },
   {

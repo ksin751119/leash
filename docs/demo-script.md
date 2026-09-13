@@ -257,7 +257,7 @@ showing; every second of it is not.
 | | |
 |---|---|
 | **do** | move to the **subscriptions** window (or click its tab) |
-| **type** | `Renew our annual design-tools licence — 48.00 USDC for the year.` |
+| **type** | `Renew our annual design-tools licence with Acme Studio — 48.00 USDC for the year.` |
 | **⏱** | **~10 s** |
 | **watch for** | `8 · OVER_PERIOD_LIMIT` and the line *"this would exceed the period budget — 47.00 left of 50.00 USDC, and this payment is 48.00"* |
 | **say** | *"Now let's switch agents…"* → *"Another forty-eight would break the daily budget."* |

@@ -149,6 +149,8 @@ And that has happened.
 
 The wallet emits an event when it blocks a payment.
 
+It doesn't revert — so on Etherscan the transaction succeeded, and the payment didn't.
+
 The Graph indexes those events.
 
 So here we can see every refusal the wallet actually made:
@@ -159,7 +161,7 @@ how much,
 
 and why.
 
-⟨cut⟩ Every one of these is a link to Etherscan. You can go and check.
+⟨cut⟩ Every one of these links to the event log. You can go and check.
 
 We don't just audit what agents did.
 
@@ -205,7 +207,7 @@ Three dollars out of fifty.
 
 Now let's switch agents.
 
-> [TYPE **Renew our annual design-tools licence — 48.00 USDC for the year.**  ·  WAIT ~10s  ·  SEE `8 · OVER_PERIOD_LIMIT`]
+> [TYPE **Renew our annual design-tools licence with Acme Studio — 48.00 USDC for the year.**  ·  WAIT ~10s  ·  SEE `8 · OVER_PERIOD_LIMIT`]
 
 This vendor is approved.
 
