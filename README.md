@@ -6,15 +6,13 @@
 >
 > Loosening a rule costs a live human face. Tightening one is always free.
 
-**What makes it different, in three lines:**
+**[▶ Watch the demo (5½ min)](https://youtu.be/fwpSCgd3FpY)** · ETHGlobal ETHOnline 2026 · Sepolia · solo entry · [ENS](#ens) · [The Graph](#the-graph) · [World](#world)
+
+**What makes it different:**
 
 - **The limit lives on chain, not in the agent.** A compromised agent still cannot get past it — the check runs inside the wallet's own spending path.
 - **One ENS name, one budget.** Bind several agents to the same name and they draw down a single budget, with no coordinator and no message between them.
 - **Widening needs a face; tightening needs nothing.** Adding a payee takes a World Selfie Check from *the* registered human — the wallet's own key cannot do it.
-
-**[▶ Watch the demo (5½ min)](https://youtu.be/fwpSCgd3FpY)**
-
-**ETHGlobal ETHOnline 2026** · Sepolia · solo entry · [ENS](#ens) · [The Graph](#the-graph) · [World](#world)
 
 ---
 
@@ -28,80 +26,25 @@ model:  bluefin  5.00 USDC     (3.9s)
 chain:  SpendBlocked — 6 PAYEE_NOT_ALLOWED
 ```
 
-None of that is staged. A real language model chose the vendor and the amount, and the
-refusal is an onchain event you can look up. **The interesting demo is the one where the
-agent proposes something the rules refuse** — because an agent that has to be well-behaved
-for your money to be safe is not safe.
+Nothing is staged: a real language model chose the vendor and the amount, and the refusal is
+an onchain event you can look up. An agent that has to be well-behaved for your money to be
+safe is not safe — so this one is free to propose anything, and the chain decides.
 
 ![the demo page: identity, the rule in force, the shared budget, and a refused payment](docs/img/dashboard.png)
 
-## If you have two minutes, look at these
-
-| | |
-|---|---|
-| **The thing to watch** | [Two agents, one budget](#two-agents-one-budget) — the property that needs no trust to verify |
-| **Is ENS load-bearing?** | [ENS](#ens) — three hops on every payment; break one and nothing passes |
-| **Is the index load-bearing?** | [The Graph](#the-graph) — refusals are events, not reverts, so the index is the only place they exist |
-| **Is World doing real work?** | [World](#world) — a face outranks every key in the system, including the wallet's own |
-| **Does it actually run?** | [`docs/deployments.md`](docs/deployments.md) — every address, every transaction hash, a copy-pasteable `eth_call` recipe |
-| **The video** | [youtu.be/fwpSCgd3FpY](https://youtu.be/fwpSCgd3FpY) — five and a half minutes, one take, nothing sped up (the copy uploaded to ETHGlobal is the same take with pauses and one beat trimmed to fit four minutes) |
-| **What was I watching?** | [`docs/demo-script.md`](docs/demo-script.md) — the run of show, with what can go wrong |
-
-## Run it
-
-```bash
-./run-demo.sh --dry     # page on :8787, one agent process per key, nothing is paid
-```
-
-Then open `http://localhost:8787/?agent=payments` and tell the agent what to do in English.
-Open `?agent=subscriptions` in a second window to watch the other one. `--dry` starts both
-agents with an empty payment list; without it, **the first tick spends real test money** —
-there is no read-only mode, because sending is the job.
-
-It reads one `.env` and hands each process only the key it is allowed to hold:
-[`agent/README.md`](agent/README.md) lists every variable and says why the wallet's key is
-never one of them. The page server's half is in [`world/README.md`](world/README.md).
-
-Foundry side: `forge test`. Node side: `cd agent && node --test`, `cd world && node --test`.
-
----
-
 ## The problem
 
-An AI agent that can spend money needs a spending limit. Every existing answer puts
-that limit somewhere the agent can reach: a config file it reads, an API key it holds,
-a session key with a cap the agent itself enforces. Compromise the agent and the limit
-goes with it.
+An AI agent that can spend money needs a spending limit. Every existing answer puts that
+limit somewhere the agent can reach: a config file, an API key, a session key whose cap the
+agent enforces on itself. Compromise the agent and the limit goes with it.
 
-And limits given to agents **do not add up.** Teams do not deploy one agent; they deploy
-several. Each one stays inside the limit it was given, and the account is still empty by
-noon. That is not a security failure — it is arithmetic, and no per-agent setting can fix it.
+And limits **do not add up.** Teams run several agents; each stays inside its own limit and
+the account is still empty by noon. No per-agent setting can fix that.
 
-Session keys and allowance lists express *who* and *how much*, but not *whether this
-particular payment makes sense*. A settings table cannot answer that.
+## How it works
 
-## The answer
-
-**Express the permission as code, and enforce it onchain.**
-
-Every agent is bound to a **policy contract**. Before any agent-initiated transfer, the
-wallet resolves that policy's address **through ENS**, checks it against a
-**human-approved list**, and asks it one question. If the answer is not `OK`, no money
-moves.
-
-The agent has no way around this, because the check happens inside its own execution
-path rather than beside it.
-
-**The agent is a real one.** You type an instruction in English on the demo page; Claude
-turns it into payments; the chain decides which of them happen — the three lines under
-[In one screen](#in-one-screen) are one such run.
-
-The model never writes an address. It picks an id from a vendor directory and
-`agent/plan.mjs` looks the address up, so there is no field in which a hallucinated payee
-could appear. It never sees a key, an RPC url, or the chain.
-
-**None of that is what makes the wallet safe.** The chain is — so the agent is free to
-propose whatever it likes.
+Every agent is bound to an ENS name, and the name points to a **policy contract**. Before any
+agent-initiated transfer, the wallet (an EIP-7702 delegated EOA) does four things:
 
 ```
 agent ──▶ EOA.spend(token, payee, amount)
@@ -114,106 +57,38 @@ agent ──▶ EOA.spend(token, payee, amount)
           ERC-20 transfer, or SpendBlocked(reason) and no movement
 ```
 
-> **What this does not claim.** EIP-7702 constrains only calls *to* the delegated EOA.
-> The wallet's own private key can always sign a direct `transfer`, and the policy path
-> never runs. That is both the boundary and the escape hatch: the owner can always
-> retrieve their own funds and can never be locked out by a policy they installed.
-> Leash is the agent's only spending path, not the wallet's.
+A refusal is **a no-op plus an event, never a revert** — so every refusal is on the record.
 
-## Live on Sepolia
+The model never writes an address: it picks a vendor id and the address is looked up, so a
+hallucinated payee has nowhere to appear. It never sees a key or the chain.
 
-Everything below is deployed and was exercised end to end with real tokens on
-2026-09-09, and again on 2026-09-11 — the second run was the first one a human face
-actually drove, with the composed rule installed in the ENS pointer. Addresses,
-transaction hashes and a copy-pasteable verification recipe are in
-[`docs/deployments.md`](docs/deployments.md).
-
-| Contract | Address |
-|---|---|
-| `LeashAccount` (EIP-7702 delegate impl, v3) | [`0xbB488f01…3B85`](https://sepolia.etherscan.io/address/0xbB488f01b10cAc1572F16E82682Ba512375f3B85) |
-| `LeashRegistry` (ENSv2 `IRegistry`) | [`0x6fB6CB4a…2A51`](https://sepolia.etherscan.io/address/0x6fB6CB4a789067b2283C4d4C657d3422ce742A51) |
-| `LeashResolver` (ENSIP-10) | [`0x607a4d73…915b`](https://sepolia.etherscan.io/address/0x607a4d7363d9E7511a932F82eAE1e12FB609915b) |
-| `PolicyApprovals` | [`0x7CB9d4Ac…25B4`](https://sepolia.etherscan.io/address/0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4) |
-| `StandardPolicy` | [`0x88F2bfF0…75cc`](https://sepolia.etherscan.io/address/0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b) |
-| `PolicySet` (AND/OR composition) | [`0xec45e967…2490`](https://sepolia.etherscan.io/address/0xec45e967F4e907B92bb1A9a8b4fcF9F041792490) |
-| `MicroPaymentPolicy` (CAP = 1.00 USDC) | [`0x0142BE41…19Df`](https://sepolia.etherscan.io/address/0x0142BE4199942ff40F67c94aF181Cc9A0C9C19Df) |
-| `LeashLens` | [`0xB6eB4C26…7B83`](https://sepolia.etherscan.io/address/0xB6eB4C26AF866057920f7AB6fAFf69A914067B83) |
-| `WorldAttester` | [`0xa4E208dA…5F26`](https://sepolia.etherscan.io/address/0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26) |
-
-The `LeashAccount` impl above is the **current** one. It has been redeployed twice: once to
-switch its attester from the mock to `WorldAttester`, and once on 2026-09-11 to add the
-face-authorised widening path. Every superseded impl and the full history are in
-[`docs/deployments.md`](docs/deployments.md) — nothing is deleted there, because a
-redeployment is a fact about the system and not an embarrassment.
+> **Boundary.** EIP-7702 constrains only calls *to* the delegated EOA. The wallet's own key
+> can always sign a direct `transfer` — so the owner can never be locked out. Leash is the
+> agent's only spending path, not the wallet's.
 
 ## Two agents, one budget
 
-The demo runs **two agent processes holding two different keys.** Neither is told the other
-exists — no shared database, no coordinator, not one message between them.
-
-They share a budget anyway, because they share a **name**:
+The demo runs **two agent processes with two different keys.** Neither knows the other
+exists. They share a budget anyway, because they share a **name**:
 
 ```solidity
 mapping(bytes32 node => mapping(address token => mapping(uint256 bucket => uint256))) spent;
 ```
 
-Three keys — name, token, period. **There is no agent in that key.** The getter says the
-same thing out loud:
-
-```solidity
-function spentInCurrentPeriod(bytes32 node, address token) external view returns (uint256);
-```
-
-There is no per-agent overload because there is no per-agent number. And `bindAgent`'s
-guard runs one way only:
-
-```solidity
-if (b.node != bytes32(0)) revert AlreadyBound();   // refuses a bound AGENT, not a used NODE
-```
-
-- many agents → one name — **allowed**, and this is how a budget is shared
-- one agent → two names — **refused**, deliberately: an agent that could sit under two
-  budgets would move to the other one when the first ran out, which turns a limit into a
-  suggestion
+Name, token, period — **there is no agent in that key.** Many agents → one name is allowed
+(that is how a budget is shared); one agent → two names is refused, so an agent cannot hop to
+a second budget when the first runs out.
 
 ![two agents, one budget, and the refusal that proves it](docs/img/shared-budget.png)
 
-In the shot above, the `subscriptions` agent has spent **1.00 USDC all day** and is refused
-with `8 OVER_PERIOD_LIMIT`. The vendor is on the allow-list; the amount is under the
-per-transaction cap. It is out of money because a colleague spent it.
+Here the `subscriptions` agent is refused with `8 OVER_PERIOD_LIMIT`: the vendor is allowed,
+the amount is under the cap — it is out of money because a colleague spent it. Every event
+still carries `address indexed agent`, so who spent what is always attributable.
 
-**And it worked that out by itself.** Nothing in its prompt mentions another agent:
+## Composable rules: AND inside, OR between
 
-> "The renewal of 48.00 USDC was refused because it exceeds our period budget — we have only
-> 18.50 USDC remaining of our 50.00 USDC limit. To make this payment, we'd need the period
-> budget increased **or expenses in other categories reduced** to free up the necessary
-> funds."
-
-**This needed no contract change.** The property was already in the data model; binding a
-second agent is what made it visible. Transactions and the before/after reading of
-`spentInCurrentPeriod` are in [`docs/deployments.md`](docs/deployments.md).
-
-### Attribution survives the sharing
-
-`SpendExecuted` and `SpendBlocked` both carry `address indexed agent`. The limit belongs to
-the name; every transaction is still filed under the key that sent it. The chain keeps no
-per-agent total, so the split under the budget bar is **reconstructed from the spend log** —
-`agent/subgraph.mjs:buildCohort` walks `spentAfter` back from the current total until it
-reaches zero, which finds the period boundary by arithmetic rather than by assuming a period
-length.
-
-## The rule is composable, and that is not a claim you have to take on trust
-
-`StandardPolicy` ANDs every check together, and one of them is the payee allow-list. So
-**every payment to a payee nobody has vetted is refused, however small.**
-
-A face scan does not approve a payment — it adds a payee, permanently, and that payee never
-needs another one. The cost is therefore **per counterparty, not per payment**, which is
-exactly right for a new contractor's first invoice and absurd for a fifty-cent API top-up
-from a provider you may use once. **And you cannot pre-approve the world:** an agent meets
-counterparties you did not enumerate in advance, which is most of the reason to have an agent.
-
-Every corporate card in the world already solves this with an `OR`:
+A payee allow-list refuses every unvetted payee, however small — absurd for a fifty-cent API
+top-up. Corporate cards solve this with an `OR`, and so does `PolicySet`:
 
 ```
 ( amount ≤ 1.00 USDC  AND  still inside the period budget )     ← MicroPaymentPolicy
@@ -221,488 +96,147 @@ Every corporate card in the world already solves this with an `OR`:
 ( the full StandardPolicy rules, payee allow-list included )     ← StandardPolicy
 ```
 
-`PolicySet` is that composition: AND inside a clause, OR between clauses. Three properties
-are worth knowing, because each one is a trap that was walked into and backed out of:
-
-- **Members are reached by `staticcall`, not `call`.** The account does not revert when it
-  blocks, so a member that wrote to its ledger on the way to a refusal could never be rolled
-  back. `staticcall` makes that impossible by construction rather than by a comment. The
-  price is stated plainly: a stateful policy can never be a member.
-- **When no clause passes, the *last* clause's reason is reported.** Written as *exception*
-  `OR` *general rule*, the last clause is the general rule, so its code is the one an
-  operator can act on. Reporting the first clause's code would tell an agent "over the micro
-  cap" when the thing to fix is "get this payee vetted".
-- **The member list is fixed at construction, with no setter.** A different composition is a
-  different address, which needs its own entry in the approval list. By design that entry
-  costs a face scan; in *this* deployment `PolicyApprovals` is wired to `MockAttester`, so
-  today it costs a transaction — see the caveat below, which we would rather repeat than let
-  you infer a lock the addresses do not back.
-
-`MicroPaymentPolicy` is the exception half and **is not safe alone** — its own `describe()`
-says so on chain. Alone it would allow any small payment to anyone.
-
-You can check all of this against the deployed contract without cloning anything; the
-`eth_call` recipe and its output are in [`docs/deployments.md`](docs/deployments.md). The
-short version, with the wallet's real rule:
-
-| intent | amount | payee | `PolicySet.check` returns |
+| intent | amount | payee | `PolicySet.check` |
 |---|---|---|---|
-| a monthly retainer | 5.00 | vetted | **0** — clause 1 fails on the cap, clause 2 passes |
-| a vendor nobody knows | 5.00 | a stranger | **6** `PAYEE_NOT_ALLOWED` — this is the face scan |
-| an API top-up | 0.50 | a stranger | **0** — clause 1 passes, clause 2 never runs |
+| a monthly retainer | 5.00 | vetted | **0** OK |
+| a vendor nobody knows | 5.00 | stranger | **6** `PAYEE_NOT_ALLOWED` → face scan |
+| an API top-up | 0.50 | stranger | **0** OK |
 
-On 2026-09-11 the third row stopped being an `eth_call` and became a balance:
-**`0x…f00d` holds 1.50 USDC, and `isPayeeAllowed(node, USDC, 0x…f00d)` returns `false`.** A
-payee the allow-list never approved was paid, because the composed rule says a payment small
-enough does not need approval.
-
-The middle row is the one that does not stay put. Its stranger is `0x…cafe0`, and the face
-scan in that same run bought exactly that row away:
-`isPayeeAllowed(node, USDC, 0x…cafe0)` now returns `true`.
-
-> **What the wallet is actually running right now.** The set. The pointer moved during the
-> 2026-09-11 run: one `setPolicy` (tx `0x53b16bbb…`) swapped `vendors.leash.eth` from
-> `StandardPolicy` to `PolicySet`, and the 0.50 top-up that had just been blocked under
-> `StandardPolicy` executed on the next tick (tx `0x0335f905…`). The payment did not change;
-> the rule did.
->
-> **And one honest caveat about the second lock.** By design, approving a policy takes a
-> human attestation, which is what makes a stolen ADMIN key unable to install rules nobody
-> agreed to. In *this* deployment that lock is installed but not loaded:
-> `PolicyApprovals.attester` is `immutable` and points at `MockAttester`, which returns
-> `true` for any input. So ADMIN can approve a policy here without any face scan.
->
-> The gate you will watch in the demo is the real one — `LeashAccount.ATTESTER` is
-> `WorldAttester`, so **widening a payee genuinely requires a Selfie Check**. The approval
-> list is the one behind it, and it is mocked. Loading it means deploying a fresh
-> `PolicyApprovals` and re-approving every policy through it, because removing the setter is
-> exactly what made the contract safe to leave unowned. We would rather say this than let a
-> reader infer a guarantee the addresses do not back.
-
-Verify the central claim yourself in four `cast` calls — the recipe is in
-`docs/deployments.md`. It walks `leash.eth` down to a policy address; point the first
-hop at `0x0` and the same walk returns nothing, which is exactly what stops a payment.
-
-> **We did not have to run that experiment in the end; we ran it by accident.** On
-> 2026-09-12 a script zeroed the live pointer for about five minutes. `resolvePolicy` on the
-> deployed account returned `0x0000…0000`, and every agent payment would have blocked with
-> `3 NO_POLICY` — while hops one and two kept answering perfectly. The wallet was disarmed
-> by an ENS record and nothing else. Block numbers, both transactions, and what the five
-> minutes taught us are in
-> [`docs/deployments.md`](docs/deployments.md#the-ens-dependency-demonstrated-by-accident-2026-09-12).
-
-## Three keys, deliberately separated
-
-| Key | Holds | Can do | Deliberately cannot |
-|---|---|---|---|
-| **ADMIN** | `leash.eth`, ENS roles | Repoint policies, issue and revoke agent subnames | **Hold or move the money** — it has no role on the wallet. *(Approving a new policy is designed to need an attestation too, but in this deployment that attester is `MockAttester` — see the caveat above.)* |
-| **WALLET** | The money; delegated to `LeashAccount` | Pay — every **agent-initiated** payment goes through the policy; the wallet's own key is not constrained (see above) | Touch ENS — its role bitmap is `0`, not by a check but because it never had one |
-| **AGENT** | Nothing | Initiate a spend request | Hold funds or permissions; it is only a `msg.sender` the policy recognises |
-
-A broken policy can at most drain the wallet. It cannot reach the control plane,
-because the wallet has no control-plane authority to lend it.
+Members are called by `staticcall`, so a policy cannot write state on the way to a refusal.
+The member list is immutable: a different composition is a different address.
 
 ## Expansion needs a human; reduction never does
 
-| Action | `msg.sender == address(this)` | Attestation |
-|---|---|---|
-| Issue a new agent subname | — | ✅ |
-| **Allow a payee — the face path** | ❌ **anyone may relay it** | ✅ **and it must be the registered face** |
-| Raise a limit, allow a token | ✅ | ✅ |
-| Restore a revoked agent | ✅ | ✅ |
-| **Tighten a rule, remove a payee** | ✅ | ❌ |
-| **Revoke or unbind an agent** | self **or that agent** | ❌ |
-| **Pause the whole wallet** | any bound agent | ❌ |
+| Action | Needs a face (World attestation) |
+|---|---|
+| **Allow a payee** | ✅ — and it must be the registered face; anyone may relay the transaction |
+| Raise a limit, allow a token, restore a revoked agent | ✅ |
+| **Tighten a rule, remove a payee** | ❌ |
+| **Revoke or unbind an agent, pause the wallet** | ❌ |
 
-Reduction is free, because when something has gone wrong nobody should have to find their
-phone and scan their face before pulling the brake.
+When something has gone wrong, nobody should have to find their phone before pulling the brake.
 
-### The face outranks the key
-
-That second row is the one worth reading twice. A scan that still needed the wallet owner
-to go and send a transaction was paperwork: **if the key has to act anyway, the face is
-decoration.** So `allowPayeeByFace` has no `onlySelf` at all. The authorisation rides
-inside the attestation, and whoever submits the transaction is paying gas and nothing more
-— the server, the wallet, a stranger. None of them can alter a field, because every field
-is inside the digest the relying party signed.
-
-What stops any live human from widening any wallet is the **nullifier**. A World ID
-nullifier is `hash(person, action)` — anonymous, but stable for one person and one action.
-The account registers one, the digest carries it, and an attestation naming a different one
-does not verify.
-
-Registering the first face costs the wallet key. **Changing it costs the face already
-registered.** A stolen key can spend inside the limits it finds and can tighten anything,
-but it cannot change who is allowed to loosen. Verified against the live contract, not a
-test:
+**The face outranks the key.** The wallet stores one World ID nullifier (`hash(person, action)`
+— anonymous but stable). Changing it requires the face already registered, so a stolen wallet
+key can tighten anything but cannot change who is allowed to loosen. On live Sepolia:
 
 ```
 $ cast call $WALLET "setOwnerNullifier(uint256,uint256,bytes)" <another face> 1 0xc0ffee --from $WALLET
 Error: execution reverted: 0x99efb890     # NotAttested()
 ```
 
-That is Sepolia refusing the key that owns it.
+**Four ways to stop an agent**, none touching the agent's account — all run on Sepolia:
 
-**The price, and we would rather state it than discover it:** losing access to that World
-ID permanently ends widening on this wallet. You cannot have "the face outranks the key"
-and "the key can recover a lost face" at the same time — they are the same permission asked
-twice. Everything that makes the wallet *stricter* keeps working with no face at all.
+| One transaction | Effect |
+|---|---|
+| `LeashResolver.setPolicy(node, stricter)` | swap the rules |
+| `LeashRegistry.revoke(label)` | that one agent stops |
+| `ETHRegistry.setSubregistry(leash.eth, 0x0)` | every agent halts at once |
+| *(none)* — the subname expires | renewal needs a human |
 
-One exception to "unbind is free": `unbindAgent` refuses a binding that is currently
-revoked (`RevokedNeedsRestore`), rather than deleting it for free. Deleting a revoked
-binding would clear its `node` back to zero, and `bindAgent`'s guard against rebinding
-an existing agent only fires while `node` is non-zero — so a free delete would let
-`revoke → unbind → bind` reactivate **that same agent address** with no attestation,
-sidestepping the "Restore a revoked agent" row above entirely. Refusing costs nothing in
-capability: a revoked agent is already powerless, so this only forfeits storage cleanup.
-The one route back to an active binding for that address is `restoreAgent`, attested as
-the table says.
-
-**What this does and does not claim:** it is re-activating *that revoked address* that
-now needs an attestation — not "getting a working agent on this node needs a face scan."
-The wallet key alone can still bind a **fresh** agent address to the same node for free,
-with no attestation, the moment after a revoke. That is by design, not a gap:
-`bindAgent` grants authority starting from zero, and the *content* of that authority
-comes entirely from the ENS side and the approval list, neither of which the new address
-can touch on its own — see `bindAgent`'s own note on why binding points in the reducing
-direction.
-
-`PolicyApprovals.revoke` goes further and is callable by **anyone**. Revoking only ever
-makes the system stricter; gating the brake is how you help an attacker at the worst
-possible moment.
-
-> **The Attestation column above is now real for `LeashAccount`, and still a mock for two
-> other contracts — the two claims are separate, so here they are separately.**
->
-> [`WorldAttester`](src/WorldAttester.sol) is deployed, and `LeashAccount`'s current impl is
-> wired to it. `setRule`, `allowToken`, `allowPayee` and `restoreAgent` each now require a
-> valid EIP-712 signature from the World RP signer over that exact call's digest and
-> deadline, checked onchain — not just any bytes. Proved with free static calls against the
-> re-delegated wallet: `allowPayee` with 73 junk bytes, and separately with no bytes at all,
-> both revert `NotAttested()`; under the old `MockAttester` wiring both would have been
-> accepted. Addresses, the re-delegation transaction, and the readback that confirms nothing
-> else moved are in [`docs/deployments.md`](docs/deployments.md).
->
-> **`MockAttester`** — which returns `true` for **any** input — **is still deployed and
-> still used**, by `PolicyApprovals.approve` and `LeashRegistry.register`. That is a
-> deliberate scoping decision, not an oversight: only `LeashAccount`'s widening paths became
-> real. So "approve a new policy" and "issue a new agent subname" in the table above still
-> accept any input; `describe()` on each contract says which it is wired to, and a UI reading
-> it cannot pretend otherwise.
->
-> **The digest path has now been run end to end, on 2026-09-11.** A payment to `newvendor`
-> was blocked, a human scanned their face, the widening transaction landed
-> (`0x53d31784…`), and the payment then executed (`0x00a9080f…`). That is the first time
-> "widening needs a live human" rested on a run rather than on code correctness plus a
-> measurement against IDKit's bundle.
->
-> **The reason this document gave for hoarding that scan does not hold, and the correction
-> belongs here rather than in a quiet deletion.** It said the action allows exactly one
-> verification and so had to be saved for the demo. Measured instead:
-> `POST /api/v1/precheck/{app_id}` mints a **new active action on demand** — a randomly
-> generated action string came back `status: "active"` with its own `external_nullifier`, no
-> Developer Portal visit involved — and re-scanning an already-used action still returned
-> `success: true`, with `"Proof verified successfully (nullifier reuse)"`. So
-> `max_verifications: 1` did not break the second run. What it *does* limit was not measured
-> and is not claimed here.
->
-> **What `WorldAttester.verify` proves, stated exactly:** the RP signer signed this precise
-> digest before its deadline — not "a human approved this." The link to an actual human is
-> offchain: World App runs Selfie Check → World's v4 endpoint verifies the proof → the
-> backend signs only after that call returns HTTP 200. See the World section below for what a
-> proof does and does not establish about who was in front of the camera.
-
-## Four ways to stop an agent
-
-| Layer | One transaction | Effect |
-|---|---|---|
-| light | `LeashResolver.setPolicy(node, stricter)` | Swap the rules |
-| medium | `LeashRegistry.revoke(label)` | **That one agent** dies; others untouched |
-| **heavy** | `ETHRegistry.setSubregistry(leash.eth, 0x0)` | **Every agent halts at once** |
-| — | the subname's `expiry` lapses | **No transaction at all.** Renewal needs a human |
-
-None of the four touches the agent's account. All four were run on Sepolia; the medium
-one cost 39,083 gas and the loop is repeatable, so the demo does not consume itself.
+> **Stated plainly:** the face gate on `LeashAccount` is real (`WorldAttester`). Approving a
+> new policy in `PolicyApprovals` and issuing a subname are *designed* to need an attestation
+> too, but in this deployment those two are wired to `MockAttester`, which accepts anything.
 
 ## Tracks
 
 ### ENS
 
-ENS is load-bearing, not decorative. `LeashRegistry` implements the ENSv2 `IRegistry`
-interface (`getSubregistry` / `getResolver` / `getParent`, plus `IERC1155Singleton`) and
-is mounted under `leash.eth`, so resolution is forced to pass through it. `LeashResolver`
-implements only ENSIP-10 `resolve(bytes,bytes)` — measured fact: minimal ENSv2 resolvers
-have no `addr()` or `text()` at all, and a compatibility layer is wasted work.
+ENS is load-bearing: **every payment walks three hops of ENS, and breaking any one of them
+blocks every payment.** `LeashRegistry` implements the ENSv2 `IRegistry` interface and is
+mounted under `leash.eth`; `LeashResolver` implements ENSIP-10. ENS's own
+UniversalResolverV2 resolves these names.
 
-**ENS's own UniversalResolverV2 resolves our names**, which means `LeashRegistry` is a
-first-class citizen of ENS's resolution infrastructure rather than a parallel system.
-
-One permission is deliberately narrowed against ENS convention: a subname holder cannot
-set its own resolver. In this model **a name is a leash, not a possession** — it governs
-the holder rather than belonging to them.
-
-**A name is also the unit of authority, and that is what makes a budget shareable.** The
-onchain ledger is keyed by the namehash, so two agents bound to `vendors.leash.eth` draw
-down one number with no coordination between them — see [Two agents, one
-budget](#two-agents-one-budget). The name is doing three separate jobs here, and breaking
-any of them stops the system:
-
-1. it resolves to the rule, three hops, on every payment
-2. it resolves to every payee — `agent/vendors.json` holds names and no addresses, so a
-   hallucinated payee has nowhere to appear
-3. **it owns the budget**, which is why a second agent is a colleague rather than a second
-   wallet
+The name does three jobs: it resolves to **the rule**, to **every payee** (the vendor list
+holds names, not addresses), and it **owns the budget** — which is why a second agent is a
+colleague rather than a second wallet. A subname holder cannot set its own resolver: *a name
+is a leash, not a possession.*
 
 ### The Graph
 
-**Live on Subgraph Studio, indexing real Sepolia events:**
+Live on Subgraph Studio, indexing real Sepolia events:
+`https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.13`
 
-```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.13
-```
-
-One query answers all four of the agent's questions; the copy-pasteable version and what it
-returns against the run above are in [`docs/deployments.md`](docs/deployments.md).
-
-**Four things on the demo page exist only because an index read the log**, and the page says
-so beside each of them rather than leaving you to work it out:
+**Four things on the demo page exist only because an index read the log:**
 
 | on screen | why no contract can answer it |
 |---|---|
-| **what this wallet has turned away** | a refusal is a no-op plus an event, not a revert. No getter anywhere can be asked what was refused today |
-| **payees this wallet allows** | `isPayeeAllowed(node, token, payee)` needs an address you already have. There is no list |
-| **rules a human has approved** | `PolicyApprovals` has `descriptionOf[policy]`, but no array. Beat four is a choice between two rules, and only the log knows there are two |
-| **who spent the shared budget** | `spent` has no agent in its key, so this number does not exist on chain in any form |
+| **what this wallet has refused** | a refusal is an event, not a revert — no getter can list them |
+| **payees this wallet allows** | `isPayeeAllowed` needs an address you already have; there is no list |
+| **rules a human has approved** | `PolicyApprovals` stores no array |
+| **who spent the shared budget** | `spent` has no agent in its key |
 
 ![the refusal log, read back out of the index](docs/img/refusals.png)
 
-`everAllowed` belongs to the same family: a payee who was approved and dropped, and one who
-was never listed, both read `false` on chain. The distinction is pure history, and it is the
-whole punchline of the last beat.
-
-The arithmetic lives in the mappings — `remaining`, `spendCount`, `blockedCount`,
-`everAllowed` are written by handlers — because an untrusted agent that sums events itself
-is an agent that can get the sum wrong in its own favour. `buildCohort` is the one thing
-computed client-side, and it is careful about a trap the schema sets: `SpendBlocked` records
-its `spentSoFar` in the same field an executed spend uses for `spentAfter`, so a refusal
-looks exactly like a valid link in the chain of totals. Following one would hand an agent an
-amount nobody spent. Eight tests pin the walk, including that one.
-
-The subgraph in [`subgraph/`](subgraph) indexes the control plane and every spend
-attempt, executed and blocked alike. Its eight entities are shaped by the four questions
-the agent actually asks, not by a generic data model.
-
-Blocked attempts are indexable because a policy violation is a **no-op plus an event**,
-never a revert. The chain discards a reverted transaction's logs, and the agent could
-then never answer *why was I blocked last time?*
-
-Deploying it found a defect no test existed to catch: `Payee` was keyed by
-(node, token, payee) while `PayeeAllowed` and `PayeeRemoved` — the only authority for
-whether a payee is allowed — carry no token. That produced **two rows for one payee that
-disagreed**, and after a removal the row an agent would naturally read still said
-`allowed: true`. Wrong in the permissive direction. The chain still blocked the spend, so
-nothing was at risk, but the agent's decision was wrong. Now keyed by (node, payee), with
-the residual imprecision stated in the schema rather than papered over.
-
-The honest version of that sentence is that **there were no subgraph tests at all** — code
-review pointed out that one matchstick case over
-`PayeeAllowed → SpendExecuted → PayeeRemoved` would have caught it directly. There are
-eight now, and every mutation was run to prove they are not vacuous: restoring the old
-(node, token, payee) key fails four of them with exactly the original symptom
-(`Expected value was '1' but actual value was '2'` — one payee, two rows), and removing
-the one guard in `handleSpendExecuted` fails precisely the one test written for it.
-
-The review's last note turned out to be the same defect one layer down, and wider than it
-was reported. `AgentBudget`, `Payee` and `Agent` were all keyed without the wallet — but
-`rules`, `payees`, `spent` and `bindings` **all live in the delegated EOA's own storage**,
-so two wallets binding an agent to the same ENS node have separate budgets and allow-lists
-on chain and were being merged into one row off chain. `AgentBudget` is the worst of the
-three: "how much is left" is the number the agent trusts most. Invisible with one wallet,
-silently wrong with two — the same shape as the defect above, which is why it is fixed
-rather than noted. Dropping the wallet from the ids again fails six of the eight tests.
+Budget arithmetic (`remaining`, `spendCount`, `blockedCount`) lives in the mappings, so the
+untrusted agent never sums events in its own favour. 8 matchstick tests cover the mappings.
 
 ### World
 
-Selfie Check gates privilege **expansion** only: raising a limit, whitelisting a payee,
-issuing a new agent. Reduction is never gated — see the asymmetry above.
+Selfie Check gates **expansion only**. The page requests a World ID 4.0 `SelfieCheckLegacy`
+credential; World App opens the front camera and the result comes back as
+`identifier: "selfie"`. The backend (`world/attest.mjs`) refuses to sign unless the proof is a
+selfie **and** its `signal_hash` matches the exact digest being widened, then signs an EIP-712
+attestation that `WorldAttester` verifies on chain.
 
-**What the widening path asks World for, exactly.** A World ID **4.0 credential request**,
-`SelfieCheckLegacy`, from `@worldcoin/idkit-core`. The production World App opens the front
-camera, and the result comes back with `identifier: "selfie"`; World's verify endpoint agrees,
-returning `results: [{"identifier":"selfie","success":true}]`. (A 4.0 `SelfieCheckLegacy`
-result still reports `protocol_version: "3.0"` — that is World's shape, not a slip here.) No
-Sandbox App is involved: Sandbox exists to simulate the Orb, and Selfie Check does not use
-one.
+Every widening is scanned against one action, `leash-owner`, so the nullifier means "**the**
+same human as last time", not just "a human". Feedback for the World team:
+[`docs/world-feedback.md`](docs/world-feedback.md).
 
-**And the wallet knows whose face.** `LeashAccount` stores one World ID nullifier, and
-`allowPayeeByFace` accepts an attestation only when it names that one. A nullifier is
-`hash(person, action)`: anonymous — it tells the chain nothing about who you are — but
-stable for one person and one action, which is exactly enough to mean "the same human as
-last time". Every widening is therefore scanned against a single action, `leash-owner`;
-scanning a different action produces a different nullifier and a different person as far as
-this wallet is concerned.
+## Live on Sepolia
 
-That is the difference between "a human approved this" and "**the** human approved this",
-and it is what lets the `onlySelf` requirement come off. See
-[The face outranks the key](#the-face-outranks-the-key).
+| Contract | Address |
+|---|---|
+| `LeashAccount` (EIP-7702 delegate, v3) | [`0xbB488f01…3B85`](https://sepolia.etherscan.io/address/0xbB488f01b10cAc1572F16E82682Ba512375f3B85) |
+| `LeashRegistry` (ENSv2 `IRegistry`) | [`0x6fB6CB4a…2A51`](https://sepolia.etherscan.io/address/0x6fB6CB4a789067b2283C4d4C657d3422ce742A51) |
+| `LeashResolver` (ENSIP-10) | [`0x607a4d73…915b`](https://sepolia.etherscan.io/address/0x607a4d7363d9E7511a932F82eAE1e12FB609915b) |
+| `PolicyApprovals` | [`0x7CB9d4Ac…25B4`](https://sepolia.etherscan.io/address/0x7CB9d4Ac84C7Df38CEF5deCc8cDd8703eCa925B4) |
+| `StandardPolicy` | [`0x88F2bfF0…c33b`](https://sepolia.etherscan.io/address/0x88F2bfF031BB4Cf2BeAA28d47aDa52EbEebbc33b) |
+| `PolicySet` (AND/OR) | [`0xec45e967…2490`](https://sepolia.etherscan.io/address/0xec45e967F4e907B92bb1A9a8b4fcF9F041792490) |
+| `MicroPaymentPolicy` (cap 1.00 USDC) | [`0x0142BE41…19Df`](https://sepolia.etherscan.io/address/0x0142BE4199942ff40F67c94aF181Cc9A0C9C19Df) |
+| `LeashLens` | [`0xB6eB4C26…7B83`](https://sepolia.etherscan.io/address/0xB6eB4C26AF866057920f7AB6fAFf69A914067B83) |
+| `WorldAttester` | [`0xa4E208dA…5F26`](https://sepolia.etherscan.io/address/0xa4E208dA16f49CC6CecD70913Cf168CeAd865F26) |
 
-**This README used to claim the opposite of all that, and the claim was wrong.** It said a
-proof cannot prove it came from Selfie Check, because a successful verification returns
-`credential_type: "device"` — and concluded that the human-in-the-loop guarantee was
-configuration-level rather than cryptographic. Measured on 2026-09-11: the proof said `device`
-because a device credential is what this project had been asking for.
-`@worldcoin/idkit-standalone`, the widget it was using and the latest published version of it,
-has no vocabulary for a face check at all — its only knob is `verification_level`, which
-accepts four values, none of them Selfie Check, and passing the preset name the docs
-introduce throws *after* the dialog has mounted, with no `onError` and no visible error. With
-the app's `enable_face_check: true` and a brand-new action, that path opened **no camera** and
-returned `identifier: "device"`. World's API had reported the truth at every step; the request
-was the thing that was wrong.
+Every transaction hash and a copy-pasteable `eth_call` verification recipe:
+[`docs/deployments.md`](docs/deployments.md).
 
-**So the gate is now enforced in code rather than assumed.** `world/attest.mjs` refuses to
-sign an attestation when the proof's `identifier` is not `"selfie"` — a device credential is
-not a face — and refuses again when the result's `signal_hash` is not the one computed from
-the digest being widened, because the 4.0 result carries its own `signal_hash` and a caller
-could otherwise present a proof genuinely bound to some other signal and claim this digest.
-World cannot catch that one; the proof really does match its own `signal_hash`. The value
-forwarded to World is always the one computed here, never the one supplied. Both refusals are
-pinned by mutation-tested cases in `world/attest.test.mjs`.
-
-The onchain claim stays narrow: `WorldAttester.verify` proves that the RP signer signed this
-exact digest before its deadline, and nothing more. The link from that signature back to a
-face is the offchain sequence above — World App runs Selfie Check, World's endpoint verifies
-the proof, and the backend signs only after that call returns HTTP 200.
-
-The feedback document the prize asks for is
-[`docs/world-feedback.md`](docs/world-feedback.md). It is a dated running log written as
-things happened, not reconstructed afterwards, and it is not flattering: five days were
-lost to a feature flag that had been enabled the whole time, with no surface anywhere in
-the product able to say so.
-
-## Tests
-
-260 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 8 matchstick tests
-for the subgraph mappings. The fork tests call
-`vm.skip` in `setUp` when `SEPOLIA_RPC` is unset, so `forge test` prints
-`260 passed, 0 failed, 1 skipped (261 total)` — one skip for the suite, not three. They
-are reported as SKIPPED rather than quietly PASSED, which is the point of using
-`vm.skip` over a bare `return`.
+## Run it
 
 ```bash
-git clone --recurse-submodules https://github.com/ksin751119/leash
-cd leash
-cp .env.example .env    # fill in your own three keys
-forge test
+./run-demo.sh --dry     # page on :8787, one agent process per key, nothing is paid
 ```
 
-A mutation sweep over the finished branch found **five guards that survived deletion
-with every test still green** — including one that was fail-*open*: a policy returning
-`256` truncated to `0`, which is `OK`, and the transfer executed. All five are now
-pinned by tests that fail when their guard is removed. "The guard exists" and "the guard
-is guarded" turned out to be different claims.
-
-**Running the subgraph tests takes one workaround.** `graph test` only ships matchstick
-binaries for Ubuntu 22 and 24, so on 25.04 it refuses with
-`Unsupported platform: Linux x64 25`. The `binary-linux-22` release from
-`LimeChain/matchstick` runs fine once `libpq.so.5` is on the library path:
+Open `http://localhost:8787/?agent=payments` and tell the agent what to do in English.
+Without `--dry`, the first tick spends real test money. Environment variables:
+[`agent/README.md`](agent/README.md) and [`world/README.md`](world/README.md).
 
 ```bash
-curl -sL -o matchstick \
-  https://github.com/LimeChain/matchstick/releases/download/0.6.0/binary-linux-22
-chmod +x matchstick && (cd subgraph && ../matchstick)   # 8 passed
+git clone --recurse-submodules https://github.com/ksin751119/leash && cd leash
+forge test                                   # 260 passed, 1 skipped (fork suite, needs SEPOLIA_RPC)
+cd agent && node --test; cd ../world && node --test
 ```
-
-On Ubuntu 22 or 24, `cd subgraph && npm test` is enough.
 
 ## Documentation
 
 | | |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | **Start here.** What is enforced, by what, and what is not claimed |
-| [`docs/deployments.md`](docs/deployments.md) | Addresses, transactions, and a verification recipe you can paste |
-| [`docs/demo-script.md`](docs/demo-script.md) | The run of show for the video — what to press, in what order, and what goes wrong |
-| [`docs/the-story.md`](docs/the-story.md) | The narration, and why the demo is framed the way it is |
-| [`docs/PLAN.md`](docs/PLAN.md) | The full working document, including every overturned decision |
-| [`docs/events.md`](docs/events.md) | **Event schema — frozen before any contract was written** |
+| [`docs/architecture.md`](docs/architecture.md) | What is enforced, by what, and what is not claimed |
+| [`docs/deployments.md`](docs/deployments.md) | Addresses, transactions, verification recipe |
+| [`docs/demo-script.md`](docs/demo-script.md) | The run of show for the video |
 | [`docs/world-feedback.md`](docs/world-feedback.md) | Developer feedback for the World track |
-| [`docs/ensv2-sepolia.md`](docs/ensv2-sepolia.md) | Onchain measurements of live ENSv2 |
-| [`docs/superpowers/specs/`](docs/superpowers/specs) | Design documents, approved before implementation started, with every overturned decision recorded |
-| [`docs/superpowers/plans/`](docs/superpowers/plans) | The task-by-task implementation plans those specs became |
-| [`docs/superpowers/sdd/`](docs/superpowers/sdd) | The working ledgers — every dispatch, review and ruling, uncleaned |
+| [`docs/events.md`](docs/events.md) | Event schema, frozen before any contract was written |
+| [`docs/superpowers/`](docs/superpowers) | Specs, plans and review ledgers from the build |
 
 ## Start from Scratch
 
-What exists under `docs/` from before the event is planning, prize requirements, and
-onchain probing of ENSv2's already-deployed contracts on Sepolia. No project code
-predates the event.
-
-**Every line under `src/`, `test/`, `script/` and `subgraph/` was written from scratch
-starting 2026-09-05.** The commit history is the record, and it is cross-checked by
-timestamps nobody can forge: the deployment transactions on Sepolia, the World
-verification's server-side `created_at`, and the GitHub push events.
+Everything under `src/`, `test/`, `script/`, `subgraph/`, `agent/` and `world/` was written
+from 2026-09-05 onward; the commit history and the Sepolia deployment timestamps are the
+record. What predates the event under `docs/` is planning and onchain probing of ENSv2.
 
 ## How AI was used
 
-This project was built by one person working with Claude Code (Claude Opus 5) in a
-spec-driven workflow. Stated plainly, because the rules ask for it and because a vague
-answer here would be worse than an honest one.
-
-### Where AI assisted
-
-| Area | Lines | How it was produced |
-|---|---|---|
-| `src/` — the contracts | 2,454 | Written by Claude Code from an approved spec, then reviewed |
-| `test/` — the Foundry tests | 3,371 | Same |
-| `agent/`, `world/` — the offchain services | 2,374 | Same |
-| `subgraph/` — schema, mappings, tests | 886 | Same |
-| `script/` | 261 | Same |
-| `docs/` | 4,022 | Drafted by Claude Code, corrected against onchain measurements |
-
-There is no file in this repository that Claude Code did not touch. Presenting any part of
-it as hand-written would be false.
-
-### What the human did
-
-- **Every design decision, including the ones that were overturned.** The specs record the
-  arguments; the choices in them were made by the human rather than proposed and accepted
-  wholesale. `docs/PLAN.md` keeps the superseded reasoning visible for exactly this reason.
-- **Approved each spec before implementation began** — the gate the whole workflow is built
-  around.
-- **Held every key.** No private key was ever placed in an AI context: the wallet signed its
-  own EIP-7702 authorisation, and each deployment was run by the human.
-- **Did the World integration by hand** — the Developer Portal application, both access
-  gates, and every face scan.
-- **Rejected work.** Several reviews were overruled and several proposals cut; those rulings
-  are in the ledgers, including the ones that later proved wrong.
-
-### The artifacts that workflow produced
-
-The rules ask that spec-driven workflows submit their specs and prompts. They are here,
-unedited:
-
-| | Lines | |
-|---|---|---|
-| [`docs/superpowers/specs/`](docs/superpowers/specs) | 8,120 | Design documents, approved before implementation started |
-| [`docs/superpowers/plans/`](docs/superpowers/plans) | *(counted above)* | Task-by-task implementation plans |
-| [`docs/superpowers/sdd/`](docs/superpowers/sdd) | 4,791 | The working ledgers: every dispatch, every review, every ruling |
-
-198 of the 204 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
-first `.gitignore` commit and five documentation commits from 2026-09-09, made while the
-trailer format was being changed mid-session — an omission, not a claim of authorship.
-
-### What that workflow actually caught
-
-The reviews are adversarial by construction — a fresh reviewer sees the diff and nothing
-else. Two that landed, both written up in [`docs/superpowers/sdd/`](docs/superpowers/sdd):
-
-- `hashSignal()` hashed a hex digest as UTF-8, so `POST /api/attest` could never have
-  succeeded on the digest path. Every existing test missed it, because the test pinned the
-  server against itself.
-- Four separate paths through the agent loop could pay the same intent twice.
-
-A third came from mutation testing rather than review, and predates the ledgers: the
-`uint8` clamp in `_askPolicy` turned out to be load-bearing. A policy returning `256`
-truncates to `0`, which is `Reason.OK`, and the transfer executes — and deleting that line
-left every test green. It is now pinned by
-`test_policy_return_over_uint8_max_is_clamped_to_policy_failed`, which fails when the clamp
-is removed. The reasoning is in the comment above `_askPolicy` in `src/LeashAccount.sol`.
+Built by one person with Claude Code (Claude Opus 5) in a spec-driven workflow. Claude Code
+wrote the code, tests and docs from specs the human approved; every design decision, every
+key, every deployment and every face scan was the human's. The specs, plans and review
+ledgers are submitted unedited in [`docs/superpowers/`](docs/superpowers), and commits carry
+`Co-Authored-By: Claude Opus 5`.
