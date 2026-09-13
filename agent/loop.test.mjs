@@ -117,19 +117,39 @@ test("a changed budget re-arms a latched intent", () => {
 // The latch must not invent a verdict: world/demo.html styles verdicts by value and an
 // unrecognised one renders unstyled on stage. The last decided verdict and reason survive,
 // and only the explanation changes - to one a person can read out.
-test("the latch leaves the verdict and reason alone and explains itself in words", () => {
+// The latch reports the CHAIN's answer, replacing whatever the pre-flight had guessed.
+//
+// This test previously asserted the opposite — "no new verdict string" — and that
+// assertion was defending a live defect. `sendAndRecord` sets the record to `in-flight`
+// before sending and writes only `lastAction` afterwards; the executed case is corrected
+// by the "already paid" branch above, and the refused case was corrected by nothing. A
+// payment the chain turned down sat at IN FLIGHT for as long as the agent ran, which is
+// what a rehearsal showed on 2026-09-13 and what every API-level check had missed.
+test("the latch reports what the chain said, not what the pre-flight guessed", () => {
   let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
-  const decided = state.intents.a.verdict;
   state.intents.a.reason = 6;
   state.intents.a.reasonName = "PAYEE_NOT_ALLOWED";
+  state.intents.a.verdict = "in-flight";
   state.intents.a.lastAction = { kind: "sent", outcome: "blocked", reason: 7, reasonName: "OVER_TX_LIMIT", tx: "0x1" };
 
   const rec = advance(state, okSnap(), intents, NOW, KNOWN).state.intents.a;
-  assert.equal(rec.verdict, decided, "no new verdict string");
-  assert.equal(rec.reason, 6);
-  assert.equal(rec.reasonName, "PAYEE_NOT_ALLOWED");
+  assert.equal(rec.verdict, "blocked", "the chain answered, so the record must stop saying in-flight");
+  assert.equal(rec.reason, 7, "and must carry the chain's reason, not the pre-flight's");
+  assert.equal(rec.reasonName, "OVER_TX_LIMIT");
   assert.match(rec.explain, /7 OVER_TX_LIMIT/, "the chain's own reason belongs in the sentence");
   assert.match(rec.explain, /restarting the agent/i, "an operator has to be told the latch is in memory only");
+});
+
+// A status-1 receipt carrying neither SpendExecuted nor SpendBlocked. The money may or may
+// not have moved, so the record must say so rather than claim either.
+test("a receipt with no event says unconfirmed, not in-flight", () => {
+  let { state } = advance(initialState(), okSnap(), intents, NOW, KNOWN);
+  state.intents.a.verdict = "in-flight";
+  state.intents.a.lastAction = { kind: "sent", outcome: "no-event", tx: "0x1" };
+
+  const rec = advance(state, okSnap(), intents, NOW, KNOWN).state.intents.a;
+  assert.equal(rec.verdict, "unconfirmed");
+  assert.equal(rec.reason, null);
 });
 
 // Every record is rebuilt from scratch each tick. `sentFingerprint` survives only through the

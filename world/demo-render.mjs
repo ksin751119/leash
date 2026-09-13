@@ -36,7 +36,11 @@ export function renderStatus(s) {
 
 const TONE = {
   "will-pass": "ok",
+  // Predicted, and actual. `will-be-blocked` is the agent's pre-flight saying it expects a
+  // refusal; `blocked` is the chain having issued one. They are different claims and the
+  // second is the stronger, so it gets its own word rather than borrowing the future tense.
   "will-be-blocked": "blocked",
+  blocked: "blocked",
   done: "done",
   "in-flight": "pending",
   unconfirmed: "pending",

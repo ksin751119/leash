@@ -251,10 +251,20 @@ export function advance(state, snapshot, intents, nowSec, knownPolicy) {
       // Compared against the fingerprint recorded at SEND time, not one taken when the block
       // was observed, so the latch engages after exactly one block rather than two.
       //
-      // No new verdict string: `world/demo.html` styles verdicts by value and an unknown one
-      // renders unstyled on stage. `verdict`, `reason` and `reasonName` are left exactly as
-      // the tick that decided them wrote them, arriving here through `...prev`; only the
-      // explanation changes.
+      // The verdict has to be rewritten here, and leaving it to `...prev` was a bug that
+      // only a real `blocked-despite-green` could expose. `sendAndRecord` sets the record
+      // to `in-flight` before sending and afterwards writes only `lastAction` — so the
+      // executed case is corrected by the branch above (`verdict = "done"`), and the
+      // refused case was corrected by nothing at all. A payment the chain turned down sat
+      // at IN FLIGHT for as long as the agent ran.
+      //
+      // `blocked` is a distinct verdict from `will-be-blocked` on purpose: one is the
+      // pre-flight expecting a refusal, the other is the chain having issued one, and the
+      // second is the stronger claim. `demo-render.mjs` gives it the same tone so it still
+      // paints red rather than rendering unstyled.
+      rec.verdict = prev.lastAction.outcome === "blocked" ? "blocked" : "unconfirmed";
+      rec.reason = prev.lastAction.reason ?? null;
+      rec.reasonName = prev.lastAction.reasonName ?? null;
       // The two cases get different sentences because the operator's next move is different:
       // a refusal is something to fix, an empty receipt is something to look up.
       const willRetry =
