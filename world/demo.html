@@ -622,9 +622,9 @@ body {
           <span class="src">from the index — approvals are events, not an array</span>
         </div>
         <p class="note">
-          It points the name at a different rule, and buys strictly less than a face.
-          <b>ADMIN cannot approve one</b> — that needs an attestation, and the attester is
-          immutable. A stolen admin key picks between rules a human already approved.
+          It points the name at a different rule — and that is all it does. The wallet
+          <b>refuses any policy that is not on this list</b>, on every payment, with reason
+          code 4. Approving one is a different contract and a different signature.
         </p>
         <div id="policies" class="policies"></div>
         <div id="adminMsg" class="askMsg"></div>
@@ -877,8 +877,11 @@ body {
       addr.className = "pol-addr";
       addr.textContent = r.short;
       // Live rows say so; the others offer the swap. ADMIN's whole authority on this page
-      // is this one button, and the server refuses a policy the approval list does not
-      // carry — so "ADMIN cannot approve a rule" is enforced rather than captioned.
+      // is this one button, and both the server and the account refuse a policy the
+      // approval list does not carry (reason code 4) — that part is enforced rather than
+      // captioned. What is NOT enforced in this deployment is getting onto the list:
+      // `PolicyApprovals.attester` is wired to `MockAttester`, which accepts anything. The
+      // page used to claim otherwise; see docs/deployments.md.
       let right;
       if (r.live) {
         right = document.createElement("span");

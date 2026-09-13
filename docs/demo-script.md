@@ -278,7 +278,7 @@ This beat sends no transaction and costs nothing. It is repeatable if a take goe
 | **say** | *"Here we have another policy that a human already approved…"* → *"We can combine policies with an OR."* |
 | **do** | press **point the name here** on the second rule |
 | **⏱** | **~12–15 s**, one Sepolia block |
-| **say** | *"The admin key can switch between approved policies…"* → *"rules a human already agreed to."* |
+| **say** | *"The admin key points the name at a different policy…"* → *"the account checks it on every payment."* |
 | **watch for** | the green edge moves to `0xec45…92490`; the band's rule description changes |
 | **do** | back to the **payments** window |
 | **type** | `Top up our inference API credits by 50 cents.` |
@@ -292,6 +292,27 @@ script says *"another payee nobody has approved"*, which is the true version and
 stronger one.
 
 ---
+
+### 🔴 If a judge asks: "so what stops ADMIN approving its own policy?"
+
+**Nothing, in this deployment. Say so.**
+
+`PolicyApprovals.approve` is `external` with no owner; its only gate is
+`attester.verify`, and the attester wired in is `MockAttester`, which returns `true` for any
+input. A stolen admin key could approve a policy of its own and then point the name at it.
+
+The design is right and the mechanism is real — `attester` is `immutable` with no setter,
+so the gate cannot be moved once it is right. It simply is not right yet: fixing it means
+redeploying `PolicyApprovals`, then `LeashAccount` (whose `APPROVALS` is also `immutable`),
+re-delegating the wallet, and re-approving both policies through a face-scan flow that does
+not exist on our server. It is in `README.md` and `docs/deployments.md`, in both places
+marked with a warning rather than buried.
+
+**What is enforced today, and is worth saying instead:** the account refuses any policy that
+is not on the approval list, with reason code 4. That is a real check on a real list, made
+on every payment, and the narration claims exactly that and nothing more. An earlier draft
+claimed the stronger thing; it was cut for this reason, and this is the third time in this
+project that this particular claim has had to be walked back.
 
 ### Close · no clicking · ~30 s
 

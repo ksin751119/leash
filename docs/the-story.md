@@ -257,11 +257,11 @@ We can combine policies with an OR.
 
 > [PRESS **point the name here** on the second rule  ·  WAIT ~12–15s, one block  ·  SEE the green edge move, and the band's rule description change]
 
-The admin key can switch between approved policies.
+The admin key points the name at a different policy.
 
-But it cannot introduce arbitrary code.
+And the wallet refuses any policy that isn't on the approved list.
 
-So even if the admin key is stolen, it can only choose rules a human already agreed to.
+That list is a separate contract, and the account checks it on every payment.
 
 > [BACK to the **payments** window  ·  TYPE `Top up our inference API credits by 50 cents.`  ·  WAIT ~22s]
 
