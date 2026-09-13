@@ -57,7 +57,7 @@ start_agent() { # name port pk_var addr_var
     SEPOLIA_RPC="$(get SEPOLIA_RPC)" WALLET_ADDR="$(get WALLET_ADDR)" \
     LEASH_NODE="$(get LEASH_NODE)" STANDARD_POLICY="$(get STANDARD_POLICY)" \
     MOCK_USDC="$(get MOCK_USDC)" LEASH_RESOLVER="$(get LEASH_RESOLVER)" \
-    SUBGRAPH_URL="$(get SUBGRAPH_URL)" AGENT_TICK_MS="${AGENT_TICK_MS:-4000}" \
+    SUBGRAPH_URL="$(get SUBGRAPH_URL)" AGENT_TICK_MS="${AGENT_TICK_MS:-8000}" \
     AGENT_INTENTS="$INTENTS" \
       nohup node loop.mjs > "$LOG/agent-$1.log" 2>&1 & )
 }

@@ -460,7 +460,7 @@ any of them stops the system:
 **Live on Subgraph Studio, indexing real Sepolia events:**
 
 ```
-https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.12
+https://api.studio.thegraph.com/query/1758546/leash-sepolia/v0.0.13
 ```
 
 One query answers all four of the agent's questions; the copy-pasteable version and what it
