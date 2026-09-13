@@ -64,7 +64,7 @@ reach the rules. And the rules live under a name the wallet does not own.
 
 | Key | Holds | Can do | Deliberately cannot |
 |---|---|---|---|
-| **ADMIN** | `leash.eth` and its ENS roles | Repoint policies, issue and revoke agent subnames | **Approve a new policy.** That needs an attestation, and the attester is `immutable` with no setter |
+| **ADMIN** | `leash.eth` and its ENS roles | Repoint policies, issue and revoke agent subnames | **Hold or move the money** — it has no role on the wallet. *(Approving a new policy is designed to need an attestation, but in this deployment `PolicyApprovals.attester` is `MockAttester` — see below.)* |
 | **WALLET** | The money; delegated to `LeashAccount` | Pay — every agent payment goes through the policy | Touch ENS. Its role bitmap is `0`, not because of a check but because it was never granted one |
 | **AGENT** | Nothing | Call `spend` | Hold funds, hold permissions, or change any rule |
 
