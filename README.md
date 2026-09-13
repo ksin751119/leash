@@ -6,6 +6,8 @@
 >
 > Loosening a rule costs a live human face. Tightening one is always free.
 
+**[▶ Watch the demo (4 min)](https://youtu.be/fwpSCgd3FpY)**
+
 **ETHGlobal ETHOnline 2026** · Sepolia · solo entry · [ENS](#ens) · [The Graph](#the-graph) · [World](#world)
 
 ---
@@ -36,7 +38,8 @@ for your money to be safe is not safe.
 | **Is the index load-bearing?** | [The Graph](#the-graph) — refusals are events, not reverts, so the index is the only place they exist |
 | **Is World doing real work?** | [World](#world) — a face outranks every key in the system, including the wallet's own |
 | **Does it actually run?** | [`docs/deployments.md`](docs/deployments.md) — every address, every transaction hash, a copy-pasteable `eth_call` recipe |
-| **What would I see in the video?** | [`docs/demo-script.md`](docs/demo-script.md) — the run of show, with what can go wrong |
+| **The video** | [youtu.be/fwpSCgd3FpY](https://youtu.be/fwpSCgd3FpY) — four minutes, one take, nothing sped up |
+| **What was I watching?** | [`docs/demo-script.md`](docs/demo-script.md) — the run of show, with what can go wrong |
 
 ## Run it
 
