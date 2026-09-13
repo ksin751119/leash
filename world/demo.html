@@ -239,6 +239,7 @@ body {
 }
 #ask::placeholder { color: var(--ink-3); }
 #ask:focus { outline: 2px solid var(--allow); outline-offset: -1px; border-color: transparent; }
+#ask:disabled { color: var(--ink-3); border-style: dashed; cursor: wait; }
 #askGo {
   appearance: none; cursor: pointer; font: inherit; font-weight: 600;
   background: var(--allow); color: #06201A; border: 0; border-radius: 2px;
@@ -333,7 +334,9 @@ body {
 .ref .amt { font-weight: 500; min-width: 78px; }
 .ref .to { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .ref .rsn { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--refuse); }
-.ref .ago { font-size: 11px; color: var(--ink-3); min-width: 50px; text-align: right; }
+.ref .ago { font-size: 11px; color: var(--ink-3); min-width: 62px; text-align: right; }
+.tx-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+.tx-link:hover { color: var(--allow); }
 .foot { font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 12px; }
 
 /* ------------------------------------------------- what a key cannot do ---- */
@@ -637,6 +640,22 @@ body {
   import { shortHex, renderStatus, renderIntent, renderRules, renderRefusals } from "./demo-render.mjs";
 
   const $ = (id) => document.getElementById(id);
+
+  // Every hash on this page is a Sepolia transaction, and every one of them is the evidence
+  // for a claim the page is making. Linking them is the difference between "the chain
+  // refused this" and "here is the receipt".
+  const SCAN = "https://sepolia.etherscan.io/tx/";
+  function txLink(el, hash, label) {
+    el.replaceChildren();
+    if (!hash) return;
+    const a = document.createElement("a");
+    a.className = "tx-link";
+    a.href = SCAN + hash;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = label;
+    el.append(a);
+  }
 
   // The agent publishes on its own port. Same machine, different process: the page is served
   // by world/server.mjs on 8787 and reads the loop's state on 8788, which is why this one url
@@ -1082,7 +1101,7 @@ body {
       verdict.textContent = String(v.verdict).replace(/-/g, " ").toUpperCase();
       el.querySelector(".why").textContent = v.explain;
       el.querySelector(".reason").textContent = v.reasonLabel ?? "";
-      el.querySelector(".tx").textContent = v.tx ? `tx ${v.tx}` : "";
+      txLink(el.querySelector(".tx"), v.txFull, `tx ${v.tx} ↗`);
     }
     for (const [id, el] of intentEls) {
       if (!seen.has(id)) { el.remove(); intentEls.delete(id); }
@@ -1182,7 +1201,11 @@ body {
       el.querySelector(".amt").textContent = `${r.amount} USDC`;
       el.querySelector(".to").textContent = `to ${r.payeeShort}`;
       el.querySelector(".rsn").textContent = r.reasonLabel;
-      el.querySelector(".ago").textContent = r.ago;
+      if (r.tx) {
+        txLink(el.querySelector(".ago"), r.tx, `${r.ago} ↗`);
+      } else {
+        el.querySelector(".ago").replaceChildren(document.createTextNode(r.ago));
+      }
     }
     for (const [key, el] of refEls) {
       if (!seen.has(key)) { el.remove(); refEls.delete(key); }
@@ -1594,6 +1617,7 @@ body {
   // the deciding. So it gets a running counter instead of a spinner - "thinking" says
   // nothing, "thinking… 4s" says a language model is working.
   let asking = false;
+  const ASK_LABEL = $("askGo").textContent;
 
   async function sendInstruction(text) {
     if (asking || !text) return;
@@ -1604,8 +1628,14 @@ body {
     const started = Date.now();
     const tickMsg = () => {
       if (!asking) return;
+      const secs = Math.round((Date.now() - started) / 1000);
       $("askMsg").className = "askMsg";
-      $("askMsg").innerHTML = `the model is deciding what to pay… <b>${Math.round((Date.now() - started) / 1000)}s</b>`;
+      // Naming both halves of the wait, because the box stays disabled through the chain
+      // part as well and "the model is deciding" stops being true after about five seconds.
+      $("askMsg").innerHTML = secs < 8
+        ? `the model is deciding what to pay… <b>${secs}s</b>`
+        : `the chain is deciding whether it may… <b>${secs}s</b>`;
+      $("askGo").textContent = `${secs}s`;
       setTimeout(tickMsg, 250);
     };
     tickMsg();
@@ -1620,6 +1650,7 @@ body {
       if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
 
       asking = false;
+      $("ask").value = "";
       const i = body.instruction ?? {};
       const n = i.count ?? (body.intents ?? []).length;
       $("askMsg").className = "askMsg";
@@ -1635,6 +1666,7 @@ body {
       $("askMsg").textContent = String(err?.message ?? err);
     } finally {
       asking = false;
+      $("askGo").textContent = ASK_LABEL;
       $("ask").disabled = false;
       $("askGo").disabled = false;
       $("ask").focus();

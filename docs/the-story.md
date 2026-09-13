@@ -159,6 +159,8 @@ how much,
 
 and why.
 
+⟨cut⟩ Every one of these is a link to Etherscan. You can go and check.
+
 We don't just audit what agents did.
 
 We can audit what they tried to do.

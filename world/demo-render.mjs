@@ -64,6 +64,9 @@ export function renderIntent(intent, payees) {
     reasonLabel: intent.reason == null ? null : `${intent.reason} · ${intent.reasonName ?? "?"}`,
     explain: intent.explain ?? "",
     tx: intent.lastAction?.tx ? shortHex(intent.lastAction.tx) : null,
+    // The full hash as well as the short one. A judge asked to believe a refusal happened
+    // should be one click from the receipt, and a shortened hash is not a link.
+    txFull: intent.lastAction?.tx ?? null,
   };
 }
 

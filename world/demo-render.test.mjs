@@ -357,3 +357,20 @@ test("relative time is coarse on purpose", () => {
   assert.equal(relativeTime(1000, 1000 + 86400 * 3), "3d ago");
   assert.equal(relativeTime(0, 1000), "", "no timestamp must print nothing, not '1970'");
 });
+
+// The short hash is for reading; the full one is what a link needs. A judge asked to
+// believe a payment happened should be one click from the receipt.
+test("an intent carries both the readable hash and the linkable one", () => {
+  const v = renderIntent(
+    { id: "x", payee: "0x1", amount: "1000000", lastAction: { tx: "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890def" } },
+    {},
+  );
+  assert.equal(v.tx, "0xabc1…90def");
+  assert.equal(v.txFull, "0xabc1234567890abcdef1234567890abcdef1234567890abcdef1234567890def");
+});
+
+test("an intent with no transaction has nothing to link to", () => {
+  const v = renderIntent({ id: "x", payee: "0x1", amount: "1", lastAction: null }, {});
+  assert.equal(v.tx, null);
+  assert.equal(v.txFull, null);
+});
