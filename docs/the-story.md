@@ -70,7 +70,7 @@ Fifty dollars per day.
 
 ## One — let the agent do its job
 
-> [CLICK the chip **pay the studio retainer**  ·  TYPE `Pay this month's studio retainer.`]
+> [TYPE, in the **payments** window: `Pay this month's studio retainer.`]
 
 It's the first of the month.
 
@@ -107,7 +107,7 @@ let the agent work when it's inside the rules.
 
 ## Two — and stop it when it isn't
 
-> [CLICK the chip **pay a contractor we just hired**  ·  WAIT ~10s, nothing is sent  ·  SEE red card `6 · PAYEE_NOT_ALLOWED`, the amber button lights, `0x0000…` appears as **not on the list**]
+> [STILL the **payments** window. TYPE `Bluefin Design finished the rebrand. Pay their first invoice.`  ·  WAIT ~10s, nothing is sent  ·  SEE red card `6 · PAYEE_NOT_ALLOWED`, the amber button lights, `0x0000…` appears as **not on the list**]
 
 Now, a new contractor.
 

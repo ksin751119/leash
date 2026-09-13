@@ -1,0 +1,23 @@
+Four instructions, in order. Copy one at a time.
+
+Beats 1, 2 and 4 go to the PAYMENTS window. Beat 3 goes to SUBSCRIPTIONS.
+
+
+1 — payments
+
+Pay this month's studio retainer.
+
+
+2 — payments   (the refusal, then the face scan)
+
+Bluefin Design finished the rebrand. Pay their first invoice.
+
+
+3 — SUBSCRIPTIONS   (switch windows first)
+
+Renew our annual design-tools licence — 48.00 USDC for the year.
+
+
+4 — payments   (after pressing "point the name here")
+
+Top up our inference API credits by 50 cents.

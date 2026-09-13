@@ -187,6 +187,11 @@ Every wait below is measured (see *How long it actually takes*). The narration i
 Two browser windows, side by side: `localhost:8787/?agent=payments` on the left,
 `?agent=subscriptions` on the right. Phone unlocked with World App open. Start recording.
 
+**Every instruction is typed.** There are no preset buttons — a page with a
+"click here to demo" button undercuts the one thing this beat is showing, which is a person
+telling an AI what to do in English. Keep `docs/instructions.txt` open and paste one at a
+time; the first three beats are all in the payments window and only beat 3 switches.
+
 ---
 
 ### Cold open · no clicking · ~35 s
@@ -207,7 +212,7 @@ read the budget note below.
 
 | | |
 |---|---|
-| **do** | click the chip **pay the studio retainer** (or type it) |
+| **do** | type it into the **payments** window |
 | **type** | `Pay this month's studio retainer.` |
 | **⏱** | **21.8 s** before the card appears — keep talking |
 | **say** | *"It's the first of the month…"* → *"One dollar out of fifty."* |
@@ -222,7 +227,7 @@ one wait. There is no "pending" state to narrate.
 
 | | |
 |---|---|
-| **do** | click the chip **pay a contractor we just hired** |
+| **do** | **still the payments window** — beat 2 does not switch agents |
 | **type** | `Bluefin Design finished the rebrand. Pay their first invoice.` |
 | **⏱** | **~10 s** — nothing is sent, so there is no receipt to wait for |
 | **watch for** | red card · `6 · PAYEE_NOT_ALLOWED` · the amber button lights up · right panel gains `0x0000…0c0de  not on the list` |
