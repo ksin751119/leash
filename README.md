@@ -6,7 +6,13 @@
 >
 > Loosening a rule costs a live human face. Tightening one is always free.
 
-**[▶ Watch the demo (4 min)](https://youtu.be/fwpSCgd3FpY)**
+**What makes it different, in three lines:**
+
+- **The limit lives on chain, not in the agent.** A compromised agent still cannot get past it — the check runs inside the wallet's own spending path.
+- **One ENS name, one budget.** Bind several agents to the same name and they draw down a single budget, with no coordinator and no message between them.
+- **Widening needs a face; tightening needs nothing.** Adding a payee takes a World Selfie Check from *the* registered human — the wallet's own key cannot do it.
+
+**[▶ Watch the demo (5½ min)](https://youtu.be/fwpSCgd3FpY)**
 
 **ETHGlobal ETHOnline 2026** · Sepolia · solo entry · [ENS](#ens) · [The Graph](#the-graph) · [World](#world)
 
@@ -38,7 +44,7 @@ for your money to be safe is not safe.
 | **Is the index load-bearing?** | [The Graph](#the-graph) — refusals are events, not reverts, so the index is the only place they exist |
 | **Is World doing real work?** | [World](#world) — a face outranks every key in the system, including the wallet's own |
 | **Does it actually run?** | [`docs/deployments.md`](docs/deployments.md) — every address, every transaction hash, a copy-pasteable `eth_call` recipe |
-| **The video** | [youtu.be/fwpSCgd3FpY](https://youtu.be/fwpSCgd3FpY) — four minutes, one take, nothing sped up |
+| **The video** | [youtu.be/fwpSCgd3FpY](https://youtu.be/fwpSCgd3FpY) — five and a half minutes, one take, nothing sped up (the copy uploaded to ETHGlobal is the same take with pauses and one beat trimmed to fit four minutes) |
 | **What was I watching?** | [`docs/demo-script.md`](docs/demo-script.md) — the run of show, with what can go wrong |
 
 ## Run it
@@ -87,26 +93,15 @@ The agent has no way around this, because the check happens inside its own execu
 path rather than beside it.
 
 **The agent is a real one.** You type an instruction in English on the demo page; Claude
-turns it into payments; the chain decides which of them happen:
-
-```
-you:    "We just hired Bluefin Design for the rebrand. Pay their first invoice."
-model:  bluefin  5.00 USDC     (3.9s)
-chain:  SpendBlocked — 6 PAYEE_NOT_ALLOWED
-```
-
-A person asked an AI to send money, the AI agreed, and the chain said no. **That is the
-whole project in three lines,** and none of it is staged: the model chose the vendor and
-the amount, and the refusal is an onchain event you can look up.
+turns it into payments; the chain decides which of them happen — the three lines under
+[In one screen](#in-one-screen) are one such run.
 
 The model never writes an address. It picks an id from a vendor directory and
 `agent/plan.mjs` looks the address up, so there is no field in which a hallucinated payee
 could appear. It never sees a key, an RPC url, or the chain.
 
-**None of that is what makes the wallet safe.** The chain is. An agent that has to be
-well-behaved for your money to be safe is not safe — so this one is free to propose
-whatever it likes, and the interesting demo is the one where it proposes something the
-rules refuse.
+**None of that is what makes the wallet safe.** The chain is — so the agent is free to
+propose whatever it likes.
 
 ```
 agent ──▶ EOA.spend(token, payee, amount)
@@ -300,7 +295,7 @@ hop at `0x0` and the same walk returns nothing, which is exactly what stops a pa
 
 | Key | Holds | Can do | Deliberately cannot |
 |---|---|---|---|
-| **ADMIN** | `leash.eth`, ENS roles | Repoint policies, issue and revoke agent subnames | **Approve a new policy** — that needs an attestation, and the attester is `immutable` |
+| **ADMIN** | `leash.eth`, ENS roles | Repoint policies, issue and revoke agent subnames | **Hold or move the money** — it has no role on the wallet. *(Approving a new policy is designed to need an attestation too, but in this deployment that attester is `MockAttester` — see the caveat above.)* |
 | **WALLET** | The money; delegated to `LeashAccount` | Pay — every **agent-initiated** payment goes through the policy; the wallet's own key is not constrained (see above) | Touch ENS — its role bitmap is `0`, not by a check but because it never had one |
 | **AGENT** | Nothing | Initiate a spend request | Hold funds or permissions; it is only a `msg.sender` the policy recognises |
 
@@ -495,9 +490,7 @@ amount nobody spent. Eight tests pin the walk, including that one.
 
 The subgraph in [`subgraph/`](subgraph) indexes the control plane and every spend
 attempt, executed and blocked alike. Its eight entities are shaped by the four questions
-the agent actually asks, not by a generic data model — the arithmetic lives in the
-mappings, because an untrusted agent that has to sum events itself is an agent that can
-get the sum wrong in its own favour.
+the agent actually asks, not by a generic data model.
 
 Blocked attempts are indexable because a policy violation is a **no-op plus an event**,
 never a revert. The chain discards a reverted transaction's logs, and the agent could
@@ -588,10 +581,10 @@ the product able to say so.
 
 ## Tests
 
-201 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 8 matchstick tests
+260 unit and fuzz tests, plus 3 fork tests against live Sepolia, plus 8 matchstick tests
 for the subgraph mappings. The fork tests call
 `vm.skip` in `setUp` when `SEPOLIA_RPC` is unset, so `forge test` prints
-`201 passed, 0 failed, 1 skipped (202 total)` — one skip for the suite, not three. They
+`260 passed, 0 failed, 1 skipped (261 total)` — one skip for the suite, not three. They
 are reported as SKIPPED rather than quietly PASSED, which is the point of using
 `vm.skip` over a bare `return`.
 
@@ -693,7 +686,7 @@ unedited:
 | [`docs/superpowers/plans/`](docs/superpowers/plans) | *(counted above)* | Task-by-task implementation plans |
 | [`docs/superpowers/sdd/`](docs/superpowers/sdd) | 4,791 | The working ledgers: every dispatch, every review, every ruling |
 
-138 of the 144 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
+198 of the 204 commits carry `Co-Authored-By: Claude Opus 5`. The six that do not are the
 first `.gitignore` commit and five documentation commits from 2026-09-09, made while the
 trailer format was being changed mid-session — an omission, not a claim of authorship.
 
