@@ -20,224 +20,135 @@
 
 ## Cold open — AI can move money. But who sets the rules?
 
-> [OPEN two windows: `?agent=payments` left, `?agent=subscriptions` right. Nothing to click. SEE `0.00 of 50.00`]
+> [OPEN two windows: `?agent=payments` left, `?agent=subscriptions` right. Nothing to click]
 
 AI agents can already move money.
 
-The hard part is not making them pay.
-
 The hard part is making sure they can only pay what they're allowed to pay.
 
-That's what we built.
+That's what we built. A permission layer for AI agent wallets.
 
-A permission layer for AI agent wallets.
-
-⟨cut⟩ The agent proposes a payment.
-The wallet checks the rules.
-And the chain decides.
-
-The agent cannot bypass those rules — because the rules don't live in the agent.
-
-They live on-chain.
-
-Here's what that looks like.
+The rules don't live in the agent. They live on-chain.
 
 > [pause — let the page sit]
 
-We have a small studio with two AI agents.
+A small studio, with two AI agents.
 
-One pays invoices.
+One pays invoices. The other handles subscriptions.
 
-The other handles subscriptions.
-
-> [POINT at the ENS panel, then the budget beside it. SEE `vendors.leash.eth` → `StandardPolicy/1: …`]
+> [POINT at the ENS panel, then the budget beside it]
 
 But we don't give each agent its own budget.
 
-They share one budget through an ENS name.
+They share one, through an ENS name.
 
 For every payment, the wallet resolves that name and finds the policy contract.
 
-Two agents.
-
-One account.
-
-One shared budget.
-
-Fifty dollars per day.
+Two agents. One budget. Fifty dollars a day.
 
 ---
 
 ## One — let the agent do its job
 
-> [TYPE, in the **payments** window: `Pay this month's studio retainer.`]
+> [TYPE, in the **payments** window: `Pay this month's studio retainer.`  ·  WAIT ~22s — keep talking]
 
 It's the first of the month.
 
-> [WAIT ~22s — keep talking. The card appears already DONE; there is no pending state]
-
 Claude is deciding what to pay.
 
-But notice something:
+But notice: it never touches a wallet address.
 
-Claude never touches a wallet address.
+It picks a vendor by name, and those names are ENS records.
 
-It only chooses a vendor by name.
+Our directory doesn't store addresses at all.
 
-Those names are ENS records.
+So a made-up vendor has nowhere to send money to.
 
-Our vendor directory doesn't even store wallet addresses.
+> [SEE the card **DONE**, then the budget bar move ~6s later]
 
-So if the AI makes up a vendor, it can't just make up an address and send money there.
-
-> [SEE the card **DONE**, then ~6s later the budget bar moves to `1.00`]
-
-The retainer is paid.
-
-No approval.
-
-No human click.
-
-One dollar out of fifty.
-
-⟨cut⟩ This is what we want:
-let the agent work when it's inside the rules.
+The retainer is paid. No approval. No human click.
 
 ---
 
 ## Two — and stop it when it isn't
 
-> [STILL the **payments** window. TYPE `Bluefin Design finished the rebrand. Pay their first invoice.`  ·  WAIT ~10s, nothing is sent  ·  SEE red card `6 · PAYEE_NOT_ALLOWED`, the amber button lights, `0x0000…` appears as **not on the list**]
+> [STILL the **payments** window. TYPE `Bluefin Design finished the rebrand. Pay their first invoice.`  ·  WAIT ~10s  ·  SEE the red card, the amber button light, and the payee appear as **not on the list**]
 
-Now, a new contractor.
+Now a new contractor. Their first invoice.
 
-The agent reads the invoice correctly.
-
-It finds the right vendor.
+The agent reads it correctly. It picks the right vendor.
 
 But the payment doesn't happen.
 
-Why?
-
 This payee has never been approved.
 
-> [POINT at the red card, then at the amber button]
+> [POINT at the red card]
 
-And this is the important part:
+And notice where that "no" came from.
 
-the agent is not the security boundary.
+Not from our backend.
 
-The rule doesn't live in its prompt.
+The agent asked the chain, and didn't even send the payment.
 
-It doesn't live in a config file.
+But the rule is not in the agent.
 
-It lives on-chain.
+If it sent it anyway, the wallet would refuse — and that has happened.
 
-The agent can disagree with the rule.
+> [POINT at **Refused by the chain** below the cards]
 
-It can ignore it.
+A refusal doesn't revert. It emits an event.
 
-It can even be compromised.
-
-Here, it didn't even send the payment — it read the rule and knew it would fail.
-
-But if it sent it anyway, the wallet would still refuse.
-
-And that has happened.
-
-> [POINT at the agent's second message, then at **Refused by the chain** below the cards]
-
-The wallet emits an event when it blocks a payment.
-
-It doesn't revert — so on Etherscan the transaction succeeded, and the payment didn't.
+⟨cut⟩ So on Etherscan the transaction succeeded, and the payment didn't.
 
 The Graph indexes those events.
 
-So here we can see every refusal the wallet actually made:
+So every refusal this wallet has made is here — who tried it, how much, and why.
 
-who tried it,
+We don't just audit what agents did. We audit what they tried to do.
 
-how much,
-
-and why.
-
-⟨cut⟩ Every one of these links to the event log. You can go and check.
-
-We don't just audit what agents did.
-
-We can audit what they tried to do.
-
-> [PRESS **Approve this payee with a face scan**  ·  SEE the QR in the page  ·  SCAN with World App — **the front camera must open**. If it only asks for device verification, stop]
+> [PRESS **Approve this payee with a face scan**  ·  SCAN with World App — **the front camera must open**]
 
 But this contractor is real.
 
-⟨cut⟩ So now we want to change the permission.
-And this is where the human comes back in.
+To give the agent more permission, we require a person.
 
-We use World ID Selfie Check.
+World ID Selfie Check. I scan my face, and prove a live human is here.
 
-I scan my face.
-
-I prove that a real, live human is here.
-
-And the wallet checks that proof against the World ID registered to it.
+The wallet checks that proof against the one World ID registered to it.
 
 No key can do this — not the agent's, not ours.
 
-> [SEE `YOUR FACE APPROVED IT`  ·  WAIT ~8–16s for the next tick  ·  SEE the card turn **DONE**, budget `3.00`, the payee row flip to **allowed**]
+> [SEE `YOUR FACE APPROVED IT`  ·  WAIT one tick  ·  SEE the card turn **DONE**]
 
-We don't message the agent.
-
-We don't restart it.
-
-It tries again.
-
-The on-chain permission has changed.
-
-And the payment goes through.
-
-Three dollars out of fifty.
+Nobody told the agent. It tried again, and the answer had changed.
 
 ---
 
 ## Three — one budget across many agents
 
-> [MOVE to the **subscriptions** window]
+> [MOVE to the **subscriptions** window  ·  TYPE `Renew our annual design-tools licence with Acme Studio — 48.00 USDC for the year.`  ·  WAIT ~10s]
 
-Now let's switch agents.
+Now the other agent. Different key, different process.
 
-> [TYPE **Renew our annual design-tools licence with Acme Studio — 48.00 USDC for the year.**  ·  WAIT ~10s  ·  SEE `8 · OVER_PERIOD_LIMIT`]
+The vendor is approved. The amount is under the transaction limit.
 
-This vendor is approved.
+Still refused.
 
-The payment itself is under the transaction limit.
-
-But it's still refused.
-
-Because the other agent already spent three dollars.
+Because the other agent already spent it.
 
 Another forty-eight would break the daily budget.
 
-> [POINT at the agent's **third** message — its own words, nobody told it]
+> [POINT at the agent's third message — its own words]
 
-And the agent understands that from the chain.
+And it worked that out from the chain. Nobody told it another agent exists.
 
-> [POINT at the split under the budget bar: two names, one track]
+> [POINT at the split under the budget bar]
 
-This is why the budget doesn't belong to an agent.
+The budget isn't attached to an agent. It's attached to the ENS name.
 
-It belongs to the ENS name.
+Two agents, or twenty — the chain adds it up.
 
-You can have two agents.
-
-Or twenty.
-
-⟨cut⟩ They can use different models and different keys.
-But they all share the same on-chain policy.
-
-And when I approved that contractor earlier, I only added a payee.
-
-I didn't add a single dollar to the budget.
+And notice: my face added a payee. It didn't add a dollar.
 
 ---
 
@@ -245,46 +156,35 @@ I didn't add a single dollar to the budget.
 
 > [BACK to the **payments** window  ·  TYPE `Top up our inference API credits by 50 cents.`  ·  WAIT ~10s  ·  SEE `6 · PAYEE_NOT_ALLOWED` again]
 
-One more payment — fifty cents, to an API provider.
+One more. Fifty cents, to an API provider.
 
-Refused for the same reason as before: nobody has approved this payee.
+Refused, same reason. Nobody approved this payee.
 
-But I am not scanning my face for fifty cents.
+But I'm not scanning my face for fifty cents.
 
-And I can't approve every provider we might try once.
+⟨cut⟩ And I can't pre-approve every provider we might try once.
 
-> [SCROLL the right column to **The admin key**. SEE two rules, the live one green-edged, the other drawn as two clauses joined by OR]
+> [SCROLL the right column to **The admin key**]
 
-So instead of changing who we trust, we change the rule.
+So we don't change who we trust. We change the rule.
 
-Here is a second policy a human already approved.
+Here's a second policy a human already approved:
 
-It says: small payments to anyone — **or** the full original rules.
+small payments to anyone — or the full original rules.
 
-⟨cut⟩ Two policy contracts, composed with an OR.
+> [PRESS **point the name here**  ·  WAIT ~12–15s, one block]
 
-> [PRESS **point the name here** on the second rule  ·  WAIT ~12–15s, one block  ·  SEE the green edge move, and the band's rule description change]
-
-The admin key points the name at that policy.
+Admin points the name at it.
 
 And the wallet refuses any policy that isn't on the approved list.
-
-⟨cut⟩ That list is a separate contract, and the account checks it on every payment.
 
 > [WAIT one tick  ·  SEE the SAME card turn **DONE**, with a transaction link]
 
 Now watch the payment we already tried.
 
-I didn't retype it.
-
-I didn't touch the agent.
+I didn't retype it. I didn't touch the agent.
 
 The rule changed, and the same fifty cents went through.
-
-Same payee. Still not on the allow-list.
-
-⟨cut⟩ That's not a special case in our wallet.
-That's just another policy.
 
 ---
 
@@ -292,33 +192,19 @@ That's just another policy.
 
 > [nothing to click. Let the finished page sit]
 
-Today, no human reviewed these payments.
+Nobody reviewed any of these payments.
 
-The agents proposed.
+The agents proposed. The wallet checked. The chain decided.
 
-The wallet checked.
+Even if an agent is compromised, it can't get past those rules.
 
-The chain decided.
+That's the model. Agents get autonomy. Humans keep control.
 
-⟨cut⟩ When the agents stayed inside the rules, they worked automatically.
-When they went outside the rules, the wallet stopped them.
-And when the rules needed to change, a human came back into the loop.
-
-That's the model:
-
-Agents get autonomy.
-
-Humans keep control.
-
-And the rules live somewhere neither side can quietly change —
-
-on-chain.
+And the rules live somewhere neither side can quietly change.
 
 Every allowed payment is verifiable.
 
 Every refusal the wallet made is visible.
-
-And even if the agent is compromised, the rules stay the same.
 
 ---
 
@@ -397,17 +283,28 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 `python3 docs/read-aloud.py` prints this file as a reading script and counts it. **That
 script is the only source for these numbers.**
 
-| | words | 165 wpm | 175 wpm | 185 wpm |
-|---|---|---|---|---|
-| as written | **~790** | 4.8 | 4.5 | 4.3 |
-| with every **⟨cut⟩** block dropped | **711** | 4.3 | 4.1 | **3.8** |
+| | words | 150 wpm | 165 wpm |
+|---|---|---|---|
+| as written | **~600** | 4.0 | 3.6 |
+| with both **⟨cut⟩** lines dropped | **572** | 3.8 | **3.5** |
 
-**The cap is 4 minutes**, so this fits only at a brisk pace with every cut taken. Short
-declarative lines with hard stops are read faster than a words-per-minute model predicts —
-which is a reason to time yourself, not a reason to trust the table.
+**The cap is 4 minutes, and it is The Graph's** — verified on their prize page on
+2026-09-13: *"a short demo video (two to four minutes)"*, on all three of their categories.
+ENS asks for "a video or a live demo" with no length; World asks only for a working
+application. We are submitting to The Graph, so four minutes binds.
 
-Every ⟨cut⟩ block is one whose point something else on screen already makes. Drop them in
-the order they appear until it fits; if it still runs long, the next to go is *"And I can't
-approve every provider we might try once"* in beat 4, whose argument the beat then makes by
-demonstration instead.
+### Why this is 572 words and not 711
+
+An earlier version was 711 with every cut taken — **4.3 minutes of talking before a single
+second of waiting**, which made a four-minute video arithmetically impossible. It got there
+by accretion: each correctness fix added a clause, and none of them removed one.
+
+The waits are real and measured (see *How long it actually takes*): about 80 seconds of
+chain, plus the face scan. A raw take runs five to six minutes even when nothing goes
+wrong, and the first real one ran nine. Cuts between shots are allowed and speed-ups are
+not, so the edit has to remove two minutes or more — and it can only do that if the talking
+leaves room for it.
+
+Nothing load-bearing was dropped. What went was connective tissue: restatements, second
+examples, and sentences whose point the screen was already making.
 
