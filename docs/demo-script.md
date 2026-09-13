@@ -179,6 +179,43 @@ page, so both surfaces show something the whole time. No terminal is needed at a
 
 ---
 
+## The no-edit take: fire everything, acknowledge it later
+
+**Do not stand and watch a payment land.** Type the next instruction and keep talking; the
+completion arrives on its own, and you point at it when it does.
+
+This is the difference between a take that runs six minutes and one that runs four, and it
+needs no editing at all. The three chain waits — about 25 s after beat 1, about 15 s after
+the scan, about 15 s after the policy switch — all disappear underneath narration that
+belongs to a *later* beat.
+
+| # | do this | and immediately say | what lands underneath |
+|---|---|---|---|
+| 1 | — | the cold open | — |
+| 2 | type **beat 1** | beat 1's narration (Claude never touches an address…) | — |
+| 3 | type **beat 2** — do NOT wait for beat 1 | beat 2's refusal block | **beat 1 turns DONE.** Glance at it: *"and the retainer went through while we were talking"* |
+| 4 | press the scan button, scan | the World block | — |
+| 5 | switch window, type **beat 3** | beat 3's narration | **beat 2's payment lands** |
+| 6 | back to payments, type **beat 4** | beat 4's first half | — |
+| 7 | press **point the name here** | the admin block, then the close | **beat 4's card turns DONE.** Point at it: *"and there it is"* |
+
+Three lines in the script are therefore said **when you see them happen**, not where they
+sit on the page:
+
+- *"The retainer is paid. No approval. No human click."*
+- *"Nobody told the agent. It tried again, and the answer had changed."*
+- *"The rule changed, and the same fifty cents went through."*
+
+Everything on screen is in one merged list, so nothing scrolls away while you wait — a card
+that turned green three beats ago is still there to point at.
+
+### What this cannot compress
+
+One Sepolia block is twelve seconds and there are three payments, so about 36 s of the take
+is chain no matter what. Pipelining hides it under narration; nothing removes it.
+
+---
+
 ## Run of show — what you do, and what you say while it happens
 
 Every wait below is measured (see *How long it actually takes*). The narration in the
