@@ -18,6 +18,9 @@ Bluefin Design finished the rebrand. Pay their first invoice.
 Renew our annual design-tools licence with Acme Studio — 48.00 USDC for the year.
 
 
-4 — payments   (after pressing "point the name here")
+4 — payments   (BEFORE pressing "point the name here" — it gets refused first)
 
 Top up our inference API credits by 50 cents.
+
+Then press "point the name here" and wait one tick. The same card turns DONE.
+You do not retype anything.

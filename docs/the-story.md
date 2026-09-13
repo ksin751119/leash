@@ -171,8 +171,7 @@ We can audit what they tried to do.
 
 But this contractor is real.
 
-So now we want to change the permission.
-
+⟨cut⟩ So now we want to change the permission.
 And this is where the human comes back in.
 
 We use World ID Selfie Check.
@@ -244,41 +243,47 @@ I didn't add a single dollar to the budget.
 
 ## Four — policies are programmable
 
-> [SCROLL the right column to **The admin key**. SEE two rules, the live one green-edged]
+> [BACK to the **payments** window  ·  TYPE `Top up our inference API credits by 50 cents.`  ·  WAIT ~10s  ·  SEE `6 · PAYEE_NOT_ALLOWED` again]
 
-⟨cut⟩ And these rules aren't hard-coded into the wallet.
-They're policies.
+One more payment — fifty cents, to an API provider.
 
-Here we have another policy that a human already approved.
+Refused for the same reason as before: nobody has approved this payee.
 
-It allows very small payments to anyone.
+But I am not scanning my face for fifty cents.
 
-We can combine policies with an OR.
+And I can't approve every provider we might try once.
+
+> [SCROLL the right column to **The admin key**. SEE two rules, the live one green-edged, the other drawn as two clauses joined by OR]
+
+So instead of changing who we trust, we change the rule.
+
+Here is a second policy a human already approved.
+
+It says: small payments to anyone — **or** the full original rules.
+
+⟨cut⟩ Two policy contracts, composed with an OR.
 
 > [PRESS **point the name here** on the second rule  ·  WAIT ~12–15s, one block  ·  SEE the green edge move, and the band's rule description change]
 
-The admin key points the name at a different policy.
+The admin key points the name at that policy.
 
 And the wallet refuses any policy that isn't on the approved list.
 
-That list is a separate contract, and the account checks it on every payment.
+⟨cut⟩ That list is a separate contract, and the account checks it on every payment.
 
-> [BACK to the **payments** window  ·  TYPE `Top up our inference API credits by 50 cents.`  ·  WAIT ~22s]
+> [WAIT one tick  ·  SEE the SAME card turn **DONE**, with a transaction link]
 
-Now let's try fifty cents to a provider that isn't on the allow-list.
+Now watch the payment we already tried.
 
-> [SEE **DONE**, and the payee panel reading `paid, never listed`]
+I didn't retype it.
 
-This time, it works.
+I didn't touch the agent.
 
-Another payee nobody has approved.
+The rule changed, and the same fifty cents went through.
 
-Two dollars to one of those was refused.
+Same payee. Still not on the allow-list.
 
-Fifty cents goes through.
-
-The difference is the amount — and that's not a special case in our wallet.
-
+⟨cut⟩ That's not a special case in our wallet.
 That's just another policy.
 
 ---
@@ -389,31 +394,20 @@ They sit at four points on one axis, and **a single allow-list cannot tell them 
 
 ## The count
 
-`python3 docs/read-aloud.py` prints this file as a reading script; `--md` writes it to
-`docs/narration.md`, which is git-ignored on purpose — it is a rendering of this file, and
-tracking it would mean two copies that can disagree, with the hand-edited one being the one
-that gets regenerated over. It — what you say, with what
-you do and what you type marked — and counts it. **That script is the only source for these
-numbers.**
+`python3 docs/read-aloud.py` prints this file as a reading script and counts it. **That
+script is the only source for these numbers.**
 
 | | words | 165 wpm | 175 wpm | 185 wpm |
 |---|---|---|---|---|
-| as written | **772** | 4.7 min | 4.4 min | 4.2 min |
-| with all five **⟨cut⟩** blocks dropped | **683** | 4.1 min | **3.9 min** | 3.7 min |
+| as written | **~790** | 4.8 | 4.5 | 4.3 |
+| with every **⟨cut⟩** block dropped | **711** | 4.3 | 4.1 | **3.8** |
 
-**The cap is 4 minutes.** This version is built from short declarative lines with hard
-stops, which are genuinely read faster than a words-per-minute model predicts — so the real
-number is likely better than the table. It is still a reason to time yourself rather than to
-trust the table.
+**The cap is 4 minutes**, so this fits only at a brisk pace with every cut taken. Short
+declarative lines with hard stops are read faster than a words-per-minute model predicts —
+which is a reason to time yourself, not a reason to trust the table.
 
-Every ⟨cut⟩ block is one whose point something else already makes:
+Every ⟨cut⟩ block is one whose point something else on screen already makes. Drop them in
+the order they appear until it fits; if it still runs long, the next to go is *"And I can't
+approve every provider we might try once"* in beat 4, whose argument the beat then makes by
+demonstration instead.
 
-| block | why it survives being dropped |
-|---|---|
-| "The agent proposes / the wallet checks / the chain decides" | the close repeats it word for word, where it lands as a callback |
-| "This is what we want: let the agent work inside the rules" | "No approval. No human click." just said it |
-| "different models and different keys" | true and good, but "two agents or twenty" carries the point |
-| "these rules aren't hard-coded, they're policies" | the next three lines demonstrate it |
-| the close's three-line recap | the video has just shown all three |
-
-Drop them in that order until it fits.

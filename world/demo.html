@@ -394,6 +394,13 @@ body {
 .pol-head { display: flex; align-items: baseline; gap: 10px; }
 .pol-addr { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .pol-desc { font-size: 13px; color: var(--ink); margin-top: 5px; line-height: 1.45; }
+/* A composition, drawn as one. The clauses sit on a rail with the OR on it, so a viewer
+   sees "either of these" rather than a sentence they have to parse. */
+.pol-desc .clause { padding: 3px 0 3px 12px; border-left: 2px solid var(--line); }
+.pol-desc .clause-or {
+  font-size: 10px; font-weight: 700; letter-spacing: .1em; color: var(--human);
+  padding-left: 12px; border-left: 2px solid var(--line); line-height: 1.2;
+}
 .pol-switch {
   appearance: none; margin-left: auto; cursor: pointer; font: inherit;
   font-size: 12px; font-weight: 600;
@@ -895,9 +902,28 @@ body {
         right.addEventListener("click", () => switchPolicy(r.addr, right));
       }
       head.append(addr, right);
+      // A composed rule is drawn as its clauses, not as one sentence with "or" buried in
+      // it. Two rows with a live badge on one reads as a toggle between alternatives, and
+      // misses the thing that matters: the second rule CONTAINS the first, plus an
+      // exception. Split on the "or" the approver wrote and stack it.
       const desc = document.createElement("div");
       desc.className = "pol-desc";
-      desc.textContent = r.description ?? "no description was recorded";
+      const text = r.description ?? "no description was recorded";
+      const parts = text.split(/,\s+or\s+/i);
+      if (parts.length === 2) {
+        const a = document.createElement("div");
+        a.className = "clause";
+        a.textContent = parts[0];
+        const orRow = document.createElement("div");
+        orRow.className = "clause-or";
+        orRow.textContent = "OR";
+        const b = document.createElement("div");
+        b.className = "clause";
+        b.textContent = parts[1];
+        desc.append(a, orRow, b);
+      } else {
+        desc.textContent = text;
+      }
       box.append(head, desc);
       el.append(box);
     }
